@@ -1,0 +1,19 @@
+<resources>
+  <string name="app_name">BetterNet</string>
+  <string name="preview_scope">Early public app foundation. This only reads Android’s current network status. VPN, forwarding and network optimization are not yet available.</string>
+  <string name="not_checked">No observation yet</string>
+  <string name="refresh_network">Check connection</string>
+  <string name="state_disconnected">No active network</string>
+  <string name="state_captive">Sign-in portal reported</string>
+  <string name="state_unvalidated">Android has not validated this connection</string>
+  <string name="state_validated">Android validated this connection; speed and reachability are not guaranteed</string>
+  <string name="type_none">None</string>
+  <string name="type_wifi">Wi-Fi</string>
+  <string name="type_cellular">Cellular</string>
+  <string name="type_ethernet">Ethernet</string>
+  <string name="type_vpn">VPN</string>
+  <string name="type_other">Other</string>
+  <string name="metered_yes">May be metered</string>
+  <string name="metered_no">Not reported as metered</string>
+  <string name="network_summary">State: %1$s\nNetwork: %2$s\nCost: %3$s</string>
+</resources>

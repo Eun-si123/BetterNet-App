@@ -1,0 +1,19 @@
+<resources>
+  <string name="app_name">BetterNet</string>
+  <string name="preview_scope">새 공개 앱의 초기 버전입니다. Android의 네트워크 상태만 확인하며, VPN·트래픽 중계·속도 최적화는 아직 구현되지 않았습니다.</string>
+  <string name="not_checked">아직 연결 상태를 확인하지 않았습니다</string>
+  <string name="refresh_network">현재 연결 상태 확인</string>
+  <string name="state_disconnected">활성 네트워크 없음</string>
+  <string name="state_captive">로그인 포털 감지</string>
+  <string name="state_unvalidated">Android가 연결을 검증하지 못함</string>
+  <string name="state_validated">Android 연결 검증됨 (속도나 접속 성공을 보장하지 않음)</string>
+  <string name="type_none">없음</string>
+  <string name="type_wifi">Wi-Fi</string>
+  <string name="type_cellular">셀룰러</string>
+  <string name="type_ethernet">이더넷</string>
+  <string name="type_vpn">VPN</string>
+  <string name="type_other">기타</string>
+  <string name="metered_yes">종량제 가능성 있음</string>
+  <string name="metered_no">종량제로 보고되지 않음</string>
+  <string name="network_summary">상태: %1$s\n네트워크: %2$s\n데이터 비용: %3$s</string>
+</resources>
