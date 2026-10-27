@@ -11,3 +11,10 @@ PRs must state one acceptance gate, minimal implementation, exact build/test res
 Owner-directed Agent commits: public username Eun-si123, official GitHub no-reply email, and a Co-authored-by trailer for the named contributing Agent (name must end in Agent). Preserve independent contributors' own identities. No force pushes, unapproved releases, or unverified optimization claims.
 
 Public visibility is not an OSS license; owner will decide licensing separately.
+
+## Lean implementation and boundary validation
+
+- Prefer the smallest **coherent** change, not merely fewer lines. Inline one-use logic when clearer; add helpers or abstractions for genuine reuse, separate responsibilities, or testability—not hypothetical complexity.
+- Validate untrusted data at each trust boundary and carry validated values/types internally; avoid repeating equivalent null/format checks. Revalidate changed state, permissions, and new trust boundaries where needed.
+- Preserve concrete security, integrity, concurrency, network, lifecycle, recovery, and resource-limit safeguards. Use `try/catch` where handling, cleanup, translation, or diagnostics add value; never silently swallow failures.
+- Choose focused tests proportional to regression risk. Never remove meaningful guards, failure tests, or quality gates just to shorten code.
