@@ -115,17 +115,29 @@ class MainActivity : Activity() {
     }
 
     private fun checkVpnReadiness() {
-        val selected = selectedApp != null
+        if (selectedApp == null) {
+            vpnStatus?.setText(R.string.vpn_readiness_no_app)
+            return
+        }
         val manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
-        val activeVpn = if (selected) {
-            manager.activeNetwork?.let { network ->
+        // The default network alone may not expose a VPN visible on another network.
+        // Even allNetworks is only a snapshot of networks visible to this app, not
+        // proof that no other VPN exists on the device.
+        val (visibleVpn, defaultNetworkAvailable) = try {
+            val defaultCaps = manager.activeNetwork?.let { manager.getNetworkCapabilities(it) }
+            val vpnOnDefault = defaultCaps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+            val vpnOnOtherVisibleNetwork = manager.allNetworks.any { network ->
                 manager.getNetworkCapabilities(network)
-                    ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
-            } == true
-        } else false
-        // A visible VPN blocks further checks. No consent Intent is launched, and no
-        // VPN service or TUN is created, even if Android reports prior preparation.
-        val prepared = if (selected && !activeVpn) {
+                    ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+            }
+            (vpnOnDefault || vpnOnOtherVisibleNetwork) to (defaultCaps != null)
+        } catch (_: SecurityException) {
+            vpnStatus?.setText(R.string.vpn_readiness_unavailable)
+            return
+        }
+        // Never interpret an unobservable default network as VPN readiness.
+        // Never launch the returned consent Intent, start a service or create a TUN.
+        val prepared = if (defaultNetworkAvailable && !visibleVpn) {
             try {
                 VpnService.prepare(this) == null
             } catch (_: SecurityException) {
@@ -133,9 +145,10 @@ class MainActivity : Activity() {
                 return
             }
         } else false
-        vpnStatus?.setText(when (vpnReadiness(selected, activeVpn, prepared)) {
+        vpnStatus?.setText(when (vpnReadiness(true, visibleVpn, defaultNetworkAvailable, prepared)) {
             VpnReadiness.NO_APP -> R.string.vpn_readiness_no_app
             VpnReadiness.VPN_ACTIVE -> R.string.vpn_readiness_vpn_active
+            VpnReadiness.NETWORK_UNAVAILABLE -> R.string.vpn_readiness_network_unavailable
             VpnReadiness.NEEDS_CONSENT -> R.string.vpn_readiness_consent_required
             VpnReadiness.PREPARED -> R.string.vpn_readiness_prepared
         })
