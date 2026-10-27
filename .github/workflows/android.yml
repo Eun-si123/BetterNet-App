@@ -46,6 +46,7 @@ jobs:
           printf 'source_commit=%s\nbuilt_commit=%s\nci_run=%s\n' \
             "$SOURCE_SHA" "$BUILT_SHA" "$RUN_URL" > BUILD_INFO.txt
           sha256sum app-debug.apk BUILD_INFO.txt > SHA256SUMS
+          bash "$GITHUB_WORKSPACE/scripts/verify-debug-apk.sh" . "$SOURCE_SHA" "$BUILT_SHA"
       - name: Upload test-only debug APK
         if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@v4
