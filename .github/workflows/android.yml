@@ -17,6 +17,15 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Install Android SDK packages
-        run: sdkmanager --install "platforms;android-36" "build-tools;35.0.0"
+        shell: bash
+        run: |
+          for cli in "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager; do
+            if [ -x "$cli" ]; then
+              "$cli" --install "platforms;android-36" "build-tools;35.0.0"
+              exit $?
+            fi
+          done
+          echo "::error::Android command-line SDK tools are missing"
+          exit 1
       - name: Test and build
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
