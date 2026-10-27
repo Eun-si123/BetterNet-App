@@ -1,12 +1,16 @@
 name: Android CI
 on:
   pull_request:
+    # A changed PR base must revalidate the new combined source tree.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 permissions:
   contents: read
 jobs:
   build:
+    # Skip cosmetic PR edits; only a base change merits another build.
+    if: github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base != null
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
