@@ -16,11 +16,13 @@ class AppChoiceTest {
 
     @Test fun collapsesMultipleLauncherActivitiesToOneApp() {
         val candidates = listOf(
-            AppChoice("com.example.browser", "Browser"),
             AppChoice("com.example.browser", "Browser shortcut"),
+            AppChoice("com.example.browser", "Browser"),
             AppChoice("com.example.mail", "Mail"),
         )
-        assertEquals(2, selectableApps(candidates, "io.betternet.next").size)
+        val choices = selectableApps(candidates, "io.betternet.next")
+        assertEquals(2, choices.size)
+        assertEquals(AppChoice("com.example.browser", "Browser"), choices.first())
     }
 
     @Test fun sortsWithoutDependingOnDeviceLocale() {
