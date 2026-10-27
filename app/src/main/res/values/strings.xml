@@ -21,4 +21,11 @@
   <string name="clear_app_selection">Clear test app selection</string>
   <string name="no_selectable_apps">No other launcher apps are visible. Nothing was selected.</string>
   <string name="selected_app_summary">Selected for future testing: %1$s (%2$s). No traffic is routed.</string>
+  <string name="vpn_readiness_not_checked">VPN readiness not checked. No connection is started.</string>
+  <string name="check_vpn_readiness">Check VPN readiness (no permission prompt)</string>
+  <string name="vpn_readiness_no_app">Select a test app first. No traffic is routed.</string>
+  <string name="vpn_readiness_vpn_active">A VPN is visible on the default network. BetterNet will not disturb it.</string>
+  <string name="vpn_readiness_unavailable">Android did not allow the readiness check. No VPN was started.</string>
+  <string name="vpn_readiness_consent_required">Android would require VPN consent. No prompt was opened and no VPN was started.</string>
+  <string name="vpn_readiness_prepared">Android reports prior VPN preparation. This is not a connection; no VPN was started.</string>
 </resources>
