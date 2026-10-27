@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.util.TypedValue
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 
 /** Local-only prototype: app selection never grants VPN access or routes traffic. */
@@ -20,7 +21,6 @@ class MainActivity : Activity() {
         val dp = resources.displayMetrics.density
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            fitsSystemWindows = true
             val pad = (24 * dp).toInt()
             setPadding(pad, pad, pad, pad)
         }
@@ -82,7 +82,12 @@ class MainActivity : Activity() {
             }
         })
         root.addView(clearButton)
-        setContentView(root)
+        // Keep the selection and clear controls reachable on small screens or large fonts.
+        setContentView(ScrollView(this).apply {
+            fitsSystemWindows = true
+            isFillViewport = true
+            addView(root)
+        })
     }
 
     private fun availableLauncherApps(): List<AppChoice> {
