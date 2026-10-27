@@ -94,8 +94,10 @@ class MainActivity : Activity() {
         val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val candidates = packageManager.queryIntentActivities(launcher, 0).mapNotNull { info ->
             val pkg = info.activityInfo?.packageName ?: return@mapNotNull null
-            val label = info.loadLabel(packageManager)?.toString()?.trim().orEmpty().ifBlank { pkg }
-            AppChoice(pkg, label)
+            // Launcher aliases may have misleading activity labels. Consent is per package,
+            // so show the canonical application label rather than a shortcut label.
+            val appLabel = info.activityInfo.applicationInfo?.loadLabel(packageManager)
+            AppChoice(pkg, appLabel?.toString()?.trim().orEmpty().ifBlank { pkg })
         }
         return selectableApps(candidates, packageName)
     }

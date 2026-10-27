@@ -25,6 +25,18 @@ class AppChoiceTest {
         assertEquals(AppChoice("com.example.browser", "Browser"), choices.first())
     }
 
+    @Test fun caseFoldedDuplicateLabelsAreStableAcrossQueryOrder() {
+        val candidates = listOf(
+            AppChoice("com.example.browser", "browser"),
+            AppChoice("com.example.browser", "Browser"),
+            AppChoice("com.example.mail", "Mail"),
+        )
+        val forward = selectableApps(candidates, "io.betternet.next")
+        val reversed = selectableApps(candidates.reversed(), "io.betternet.next")
+        assertEquals(forward, reversed)
+        assertEquals("Browser", forward.first().label)
+    }
+
     @Test fun sortsWithoutDependingOnDeviceLocale() {
         val candidates = listOf(
             AppChoice("com.example.z", "zebra"),
