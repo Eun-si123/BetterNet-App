@@ -1,17 +1,20 @@
 package io.betternet.next
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.util.TypedValue
-import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 
-/** Local-only prototype: no VPN, external requests, telemetry or route changes. */
+/** Local-only prototype: app selection never grants VPN access or routes traffic. */
 class MainActivity : Activity() {
+    private var selectedApp: AppChoice? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val dp = resources.displayMetrics.density
@@ -38,7 +41,58 @@ class MainActivity : Activity() {
             setText(R.string.refresh_network)
             setOnClickListener { status.text = currentNetworkDescription() }
         })
+
+        val selectedStatus = TextView(this).apply {
+            setText(R.string.no_app_selected)
+            setPadding(0, (16 * dp).toInt(), 0, 0)
+        }
+        root.addView(selectedStatus)
+        val clearButton = Button(this).apply {
+            setText(R.string.clear_app_selection)
+            isEnabled = false
+            setOnClickListener {
+                selectedApp = null
+                selectedStatus.setText(R.string.no_app_selected)
+                isEnabled = false
+            }
+        }
+        root.addView(Button(this).apply {
+            setText(R.string.select_test_app)
+            setOnClickListener {
+                val choices = availableLauncherApps()
+                if (choices.isEmpty()) {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setMessage(R.string.no_selectable_apps)
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show()
+                } else {
+                    val labels = choices.map { "${it.label} (${it.packageName})" }.toTypedArray()
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle(R.string.select_test_app)
+                        .setItems(labels) { _, index ->
+                            selectedApp = choices[index]
+                            selectedStatus.text = selectedApp?.let { chosen ->
+                                getString(R.string.selected_app_summary, chosen.label, chosen.packageName)
+                            } ?: getString(R.string.no_app_selected)
+                            clearButton.isEnabled = true
+                        }
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show()
+                }
+            }
+        })
+        root.addView(clearButton)
         setContentView(root)
+    }
+
+    private fun availableLauncherApps(): List<AppChoice> {
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val candidates = packageManager.queryIntentActivities(launcher, 0).mapNotNull { info ->
+            val pkg = info.activityInfo?.packageName ?: return@mapNotNull null
+            val label = info.loadLabel(packageManager)?.toString()?.trim().orEmpty().ifBlank { pkg }
+            AppChoice(pkg, label)
+        }
+        return selectableApps(candidates, packageName)
     }
 
     private fun currentNetworkDescription(): String {
