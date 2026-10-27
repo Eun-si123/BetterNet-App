@@ -31,9 +31,17 @@ jobs:
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
       # A0 manual testing: keep a short-lived, SHA-bound debug build accessible.
       # Never treat this as a signed release or an A1 connectivity result.
-      - name: Record debug APK checksum
+      - name: Record debug APK provenance and checksums
         if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-        run: (cd app/build/outputs/apk/debug && sha256sum app-debug.apk > SHA256SUMS)
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BUILT_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          cd app/build/outputs/apk/debug
+          printf 'source_commit=%s\nbuilt_commit=%s\nci_run=%s\n' \
+            "$SOURCE_SHA" "$BUILT_SHA" "$RUN_URL" > BUILD_INFO.txt
+          sha256sum app-debug.apk BUILD_INFO.txt > SHA256SUMS
       - name: Upload test-only debug APK
         if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@v4
@@ -41,6 +49,7 @@ jobs:
           name: betternet-app-debug-${{ github.sha }}
           path: |
             app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/BUILD_INFO.txt
             app/build/outputs/apk/debug/SHA256SUMS
           if-no-files-found: error
           retention-days: 7
