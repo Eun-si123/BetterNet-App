@@ -446,4 +446,96 @@ class GatewayTlsLoopbackTest {
         }
     }
 
+    private fun dnsQuery(): ByteArray = byteArrayOf(
+        0x12, 0x34, 0x01, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+        1, 'a'.code.toByte(), 4, 't'.code.toByte(), 'e'.code.toByte(),
+        's'.code.toByte(), 't'.code.toByte(), 0, 0, 1, 0, 1,
+    )
+
+    @Test fun verifiedTlsExchangesRealLengthFramedDnsBytes() {
+        val tls = contexts()
+        val query = dnsQuery()
+        val response = query.clone().apply { this[2] = 0x81.toByte(); this[3] = 0x80.toByte() }
+        withServer(tls.server, { peer ->
+            peer.startHandshake()
+            val prefix = peer.inputStream.readNBytes(2)
+            assertEquals(2, prefix.size)
+            assertEquals(query.size, ((prefix[0].toInt() and 255) shl 8) or (prefix[1].toInt() and 255))
+            val received = peer.inputStream.readNBytes(query.size)
+            assertArrayEquals(query, received)
+            peer.outputStream.write(byteArrayOf(0, response.size.toByte()))
+            peer.outputStream.write(response)
+            peer.outputStream.flush()
+        }) { address ->
+            connectVerifiedGatewayTls(address, "gateway.example", 3_000, { true },
+                tlsFactory = tls.trustedClient.socketFactory).use { socket ->
+                assertArrayEquals(response, exchangeOneDnsMessageOverTls(socket, query, 3_000))
+            }
+        }
+    }
+
+    @Test fun dnsTlsRejectsOversizedReplyAndClosesConnection() {
+        val tls = contexts()
+        withServer(tls.server, { peer ->
+            peer.startHandshake()
+            val prefix = peer.inputStream.readNBytes(2)
+            val length = ((prefix[0].toInt() and 255) shl 8) or (prefix[1].toInt() and 255)
+            assertEquals(dnsQuery().size, length)
+            assertEquals(length, peer.inputStream.readNBytes(length).size)
+            peer.outputStream.write(byteArrayOf(0x04, 0xd1.toByte())) // 1233 > budget
+            peer.outputStream.flush()
+        }) { address ->
+            connectVerifiedGatewayTls(address, "gateway.example", 3_000, { true },
+                tlsFactory = tls.trustedClient.socketFactory).use { socket ->
+                try {
+                    exchangeOneDnsMessageOverTls(socket, dnsQuery(), 3_000)
+                    fail("Oversized DNS response must be rejected")
+                } catch (_: java.io.IOException) {
+                    assertTrue("Framing failure must close the socket", socket.isClosed)
+                }
+            }
+        }
+    }
+
+    @Test fun dnsTlsRejectsTruncatedResponseAndClosesConnection() {
+        val tls = contexts()
+        withServer(tls.server, { peer ->
+            peer.startHandshake()
+            val prefix = peer.inputStream.readNBytes(2)
+            val length = ((prefix[0].toInt() and 255) shl 8) or (prefix[1].toInt() and 255)
+            peer.inputStream.readNBytes(length)
+            peer.outputStream.write(byteArrayOf(0, 25, 1, 2, 3))
+            peer.outputStream.flush()
+        }) { address ->
+            connectVerifiedGatewayTls(address, "gateway.example", 3_000, { true },
+                tlsFactory = tls.trustedClient.socketFactory).use { socket ->
+                try {
+                    exchangeOneDnsMessageOverTls(socket, dnsQuery(), 3_000)
+                    fail("Truncated DNS response must fail closed")
+                } catch (_: java.io.EOFException) {
+                    assertTrue(socket.isClosed)
+                }
+            }
+        }
+    }
+
+    @Test fun invalidDnsQueryRejectedBeforeAnyNetworkWrite() {
+        val tls = contexts()
+        withServer(tls.server, { peer ->
+            peer.startHandshake()
+            peer.soTimeout = 500
+            try {
+                assertEquals(-1, peer.inputStream.read())
+            } catch (_: java.net.SocketTimeoutException) { /* no query bytes were sent */ }
+        }) { address ->
+            connectVerifiedGatewayTls(address, "gateway.example", 3_000, { true },
+                tlsFactory = tls.trustedClient.socketFactory).use { socket ->
+                try {
+                    exchangeOneDnsMessageOverTls(socket, dnsQuery().apply { this[2] = 0x81.toByte() }, 3_000)
+                    fail("DNS response cannot be submitted as a query")
+                } catch (_: IllegalArgumentException) { /* rejected before output */ }
+            }
+        }
+    }
+
 }
