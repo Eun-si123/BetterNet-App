@@ -16,4 +16,6 @@ The new package is `io.betternet.next`, separate from existing BetterNet Develop
 
 Read [Milestone A](docs/MILESTONE_A.md) before proposing work. The previous private BetterNet research repository stays private; this is an independent implementation, not a public mirror.
 
+A dormant `VpnService` component now has a fail-closed single-app builder boundary for A1. It does not start, request VPN consent, establish a TUN, or send traffic. Android package lookup failures must not fall back to whole-device routing. The selected app is not yet connected to this service; gateway, DNS/TCP, IPv4/IPv6, MTU and VPN lifecycle work remain unimplemented.
+
 No license has been selected yet. Public visibility does not grant reuse rights automatically.
