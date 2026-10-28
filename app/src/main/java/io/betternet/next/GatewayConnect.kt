@@ -1,3 +1,13 @@
+package io.betternet.next
+
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.nio.charset.StandardCharsets
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
+
 /**
  * Dormant restricted HTTP/1.1 CONNECT test client. This single entry point
  * protects the socket, verifies the gateway TLS identity, then authenticates
