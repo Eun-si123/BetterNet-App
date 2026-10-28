@@ -79,6 +79,16 @@ class GatewayTlsTest {
         assertFalse(raw.closed)
     }
 
+    @Test fun invalidHostnameNeverCreatesOrConnectsSocket() {
+        var created = false
+        try {
+            connectVerifiedGatewayTls(address, "bad_name", 500, { true }, { created = true; ConnectedSocket() })
+            fail("Invalid hostname must abort before dial")
+        } catch (_: IllegalArgumentException) {
+            assertFalse(created)
+        }
+    }
+
     @Test fun protectionFailureNeverWrapsOrConnectsTls() {
         val events = mutableListOf<String>()
         val raw = ConnectedSocket()
