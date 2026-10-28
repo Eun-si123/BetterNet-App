@@ -123,21 +123,25 @@ class MainActivity : Activity() {
         // The default network alone may not expose a VPN visible on another network.
         // Even allNetworks is only a snapshot of networks visible to this app, not
         // proof that no other VPN exists on the device.
-        val (visibleVpn, defaultNetworkAvailable) = try {
+        val (visibleVpn, defaultNetworkAvailable, allVisibleNetworksObservable) = try {
             val defaultCaps = manager.activeNetwork?.let { manager.getNetworkCapabilities(it) }
-            val vpnOnDefault = defaultCaps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
-            val vpnOnOtherVisibleNetwork = manager.allNetworks.any { network ->
-                manager.getNetworkCapabilities(network)
-                    ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+            var vpnFound = defaultCaps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+            var observationComplete = true
+            // A listed network can disappear before its capabilities are read. Treat
+            // unknown capabilities as unavailable, not evidence that no VPN exists.
+            for (network in manager.allNetworks) {
+                val caps = manager.getNetworkCapabilities(network)
+                if (caps == null) observationComplete = false
+                else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) vpnFound = true
             }
-            (vpnOnDefault || vpnOnOtherVisibleNetwork) to (defaultCaps != null)
+            Triple(vpnFound, defaultCaps != null, observationComplete)
         } catch (_: SecurityException) {
             vpnStatus?.setText(R.string.vpn_readiness_unavailable)
             return
         }
         // Never interpret an unobservable default network as VPN readiness.
         // Never launch the returned consent Intent, start a service or create a TUN.
-        val prepared = if (defaultNetworkAvailable && !visibleVpn) {
+        val prepared = if (defaultNetworkAvailable && allVisibleNetworksObservable && !visibleVpn) {
             try {
                 VpnService.prepare(this) == null
             } catch (_: SecurityException) {
@@ -145,7 +149,7 @@ class MainActivity : Activity() {
                 return
             }
         } else false
-        vpnStatus?.setText(when (vpnReadiness(true, visibleVpn, defaultNetworkAvailable, prepared)) {
+        vpnStatus?.setText(when (vpnReadiness(true, visibleVpn, defaultNetworkAvailable, allVisibleNetworksObservable, prepared)) {
             VpnReadiness.NO_APP -> R.string.vpn_readiness_no_app
             VpnReadiness.VPN_ACTIVE -> R.string.vpn_readiness_vpn_active
             VpnReadiness.NETWORK_UNAVAILABLE -> R.string.vpn_readiness_network_unavailable

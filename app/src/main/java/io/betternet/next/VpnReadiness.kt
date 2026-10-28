@@ -7,11 +7,12 @@ internal fun vpnReadiness(
     selected: Boolean,
     visibleVpn: Boolean,
     defaultNetworkAvailable: Boolean,
+    allVisibleNetworksObservable: Boolean,
     prepared: Boolean,
 ): VpnReadiness = when {
     !selected -> VpnReadiness.NO_APP
     visibleVpn -> VpnReadiness.VPN_ACTIVE
-    !defaultNetworkAvailable -> VpnReadiness.NETWORK_UNAVAILABLE
+    !defaultNetworkAvailable || !allVisibleNetworksObservable -> VpnReadiness.NETWORK_UNAVAILABLE
     prepared -> VpnReadiness.PREPARED
     else -> VpnReadiness.NEEDS_CONSENT
 }
