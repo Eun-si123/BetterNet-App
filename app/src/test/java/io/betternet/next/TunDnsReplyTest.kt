@@ -40,10 +40,12 @@ class TunDnsReplyTest {
             length + 17 + sum(b, offset, length))
     }
 
+    // One real DNS IN/A question: a.test. An ID-only 12-byte header is not a query.
     private fun dnsQuery(): ByteArray = ByteArray(12).apply {
         this[0] = 0x12; this[1] = 0x34
         this[2] = 0x01; this[5] = 0x01
-    }
+    } + byteArrayOf(1, 'a'.code.toByte(), 4, 't'.code.toByte(),
+        'e'.code.toByte(), 's'.code.toByte(), 't'.code.toByte(), 0, 0, 1, 0, 1)
 
     private fun dnsResponse(): ByteArray = dnsQuery().apply {
         this[2] = 0x81.toByte(); this[3] = 0x80.toByte()
@@ -51,10 +53,10 @@ class TunDnsReplyTest {
 
     private fun request(ipv6: Boolean): TunIngressResult.Packet {
         val offset = if (ipv6) 40 else 20
-        val b = ByteArray(offset + 8 + 12)
+        val b = ByteArray(offset + 8 + dnsQuery().size)
         b[0] = if (ipv6) 0x60 else 0x45
         if (ipv6) {
-            set16(b, 4, 20)
+            set16(b, 4, 8 + dnsQuery().size)
             b[6] = 17; b[7] = 64
             b[8] = 0x20; b[9] = 0x01; b[23] = 1
             b[24] = 0x20; b[25] = 0x01; b[39] = 2
@@ -67,7 +69,7 @@ class TunDnsReplyTest {
         }
         set16(b, offset, 49152)
         set16(b, offset + 2, 53)
-        set16(b, offset + 4, 20)
+        set16(b, offset + 4, 8 + dnsQuery().size)
         dnsQuery().copyInto(b, offset + 8)
         val udpSum = udpChecksum(b, ipv6)
         set16(b, offset + 6, if (udpSum == 0) 65535 else udpSum)
@@ -77,7 +79,7 @@ class TunDnsReplyTest {
     @Test fun createsIpv4DnsReplyWithCorrectAddressesAndChecksums() {
         val original = request(false)
         val reply = buildDnsUdpReply(original, dnsResponse(), 1280)!!
-        assertEquals(40, reply.size)
+        assertEquals(28 + dnsResponse().size, reply.size)
         assertEquals(0, checksum(sum(reply, 0, 20)))
         assertEquals(0, udpChecksum(reply, false))
         val parsed = parseTunPacketHeader(reply, reply.size)!!
@@ -92,7 +94,7 @@ class TunDnsReplyTest {
     @Test fun createsIpv6DnsReplyWithMandatoryChecksum() {
         val original = request(true)
         val reply = buildDnsUdpReply(original, dnsResponse(), 1280)!!
-        assertEquals(60, reply.size)
+        assertEquals(48 + dnsResponse().size, reply.size)
         assertNotEquals(0, u16(reply, 46))
         assertEquals(0, udpChecksum(reply, true))
         val parsed = parseTunPacketHeader(reply, reply.size)!!
@@ -119,6 +121,52 @@ class TunDnsReplyTest {
         assertNull(buildDnsUdpReply(
             TunIngressResult.Packet(nonDns, original.header), dnsResponse(), 1280
         ))
+    }
+
+    @Test fun rejectsSameIdButDifferentDnsQuestionOrClass() {
+        for (ipv6 in listOf(false, true)) {
+            val original = request(ipv6)
+            // Same ID and QR, but another name, type, or class must not pass.
+            for (index in listOf(13, 20, 22)) {
+                val changed = dnsResponse().apply { this[index] = (this[index].toInt() xor 1).toByte() }
+                assertNull(buildDnsUdpReply(original, changed, 1280))
+            }
+            // A truncated response question and an invalid question count are rejected.
+            assertNull(buildDnsUdpReply(original, dnsResponse().copyOf(17), 1280))
+            assertNull(buildDnsUdpReply(original, dnsResponse().apply { this[5] = 2 }, 1280))
+        }
+    }
+
+    @Test fun rejectsCompressedMalformedAndTruncatedDnsQuestions() {
+        val original = request(false)
+        // Compression pointers are deliberately unsupported in the question.
+        assertNull(buildDnsUdpReply(original, dnsResponse().apply { this[12] = 0xc0.toByte() }, 1280))
+        assertNull(buildDnsUdpReply(original, dnsResponse().apply { this[12] = 64 }, 1280))
+        // Even a same-ID DNS error response must contain the same full question.
+        assertNull(buildDnsUdpReply(original, dnsResponse().copyOf(12), 1280))
+        for (change in listOf<(ByteArray) -> Unit>(
+            { it[28 + 12] = 64 }, // invalid label length
+            { it[28 + 5] = 2 }, // multiple questions unsupported
+        )) {
+            val brokenQuery = original.bytes.clone().apply {
+                change(this)
+                set16(this, 26, 0)
+                set16(this, 26, udpChecksum(this, false))
+            }
+            // Check the DNS boundary, not an unrelated UDP checksum failure.
+            assertEquals(0, udpChecksum(brokenQuery, false))
+            assertNull(buildDnsUdpReply(
+                TunIngressResult.Packet(brokenQuery, original.header), dnsResponse(), 1280
+            ))
+        }
+    }
+
+    @Test fun rejectsNonStandardDnsOpcodeAndTruncatedResponses() {
+        val original = request(true)
+        assertNull(buildDnsUdpReply(original, dnsResponse().apply { this[2] = 0x89.toByte() }, 1280))
+        assertNull(buildDnsUdpReply(original, dnsResponse().apply { this[2] = 0x83.toByte() }, 1280))
+        // NXDOMAIN is a legitimate authenticated response to the same question.
+        assertNotNull(buildDnsUdpReply(original, dnsResponse().apply { this[3] = 0x83.toByte() }, 1280))
     }
 
     @Test fun writesExactlyOneIpv4OrIpv6DnsDatagramWithoutActivation() {
@@ -162,7 +210,7 @@ class TunDnsReplyTest {
         val original = request(true)
         val before = original.bytes.clone()
         val maxPayload = ByteArray(1232).apply {
-            this[0] = 0x12; this[1] = 0x34; this[2] = 0x80.toByte()
+            dnsResponse().copyInto(this)
         }
         assertNotNull(buildDnsUdpReply(original, maxPayload, 1280))
         assertArrayEquals(before, original.bytes)

@@ -21,11 +21,9 @@ internal fun buildDnsUdpReply(
 
     val requestPayloadStart = header.transportOffset + 8
     if (original.size - requestPayloadStart < 12) return null
-    // DNS ID must match; only a query may receive a response.
-    if (original[requestPayloadStart] != dnsResponse[0] ||
-        original[requestPayloadStart + 1] != dnsResponse[1] ||
-        (original[requestPayloadStart + 2].toInt() and 0x80) != 0 ||
-        (dnsResponse[2].toInt() and 0x80) == 0) return null
+    // A 16-bit DNS ID alone does not correlate a response to a question.
+    // The authenticated upstream must also be bound to this outstanding request.
+    if (!hasMatchingDnsQuestion(original, requestPayloadStart, original.size, dnsResponse)) return null
 
     val originalUdpLength = original.size - header.transportOffset
     val originalChecksum = u16(original, header.transportOffset + 6)
@@ -88,6 +86,55 @@ internal fun writeOneDnsTunReply(
 ): Boolean {
     val reply = buildDnsUdpReply(request, dnsResponse, mtu) ?: return false
     output.write(reply)
+    return true
+}
+
+/**
+ * Accept only one uncompressed, identical IN question in a standard DNS
+ * query/response pair. Reject pointers, malformed labels and truncated
+ * questions rather than returning a same-ID answer for a different name/type.
+ * This is correlation, not upstream authentication or full DNS validation.
+ */
+private fun hasMatchingDnsQuestion(
+    queryPacket: ByteArray, queryStart: Int, queryEnd: Int, response: ByteArray,
+): Boolean {
+    val queryLength = queryEnd - queryStart
+    if (queryLength < 17 || response.size < 17) return false
+    if (queryPacket[queryStart] != response[0] ||
+        queryPacket[queryStart + 1] != response[1]) return false
+    val queryFlags = queryPacket[queryStart + 2].toInt() and 0xff
+    val responseFlags = response[2].toInt() and 0xff
+    if ((queryFlags and 0xfe) != 0 || // standard query, RD optionally set
+        (responseFlags and 0xfa) != 0x80 || // QR, no opcode or truncation
+        (queryPacket[queryStart + 3].toInt() and 0x4f) != 0 ||
+        (response[3].toInt() and 0x40) != 0) return false
+    if (u16(queryPacket, queryStart + 4) != 1 || u16(response, 4) != 1) return false
+
+    fun questionEnd(bytes: ByteArray, start: Int, limit: Int): Int? {
+        var at = start + 12
+        var nameLength = 1 // root terminator
+        while (at < limit) {
+            val labelLength = bytes[at++].toInt() and 0xff
+            if (labelLength == 0) {
+                if (at + 4 > limit) return null
+                // IN class only; other classes are outside the first DNS path.
+                if (u16(bytes, at + 2) != 1) return null
+                return at + 4
+            }
+            if (labelLength > 63 || at + labelLength > limit) return null
+            nameLength += 1 + labelLength
+            if (nameLength > 255) return null
+            at += labelLength
+        }
+        return null
+    }
+    val queryQuestionEnd = questionEnd(queryPacket, queryStart, queryEnd) ?: return false
+    val responseQuestionEnd = questionEnd(response, 0, response.size) ?: return false
+    val questionLength = queryQuestionEnd - (queryStart + 12)
+    if (questionLength != responseQuestionEnd - 12) return false
+    for (index in 0 until questionLength) {
+        if (queryPacket[queryStart + 12 + index] != response[12 + index]) return false
+    }
     return true
 }
 
