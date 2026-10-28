@@ -264,4 +264,153 @@ class GatewayTlsLoopbackTest {
             }
         }
     }
+
+    /** A test-only authenticated CONNECT relay and HTTPS origin; both bind loopback. */
+    @Test fun authenticatedLoopbackConnectCarriesEndToEndHttps() {
+        val tls = contexts()
+        val token = "TestOnlyOpaqueToken0123456789"
+        val origin = tls.server.serverSocketFactory.createServerSocket(
+            0, 1, InetAddress.getLoopbackAddress()
+        ) as SSLServerSocket
+        origin.soTimeout = 8_000
+        val originFailure = AtomicReference<Throwable?>()
+        val originWorker = Thread {
+            try {
+                origin.use { listener ->
+                    (listener.accept() as SSLSocket).use { peer ->
+                        peer.soTimeout = 5_000
+                        peer.startHandshake()
+                        val reader = peer.inputStream.bufferedReader()
+                        assertEquals("GET /real-https HTTP/1.1", reader.readLine())
+                        assertEquals("Host: gateway.example", reader.readLine())
+                        assertEquals("", reader.readLine())
+                        peer.outputStream.write(
+                            "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nORIGIN"
+                                .toByteArray(Charsets.US_ASCII)
+                        )
+                        peer.outputStream.flush()
+                    }
+                }
+            } catch (error: Throwable) {
+                originFailure.set(error)
+            }
+        }.apply { isDaemon = true; start() }
+        try {
+            withServer(tls.server, { gateway ->
+                gateway.startHandshake()
+                // Byte-at-a-time parsing prevents swallowing the first nested TLS byte.
+                val request = java.io.ByteArrayOutputStream()
+                val end = "\r\n\r\n".toByteArray(Charsets.US_ASCII)
+                var matched = 0
+                while (request.size() < 8192 && matched < 4) {
+                    val b = gateway.inputStream.read()
+                    if (b < 0) throw java.io.EOFException("CONNECT request truncated")
+                    request.write(b)
+                    matched = if (b == (end[matched].toInt() and 255)) matched + 1
+                        else if (b == 13) 1 else 0
+                }
+                assertEquals("CONNECT header exceeded limit", 4, matched)
+                val lines = String(request.toByteArray(), Charsets.US_ASCII).split("\r\n")
+                assertEquals("CONNECT allowed.example:" + origin.localPort + " HTTP/1.1", lines[0])
+                assertEquals("Host: allowed.example:" + origin.localPort, lines[1])
+                val presented = lines[2].removePrefix("Proxy-Authorization: Bearer ")
+                assertTrue("Gateway must verify token before dialing upstream",
+                    java.security.MessageDigest.isEqual(
+                        token.toByteArray(Charsets.US_ASCII),
+                        presented.toByteArray(Charsets.US_ASCII)
+                    )
+                )
+                java.net.Socket(InetAddress.getLoopbackAddress(), origin.localPort).use { upstream ->
+                    upstream.soTimeout = 5_000
+                    gateway.outputStream.write(
+                        "HTTP/1.1 200 Connection Established\r\n\r\n".toByteArray(Charsets.US_ASCII)
+                    )
+                    gateway.outputStream.flush()
+                    val forward = Thread {
+                        try {
+                            gateway.inputStream.copyTo(upstream.outputStream)
+                        } catch (_: java.io.IOException) {
+                            // Closing the test tunnel terminates this half of the relay.
+                        }
+                    }.apply { isDaemon = true; start() }
+                    upstream.inputStream.copyTo(gateway.outputStream)
+                    gateway.outputStream.flush()
+                    upstream.close()
+                    forward.join(5_000)
+                }
+            }) { address ->
+                val protection = mutableListOf<String>()
+                connectAuthenticatedTestTunnel(
+                    address, "gateway.example", 3_000,
+                    { protection.add("protected"); true },
+                    "allowed.example", origin.localPort, token,
+                    tlsFactory = tls.trustedClient.socketFactory,
+                ).use { tunnel ->
+                    assertEquals(listOf("protected"), protection)
+                    (tls.trustedClient.socketFactory.createSocket(
+                        tunnel, "gateway.example", origin.localPort, false
+                    ) as SSLSocket).use { endToEnd ->
+                        endToEnd.soTimeout = 5_000
+                        endToEnd.sslParameters = endToEnd.sslParameters.apply {
+                            endpointIdentificationAlgorithm = "HTTPS"
+                        }
+                        endToEnd.startHandshake()
+                        endToEnd.outputStream.write(
+                            "GET /real-https HTTP/1.1\r\nHost: gateway.example\r\n\r\n"
+                                .toByteArray(Charsets.US_ASCII)
+                        )
+                        endToEnd.outputStream.flush()
+                        val response = endToEnd.inputStream.bufferedReader().readText()
+                        assertTrue(response.startsWith("HTTP/1.1 200 OK\r\n"))
+                        assertTrue(response.endsWith("\r\n\r\nORIGIN"))
+                    }
+                }
+            }
+        } finally {
+            origin.close()
+            originWorker.join(8_000)
+        }
+        assertFalse("TLS origin hung", originWorker.isAlive)
+        originFailure.get()?.let { throw AssertionError("TLS origin failed", it) }
+    }
+
+
+    @Test fun loopbackGatewayRejectsWrongCredentialBeforeAnyUpstreamConnection() {
+        val tls = contexts()
+        val expected = "CorrectTestOnlyToken0123456789"
+        val upstreamDialed = java.util.concurrent.atomic.AtomicBoolean(false)
+        withServer(tls.server, { gateway ->
+            gateway.startHandshake()
+            val reader = gateway.inputStream.bufferedReader()
+            assertEquals("CONNECT allowed.example:443 HTTP/1.1", reader.readLine())
+            assertEquals("Host: allowed.example:443", reader.readLine())
+            val authHeader = reader.readLine()
+            assertEquals("", reader.readLine())
+            val actual = authHeader.removePrefix("Proxy-Authorization: Bearer ")
+            if (java.security.MessageDigest.isEqual(
+                    expected.toByteArray(Charsets.US_ASCII),
+                    actual.toByteArray(Charsets.US_ASCII)
+                )) {
+                upstreamDialed.set(true)
+            } else {
+                gateway.outputStream.write(
+                    "HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n"
+                        .toByteArray(Charsets.US_ASCII)
+                )
+                gateway.outputStream.flush()
+            }
+        }) { address ->
+            try {
+                connectAuthenticatedTestTunnel(
+                    address, "gateway.example", 3_000, { true },
+                    "allowed.example", 443, "WrongTestOnlyToken0123456789",
+                    tlsFactory = tls.trustedClient.socketFactory,
+                ).close()
+                fail("Wrong credential must not establish a tunnel")
+            } catch (_: java.io.IOException) {
+                assertFalse("No upstream dial is allowed before authentication", upstreamDialed.get())
+            }
+        }
+    }
+
 }
