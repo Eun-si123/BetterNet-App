@@ -1,5 +1,8 @@
 package io.betternet.next
 
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.io.OutputStream
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -116,6 +119,43 @@ class TunDnsReplyTest {
         assertNull(buildDnsUdpReply(
             TunIngressResult.Packet(nonDns, original.header), dnsResponse(), 1280
         ))
+    }
+
+    @Test fun writesExactlyOneIpv4OrIpv6DnsDatagramWithoutActivation() {
+        for (ipv6 in listOf(false, true)) {
+            val original = request(ipv6)
+            val out = ByteArrayOutputStream()
+            assertTrue(writeOneDnsTunReply(out, original, dnsResponse(), 1280))
+            val expected = buildDnsUdpReply(original, dnsResponse(), 1280)!!
+            assertArrayEquals(expected, out.toByteArray())
+            assertEquals(if (ipv6) 6 else 4,
+                parseTunPacketHeader(out.toByteArray(), out.size())!!.ipVersion)
+        }
+    }
+
+    @Test fun rejectsInvalidDnsReplyBeforeAnyOutput() {
+        val original = request(false)
+        val out = ByteArrayOutputStream()
+        assertFalse(writeOneDnsTunReply(out, original,
+            dnsResponse().apply { this[0] = 0x77 }, 1280))
+        assertFalse(writeOneDnsTunReply(out, original, ByteArray(11), 1280))
+        assertEquals(0, out.size())
+    }
+
+    @Test fun propagatesOutputFailureWithoutRetry() {
+        var attempts = 0
+        val broken = object : OutputStream() {
+            override fun write(b: Int) { throw AssertionError("Byte-wise fallback forbidden") }
+            override fun write(b: ByteArray) {
+                attempts++
+                throw IOException("TUN descriptor closed")
+            }
+        }
+        try {
+            writeOneDnsTunReply(broken, request(true), dnsResponse(), 1280)
+            fail("I/O failure must propagate to future VPN lifecycle owner")
+        } catch (_: IOException) { }
+        assertEquals(1, attempts)
     }
 
     @Test fun respectsMtuAndDoesNotModifyInput() {

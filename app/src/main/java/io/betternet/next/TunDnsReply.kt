@@ -1,5 +1,7 @@
 package io.betternet.next
 
+import java.io.OutputStream
+
 /**
  * Offline, packet-only A1 return-path primitive. Produces a DNS UDP response
  * for one already validated TUN request; it neither resolves DNS nor opens a
@@ -67,6 +69,26 @@ internal fun buildDnsUdpReply(
     val checksum = internetChecksum(sum)
     put16(reply, udpOffset + 6, if (checksum == 0) 0xffff else checksum)
     return reply
+}
+
+/**
+ * One dormant, bounded TUN return-path write. A caller must supply an already
+ * correlated and authenticated DNS response; this function performs no DNS
+ * lookup, VPN activation, or network access. Invalid replies write nothing.
+ *
+ * OutputStream.write(ByteArray) either writes the complete IP datagram or
+ * throws. Propagate I/O failures so a future pump can tear down its session;
+ * never retry an uncertain partial write as a new datagram.
+ */
+internal fun writeOneDnsTunReply(
+    output: OutputStream,
+    request: TunIngressResult.Packet,
+    dnsResponse: ByteArray,
+    mtu: Int,
+): Boolean {
+    val reply = buildDnsUdpReply(request, dnsResponse, mtu) ?: return false
+    output.write(reply)
+    return true
 }
 
 private fun u16(bytes: ByteArray, at: Int): Int =
