@@ -134,6 +134,7 @@ class GatewayTlsLoopbackTest {
     @Test fun authenticatedConnectPreservesFirstTunneledBytes() {
         val tls = contexts()
         val token = "TestOnlyOpaqueToken0123456789"
+        val events = mutableListOf<String>()
         withServer(tls.server, { peer ->
             peer.startHandshake()
             val lines = peer.inputStream.bufferedReader()
@@ -147,10 +148,12 @@ class GatewayTlsLoopbackTest {
             peer.outputStream.flush()
         }) { address ->
             connectAuthenticatedTestTunnel(
-                address, "gateway.example", 3_000, { true },
+                address, "gateway.example", 3_000, { events.add("protected"); true },
                 "allowed.example", 443, token,
                 tlsFactory = tls.trustedClient.socketFactory,
+                bind = { events.add("bound") },
             ).use {
+                    assertEquals(listOf("protected", "bound"), events)
                     val bytes = ByteArray(6)
                     var offset = 0
                     while (offset < bytes.size) {

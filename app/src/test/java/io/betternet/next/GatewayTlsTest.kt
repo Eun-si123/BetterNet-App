@@ -79,6 +79,21 @@ class GatewayTlsTest {
         assertFalse(raw.closed)
     }
 
+    @Test fun authenticatedConnectRefusesUnderlyingBindFailureBeforeTls() {
+        val events = mutableListOf<String>()
+        try {
+            connectAuthenticatedTestTunnel(
+                address, "gateway.example", 500,
+                { events.add("protect"); true },
+                "allowed.example", 443, "TestOnlyOpaqueToken0123456789",
+                bind = { events.add("bind"); throw IOException("underlying network disappeared") },
+            ).close()
+            fail("Failed network binding must abort the authenticated tunnel")
+        } catch (_: IOException) {
+            assertEquals(listOf("protect", "bind"), events)
+        }
+    }
+
     @Test fun invalidHostnameNeverCreatesOrConnectsSocket() {
         var created = false
         try {

@@ -42,6 +42,35 @@ class SelectedAppVpnService : VpnService() {
         manager: ConnectivityManager, network: Network, hostname: String,
         port: Int, timeoutMs: Int,
     ): SSLSocket {
+        val address = requireUnderlyingGatewayAddress(manager, network, hostname, port, timeoutMs)
+        return connectVerifiedGatewayTls(
+            address, hostname, timeoutMs, { socket -> protect(socket) },
+            bind = { socket -> network.bindSocket(socket) },
+        )
+    }
+
+    /** Same-network DNS, protection and binding for the authenticated test tunnel.
+     * Still dormant: no caller, VPN activation or outbound connection in the app.
+     */
+    internal fun newUnderlyingNetworkAuthenticatedTestTunnel(
+        manager: ConnectivityManager, network: Network, gatewayName: String,
+        gatewayPort: Int, timeoutMs: Int, destinationHost: String,
+        destinationPort: Int, bearerToken: String,
+    ): SSLSocket {
+        val address = requireUnderlyingGatewayAddress(
+            manager, network, gatewayName, gatewayPort, timeoutMs
+        )
+        return connectAuthenticatedTestTunnel(
+            address, gatewayName, timeoutMs, { socket -> protect(socket) },
+            destinationHost, destinationPort, bearerToken,
+            bind = { socket -> network.bindSocket(socket) },
+        )
+    }
+
+    private fun requireUnderlyingGatewayAddress(
+        manager: ConnectivityManager, network: Network, hostname: String,
+        port: Int, timeoutMs: Int,
+    ): InetSocketAddress {
         val capabilities = manager.getNetworkCapabilities(network)
         require(capabilities != null &&
             capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
@@ -50,10 +79,7 @@ class SelectedAppVpnService : VpnService() {
         }
         require(timeoutMs in 1..10_000) { "Gateway timeout must be bounded" }
         val address = resolveGatewayAddress(hostname, port) { network.getAllByName(it) }
-        return connectVerifiedGatewayTls(
-            address, hostname, timeoutMs, { socket -> protect(socket) },
-            bind = { socket -> network.bindSocket(socket) },
-        )
+        return address
     }
 
     // Explicit starts are not an activation mechanism. A future authenticated

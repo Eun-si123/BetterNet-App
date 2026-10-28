@@ -23,6 +23,7 @@ internal fun connectAuthenticatedTestTunnel(
     destinationPort: Int,
     bearerToken: String,
     tlsFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
+    bind: (Socket) -> Unit = {},
 ): SSLSocket {
     // Fail before any socket creation on malformed destination or credential.
     require(isValidGatewayName(destinationHost)) { "Invalid test destination" }
@@ -34,7 +35,7 @@ internal fun connectAuthenticatedTestTunnel(
         "Invalid gateway credential"
     }
     val gatewayTls = connectVerifiedGatewayTls(
-        gatewayAddress, gatewayName, timeoutMs, protect, tlsFactory = tlsFactory
+        gatewayAddress, gatewayName, timeoutMs, protect, tlsFactory = tlsFactory, bind = bind
     )
     try {
         val authority = "$destinationHost:$destinationPort"
