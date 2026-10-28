@@ -2,6 +2,8 @@ package io.betternet.next
 
 import android.content.Intent
 import android.net.VpnService
+import java.net.InetSocketAddress
+import java.net.Socket
 
 /**
  * A deliberately inactive A1 boundary. No code starts this service, asks for
@@ -18,6 +20,10 @@ class SelectedAppVpnService : VpnService() {
             }
         }
     }
+
+    /** A future TLS gateway dial must protect its socket before connecting. */
+    internal fun newProtectedGatewaySocket(address: InetSocketAddress, timeoutMs: Int): Socket =
+        connectProtectedSocket(address, timeoutMs, { socket -> protect(socket) })
 
     // Explicit starts are not an activation mechanism. A future authenticated
     // forwarding implementation must introduce a separately reviewed path.
@@ -42,4 +48,32 @@ internal fun addOnlySelectedApplication(
     addAllowedApplication: (String) -> Unit,
 ) {
     addAllowedApplication(requireSelectedPackage(selectedPackage, ownPackage))
+}
+
+/**
+ * A dormant socket-recursion guard. Accept only an already resolved address:
+ * name resolution must later use an explicitly chosen underlying Network.
+ * This helper never performs TLS or starts a connection unless called.
+ */
+internal fun connectProtectedSocket(
+    address: InetSocketAddress,
+    timeoutMs: Int,
+    protect: (Socket) -> Boolean,
+    createSocket: () -> Socket = { Socket() },
+): Socket {
+    require(!address.isUnresolved) { "Gateway address must be resolved on the underlying network" }
+    require(timeoutMs in 1..10_000) { "Gateway connect timeout must be bounded" }
+    val socket = createSocket()
+    try {
+        check(protect(socket)) { "Gateway socket could not be excluded from the VPN" }
+        socket.connect(address, timeoutMs)
+        return socket
+    } catch (failure: Throwable) {
+        try {
+            socket.close()
+        } catch (closeFailure: Throwable) {
+            failure.addSuppressed(closeFailure)
+        }
+        throw failure
+    }
 }
