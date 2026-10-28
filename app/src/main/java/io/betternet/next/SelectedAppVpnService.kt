@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.VpnService
 import java.net.InetSocketAddress
 import java.net.Socket
+import javax.net.ssl.SSLSocket
 
 /**
  * A deliberately inactive A1 boundary. No code starts this service, asks for
@@ -24,6 +25,10 @@ class SelectedAppVpnService : VpnService() {
     /** A future TLS gateway dial must protect its socket before connecting. */
     internal fun newProtectedGatewaySocket(address: InetSocketAddress, timeoutMs: Int): Socket =
         connectProtectedSocket(address, timeoutMs, { socket -> protect(socket) })
+
+    /** Dormant TLS dial: protect before TCP connect; verify gateway certificate and name. */
+    internal fun newVerifiedGatewaySocket(address: InetSocketAddress, serverName: String, timeoutMs: Int): SSLSocket =
+        connectVerifiedGatewayTls(address, serverName, timeoutMs, { socket -> protect(socket) })
 
     // Explicit starts are not an activation mechanism. A future authenticated
     // forwarding implementation must introduce a separately reviewed path.
