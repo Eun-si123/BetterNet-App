@@ -11,11 +11,12 @@ internal fun connectVerifiedGatewayTls(
     protect: (Socket) -> Boolean,
     socketFactory: () -> Socket = { Socket() },
     tlsFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
+    bind: (Socket) -> Unit = {},
 ): SSLSocket {
     // Validate identity before even opening a TCP connection.
     require(isValidGatewayName(serverName)) { "Invalid TLS gateway hostname" }
     return establishVerifiedGatewayTls(
-        connectProtectedSocket(address, timeoutMs, protect, socketFactory), address, serverName, tlsFactory
+        connectProtectedSocket(address, timeoutMs, protect, socketFactory, bind), address, serverName, tlsFactory
     )
 }
 

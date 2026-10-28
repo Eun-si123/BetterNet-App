@@ -74,6 +74,69 @@ class SelectedAppVpnServiceTest {
         assertEquals(listOf("protect", "connect:500"), events)
     }
 
+    @Test fun underlyingBindingRunsAfterProtectionAndBeforeConnect() {
+        val events = mutableListOf<String>()
+        val socket = RecordingSocket(events)
+        connectProtectedSocket(resolvedGateway, 500,
+            { events.add("protect"); true }, { socket }, { events.add("bind") })
+        assertEquals(listOf("protect", "bind", "connect:500"), events)
+    }
+
+    @Test fun bindingFailureClosesSocketWithoutDialingDefaultNetwork() {
+        val events = mutableListOf<String>()
+        try {
+            connectProtectedSocket(resolvedGateway, 500,
+                { events.add("protect"); true }, { RecordingSocket(events) },
+                { events.add("bind"); throw IOException("network lost") })
+            fail("Binding failure must abort")
+        } catch (_: IOException) {
+            assertEquals(listOf("protect", "bind", "close"), events)
+        }
+    }
+
+    @Test fun protectionRefusalNeverAttemptsBinding() {
+        val events = mutableListOf<String>()
+        try {
+            connectProtectedSocket(resolvedGateway, 500,
+                { events.add("protect"); false }, { RecordingSocket(events) },
+                { events.add("bind") })
+            fail("Protection failure must abort")
+        } catch (_: IllegalStateException) {
+            assertEquals(listOf("protect", "close"), events)
+        }
+    }
+
+    @Test fun underlyingDnsIsExplicitAndFailsClosed() {
+        val events = mutableListOf<String>()
+        val address = resolveGatewayAddress("gateway.example", 443) { host ->
+            events.add("lookup:" + host)
+            arrayOf(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
+        }
+        assertEquals(resolvedGateway, address)
+        assertEquals(listOf("lookup:gateway.example"), events)
+        for (host in listOf("bad_name", "gateway.example.", " gateway.example")) {
+            try {
+                resolveGatewayAddress(host, 443) { throw AssertionError("Must not resolve invalid host") }
+                fail("Invalid hostname must be rejected")
+            } catch (_: IllegalArgumentException) { }
+        }
+        try {
+            resolveGatewayAddress("gateway.example", 443) { emptyArray() }
+            fail("Empty DNS response must not fall back")
+        } catch (_: IllegalArgumentException) { }
+        val ipv6 = InetAddress.getByAddress(ByteArray(16).apply { this[15] = 1 })
+        val ipv6Address = resolveGatewayAddress("gateway.example", 443) { arrayOf(ipv6) }
+        assertEquals(ipv6, ipv6Address.address)
+        for (port in listOf(0, 65536)) {
+            try {
+                resolveGatewayAddress("gateway.example", port) {
+                    throw AssertionError("Invalid port must not trigger DNS")
+                }
+                fail("Invalid port must be rejected")
+            } catch (_: IllegalArgumentException) { }
+        }
+    }
+
     @Test fun protectionRefusalNeverConnectsAndClosesSocket() {
         val events = mutableListOf<String>()
         try {
