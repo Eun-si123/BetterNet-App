@@ -20,6 +20,16 @@ internal data class TunPacketHeader(
     val totalBytes: Int,
 )
 
+/** Validate the IPv4 header's one's-complement checksum before reading its addresses. */
+private fun hasValidIpv4HeaderChecksum(packet: ByteArray, headerBytes: Int): Boolean {
+    var sum = 0
+    for (i in 0 until headerBytes step 2) {
+        sum += ((packet[i].toInt() and 0xff) shl 8) or (packet[i + 1].toInt() and 0xff)
+    }
+    while (sum > 0xffff) sum = (sum and 0xffff) + (sum ushr 16)
+    return sum == 0xffff
+}
+
 /** Returns null for unsupported, truncated, inconsistent or fragmented packets. */
 internal fun parseTunPacketHeader(packet: ByteArray, readBytes: Int): TunPacketHeader? {
     if (readBytes !in 1..packet.size || readBytes > 65_575) return null
@@ -36,7 +46,9 @@ internal fun parseTunPacketHeader(packet: ByteArray, readBytes: Int): TunPacketH
         4 -> {
             if (readBytes < 20) return null
             ipHeaderBytes = (u8(0) and 0x0f) * 4
-            if (ipHeaderBytes < 20 || ipHeaderBytes > readBytes || u16(2) != readBytes) return null
+            // IPv4 options are not supported by this first forwarding boundary.
+            if (ipHeaderBytes != 20 || u16(2) != readBytes) return null
+            if (!hasValidIpv4HeaderChecksum(packet, ipHeaderBytes)) return null
             // Reserved bit, more-fragments flag, or nonzero fragment offset.
             if ((u16(6) and 0xbfff) != 0) return null
             protocol = u8(9)
@@ -64,6 +76,8 @@ internal fun parseTunPacketHeader(packet: ByteArray, readBytes: Int): TunPacketH
         length
     } else {
         if (u16(ipHeaderBytes + 4) != remaining) return null
+        // A zero UDP checksum is prohibited in IPv6 (RFC 8200).
+        if (version == 6 && u16(ipHeaderBytes + 6) == 0) return null
         8
     }
     return TunPacketHeader(

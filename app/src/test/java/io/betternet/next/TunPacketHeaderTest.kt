@@ -9,6 +9,16 @@ class TunPacketHeaderTest {
         bytes[at + 1] = value.toByte()
     }
 
+    private fun sealIpv4Header(bytes: ByteArray) {
+        set16(bytes, 10, 0)
+        var sum = 0
+        for (i in 0 until 20 step 2) {
+            sum += ((bytes[i].toInt() and 0xff) shl 8) or (bytes[i + 1].toInt() and 0xff)
+        }
+        while (sum > 0xffff) sum = (sum and 0xffff) + (sum ushr 16)
+        set16(bytes, 10, sum.inv() and 0xffff)
+    }
+
     private fun ipv4Tcp(): ByteArray = ByteArray(40).apply {
         this[0] = 0x45
         set16(this, 2, size)
@@ -17,6 +27,7 @@ class TunPacketHeaderTest {
         this[16] = 198.toByte(); this[17] = 51; this[18] = 100; this[19] = 2
         set16(this, 20, 43210); set16(this, 22, 443)
         this[32] = 0x50 // TCP data offset = 20 bytes
+        sealIpv4Header(this)
     }
 
     private fun ipv6Udp(): ByteArray = ByteArray(48).apply {
@@ -26,6 +37,7 @@ class TunPacketHeaderTest {
         this[8] = 0x20; this[9] = 0x01; this[10] = 0x0d; this[11] = 0x0b; this[23] = 1
         this[24] = 0x20; this[25] = 0x01; this[26] = 0x0d; this[27] = 0x0b; this[39] = 2
         set16(this, 40, 12345); set16(this, 42, 53); set16(this, 44, 8)
+        set16(this, 46, 0x1234) // Nonzero UDP checksum (presence, not yet validation)
     }
 
     @Test fun recognizesIpv4TcpWithoutSendingAnything() {
@@ -62,13 +74,32 @@ class TunPacketHeaderTest {
         assertNull(parseTunPacketHeader(udp, 48))
     }
 
+    @Test fun refusesCorruptedIpv4HeadersAndUnsupportedOptions() {
+        val tcp = ipv4Tcp()
+        tcp[8] = (tcp[8] + 1).toByte() // TTL changed without updating checksum
+        assertNull(parseTunPacketHeader(tcp, 40))
+        tcp[8] = (tcp[8] - 1).toByte()
+        assertNotNull(parseTunPacketHeader(tcp, 40))
+        tcp[0] = 0x46 // IPv4 options unsupported even if checksum is repaired
+        assertNull(parseTunPacketHeader(tcp, 40))
+    }
+
+    @Test fun refusesIpv6UdpWithMissingMandatoryChecksum() {
+        val udp = ipv6Udp()
+        set16(udp, 46, 0)
+        assertNull(parseTunPacketHeader(udp, 48))
+    }
+
     @Test fun refusesFragmentsExtensionsAndInvalidHeaders() {
         val tcp = ipv4Tcp()
         set16(tcp, 6, 0x2000) // More fragments
+        sealIpv4Header(tcp)
         assertNull(parseTunPacketHeader(tcp, 40))
         set16(tcp, 6, 0x0001) // Nonzero fragment offset
+        sealIpv4Header(tcp)
         assertNull(parseTunPacketHeader(tcp, 40))
         set16(tcp, 6, 0)
+        sealIpv4Header(tcp)
         tcp[32] = 0x40 // Too-short TCP header
         assertNull(parseTunPacketHeader(tcp, 40))
         tcp[32] = 0x60 // TCP options exceed packet
