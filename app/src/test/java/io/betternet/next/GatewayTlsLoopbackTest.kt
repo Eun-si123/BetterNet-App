@@ -154,6 +154,7 @@ class GatewayTlsLoopbackTest {
                 bind = { events.add("bound") },
             ).use {
                     assertEquals(listOf("protected", "bound"), events)
+                    assertEquals("CONNECT response budget must not constrain tunneled data", 10_000, it.soTimeout)
                     val bytes = ByteArray(6)
                     var offset = 0
                     while (offset < bytes.size) {
@@ -162,6 +163,35 @@ class GatewayTlsLoopbackTest {
                         offset += count
                     }
                     assertEquals("TUNNEL", String(bytes))
+            }
+        }
+    }
+
+    @Test fun slowDripConnectResponseExpiresOnWholeHeaderDeadline() {
+        val tls = contexts()
+        withServer(tls.server, { peer ->
+            peer.startHandshake()
+            val lines = peer.inputStream.bufferedReader()
+            while (lines.readLine()?.isNotEmpty() == true) { }
+            // Each byte arrives within the old per-read 10s timeout, but the
+            // incomplete response must still expire within the overall budget.
+            try {
+                for (byte in "HTTP/1.1 200".toByteArray(Charsets.US_ASCII)) {
+                    peer.outputStream.write(byte.toInt())
+                    peer.outputStream.flush()
+                    Thread.sleep(150)
+                }
+            } catch (_: java.io.IOException) { /* client closed after deadline */ }
+        }) { address ->
+            try {
+                connectAuthenticatedTestTunnel(
+                    address, "gateway.example", 500, { true },
+                    "allowed.example", 443, "TestOnlyOpaqueToken0123456789",
+                    tlsFactory = tls.trustedClient.socketFactory,
+                ).close()
+                fail("Slow-drip CONNECT must never establish a tunnel")
+            } catch (_: java.net.SocketTimeoutException) {
+                // The whole-header deadline, not the last-byte timeout, fired.
             }
         }
     }

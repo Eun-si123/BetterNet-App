@@ -69,6 +69,17 @@ class GatewayTlsTest {
         override fun createSocket(host: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket = throw AssertionError("Unexpected direct dial")
     }
 
+    @Test fun connectResponseBudgetIsWholeHeaderNotPerByte() {
+        val deadline = 1_000_000_000L
+        assertEquals(1000, remainingResponseTimeoutMs(deadline, 0))
+        assertEquals(1, remainingResponseTimeoutMs(deadline, deadline - 1))
+        assertEquals(10_000, remainingResponseTimeoutMs(Long.MAX_VALUE, 0))
+        try {
+            remainingResponseTimeoutMs(deadline, deadline)
+            fail("A stalled CONNECT header must expire even if individual bytes arrived")
+        } catch (_: java.net.SocketTimeoutException) { }
+    }
+
     @Test fun enablesIdentityVerificationBeforeHandshake() {
         val events = mutableListOf<String>()
         val tls = TestTlsSocket(events)

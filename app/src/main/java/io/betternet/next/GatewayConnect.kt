@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.nio.charset.StandardCharsets
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
@@ -49,7 +50,12 @@ internal fun connectAuthenticatedTestTunnel(
         // could consume the first tunneled bytes and silently corrupt the stream.
         val header = ByteArrayOutputStream()
         val suffix = IntArray(4)
+        // A per-read socket timeout alone permits an indefinitely slow response
+        // (one byte before every timeout). Bound the *whole* CONNECT header.
+        val responseDeadlineNanos = System.nanoTime() + timeoutMs * 1_000_000L
+        val tunnelReadTimeoutMs = gatewayTls.soTimeout
         while (header.size() < 8192) {
+            gatewayTls.soTimeout = remainingResponseTimeoutMs(responseDeadlineNanos, System.nanoTime())
             val next = gatewayTls.inputStream.read()
             if (next < 0) throw IOException("Gateway closed before CONNECT response")
             if (next > 0x7e || (next < 0x20 && next != 0x0d && next != 0x0a && next != 0x09)) {
@@ -78,6 +84,8 @@ internal fun connectAuthenticatedTestTunnel(
                         throw IOException("Unexpected CONNECT response body")
                     }
                 }
+                // The response deadline must not leak into subsequent tunnel reads.
+                gatewayTls.soTimeout = tunnelReadTimeoutMs
                 return gatewayTls
             }
         }
@@ -86,4 +94,12 @@ internal fun connectAuthenticatedTestTunnel(
         try { gatewayTls.close() } catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
         throw failure
     }
+}
+
+/** Monotonic whole-response budget; ceil milliseconds so positive time never becomes zero. */
+internal fun remainingResponseTimeoutMs(deadlineNanos: Long, nowNanos: Long): Int {
+    val remainingNanos = deadlineNanos - nowNanos
+    if (remainingNanos <= 0) throw SocketTimeoutException("Gateway CONNECT response deadline exceeded")
+    return (remainingNanos / 1_000_000L + if (remainingNanos % 1_000_000L == 0L) 0L else 1L)
+        .coerceIn(1L, 10_000L).toInt()
 }
