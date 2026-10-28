@@ -131,6 +131,105 @@ class GatewayTlsLoopbackTest {
         }
     }
 
+    @Test fun authenticatedConnectPreservesFirstTunneledBytes() {
+        val tls = contexts()
+        val token = "TestOnlyOpaqueToken0123456789"
+        withServer(tls.server, { peer ->
+            peer.startHandshake()
+            val lines = peer.inputStream.bufferedReader()
+            assertEquals("CONNECT allowed.example:443 HTTP/1.1", lines.readLine())
+            assertEquals("Host: allowed.example:443", lines.readLine())
+            assertEquals("Proxy-Authorization: Bearer $token", lines.readLine())
+            assertEquals("", lines.readLine())
+            peer.outputStream.write(
+                "HTTP/1.1 200 Connection Established\r\nX-Test: ok\r\n\r\nTUNNEL".toByteArray()
+            )
+            peer.outputStream.flush()
+        }) { address ->
+            connectAuthenticatedTestTunnel(
+                address, "gateway.example", 3_000, { true },
+                "allowed.example", 443, token,
+                tlsFactory = tls.trustedClient.socketFactory,
+            ).use {
+                    val bytes = ByteArray(6)
+                    var offset = 0
+                    while (offset < bytes.size) {
+                        val count = it.inputStream.read(bytes, offset, bytes.size - offset)
+                        assertTrue(count > 0)
+                        offset += count
+                    }
+                    assertEquals("TUNNEL", String(bytes))
+            }
+        }
+    }
+
+    @Test fun gatewayRejectsCredentialAndClientClosesTunnel() {
+        val tls = contexts()
+        withServer(tls.server, { peer ->
+            peer.startHandshake()
+            val lines = peer.inputStream.bufferedReader()
+            while (lines.readLine()?.isNotEmpty() == true) { }
+            peer.outputStream.write(
+                "HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n".toByteArray()
+            )
+            peer.outputStream.flush()
+        }) { address ->
+            try {
+                connectAuthenticatedTestTunnel(
+                    address, "gateway.example", 3_000, { true },
+                    "allowed.example", 443, "WrongTestOnlyToken012345",
+                    tlsFactory = tls.trustedClient.socketFactory,
+                ).close()
+                fail("Gateway must reject unauthorized CONNECT")
+            } catch (_: java.io.IOException) {
+                // The server rejected the credential; the client closes the socket.
+            }
+        }
+    }
+
+    @Test fun malformedSuccessAndOversizedHeadersFailClosed() {
+        val tls = contexts()
+        val badResponses = listOf(
+            "HTTP/1.1 200 Connection Established\r\nContent-Length: 1\r\n\r\nX",
+            "HTTP/1.1 200 Connection Established\r\nX-Pad: " +
+                "a".repeat(8192) + "\r\n\r\n",
+        )
+        for (response in badResponses) {
+            withServer(tls.server, { peer ->
+                peer.startHandshake()
+                val lines = peer.inputStream.bufferedReader()
+                while (lines.readLine()?.isNotEmpty() == true) { }
+                peer.outputStream.write(response.toByteArray())
+                peer.outputStream.flush()
+            }) { address ->
+                try {
+                    connectAuthenticatedTestTunnel(
+                        address, "gateway.example", 3_000, { true },
+                        "allowed.example", 443, "TestOnlyOpaqueToken0123456789",
+                        tlsFactory = tls.trustedClient.socketFactory,
+                    ).close()
+                    fail("Malformed CONNECT response must not establish tunnel")
+                } catch (_: java.io.IOException) {
+                    // Reject body-bearing 200 or an unbounded response header.
+                }
+            }
+        }
+    }
+
+    @Test fun invalidCredentialFailsBeforeAnyNetworkOperation() {
+        var protected = false
+        try {
+            connectAuthenticatedTestTunnel(
+                InetSocketAddress.createUnresolved("gateway.example", 443),
+                "gateway.example", 3_000, { protected = true; true },
+                "allowed.example", 443, "bad\r\nInjected: yes",
+            ).close()
+            fail("Credential CRLF injection must fail")
+        } catch (_: IllegalArgumentException) {
+            assertFalse(protected)
+        }
+    }
+
     @Test fun trustedCertificateWithWrongHostnameIsRejected() {
         val tls = contexts()
         withServer(tls.server, { peer ->

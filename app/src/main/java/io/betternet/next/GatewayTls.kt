@@ -58,7 +58,7 @@ internal fun establishVerifiedGatewayTls(
     }
 }
 
-private fun isValidGatewayName(name: String): Boolean {
+internal fun isValidGatewayName(name: String): Boolean {
     if (name.length !in 1..253 || name != name.trim() || name.endsWith('.')) return false
     return name.split('.').all { label ->
         label.length in 1..63 && label.first().isLetterOrDigit() &&
