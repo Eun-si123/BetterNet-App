@@ -16,4 +16,9 @@
   <string name="metered_yes">종량제 가능성 있음</string>
   <string name="metered_no">종량제로 보고되지 않음</string>
   <string name="network_summary">상태: %1$s\n네트워크: %2$s\n데이터 비용: %3$s</string>
+  <string name="no_app_selected">선택한 테스트 앱이 없습니다. 트래픽은 라우팅되지 않습니다.</string>
+  <string name="select_test_app">테스트 앱 선택 (라우팅 없음)</string>
+  <string name="clear_app_selection">테스트 앱 선택 해제</string>
+  <string name="no_selectable_apps">표시할 수 있는 다른 앱이 없습니다. 선택되지 않았습니다.</string>
+  <string name="selected_app_summary">향후 테스트용 선택: %1$s (%2$s). 트래픽은 라우팅되지 않습니다.</string>
 </resources>
