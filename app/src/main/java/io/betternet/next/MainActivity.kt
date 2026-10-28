@@ -5,6 +5,7 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.VpnService
 import android.os.Bundle
 import android.util.TypedValue
 import android.widget.Button
@@ -12,9 +13,10 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 
-/** Local-only prototype: app selection never grants VPN access or routes traffic. */
+/** Local-only prototype: selection and read-only VPN readiness never grant access or route traffic. */
 class MainActivity : Activity() {
     private var selectedApp: AppChoice? = null
+    private var vpnStatus: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,12 +49,24 @@ class MainActivity : Activity() {
             setPadding(0, (16 * dp).toInt(), 0, 0)
         }
         root.addView(selectedStatus)
+        val readiness = TextView(this).apply {
+            setText(R.string.vpn_readiness_not_checked)
+            setPadding(0, (16 * dp).toInt(), 0, 0)
+        }
+        vpnStatus = readiness
+        val checkVpnButton = Button(this).apply {
+            setText(R.string.check_vpn_readiness)
+            isEnabled = false
+            setOnClickListener { checkVpnReadiness() }
+        }
         val clearButton = Button(this).apply {
             setText(R.string.clear_app_selection)
             isEnabled = false
             setOnClickListener {
                 selectedApp = null
                 selectedStatus.setText(R.string.no_app_selected)
+                vpnStatus?.setText(R.string.vpn_readiness_not_checked)
+                checkVpnButton.isEnabled = false
                 isEnabled = false
             }
         }
@@ -75,6 +89,8 @@ class MainActivity : Activity() {
                                 getString(R.string.selected_app_summary, chosen.label, chosen.packageName)
                             } ?: getString(R.string.no_app_selected)
                             clearButton.isEnabled = true
+                            checkVpnButton.isEnabled = true
+                            vpnStatus?.setText(R.string.vpn_readiness_not_checked)
                         }
                         .setNegativeButton(android.R.string.cancel, null)
                         .show()
@@ -82,11 +98,63 @@ class MainActivity : Activity() {
             }
         })
         root.addView(clearButton)
+        root.addView(readiness)
+        root.addView(checkVpnButton)
         // Keep the selection and clear controls reachable on small screens or large fonts.
         setContentView(ScrollView(this).apply {
             fitsSystemWindows = true
             isFillViewport = true
             addView(root)
+        })
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Permission and network ownership can change while this activity is backgrounded.
+        vpnStatus?.setText(R.string.vpn_readiness_not_checked)
+    }
+
+    private fun checkVpnReadiness() {
+        if (selectedApp == null) {
+            vpnStatus?.setText(R.string.vpn_readiness_no_app)
+            return
+        }
+        val manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        // The default network alone may not expose a VPN visible on another network.
+        // Even allNetworks is only a snapshot of networks visible to this app, not
+        // proof that no other VPN exists on the device.
+        val (visibleVpn, defaultNetworkAvailable, allVisibleNetworksObservable) = try {
+            val defaultCaps = manager.activeNetwork?.let { manager.getNetworkCapabilities(it) }
+            var vpnFound = defaultCaps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+            var observationComplete = true
+            // A listed network can disappear before its capabilities are read. Treat
+            // unknown capabilities as unavailable, not evidence that no VPN exists.
+            for (network in manager.allNetworks) {
+                val caps = manager.getNetworkCapabilities(network)
+                if (caps == null) observationComplete = false
+                else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) vpnFound = true
+            }
+            Triple(vpnFound, defaultCaps != null, observationComplete)
+        } catch (_: SecurityException) {
+            vpnStatus?.setText(R.string.vpn_readiness_unavailable)
+            return
+        }
+        // Never interpret an unobservable default network as VPN readiness.
+        // Never launch the returned consent Intent, start a service or create a TUN.
+        val prepared = if (defaultNetworkAvailable && allVisibleNetworksObservable && !visibleVpn) {
+            try {
+                VpnService.prepare(this) == null
+            } catch (_: SecurityException) {
+                vpnStatus?.setText(R.string.vpn_readiness_unavailable)
+                return
+            }
+        } else false
+        vpnStatus?.setText(when (vpnReadiness(true, visibleVpn, defaultNetworkAvailable, allVisibleNetworksObservable, prepared)) {
+            VpnReadiness.NO_APP -> R.string.vpn_readiness_no_app
+            VpnReadiness.VPN_ACTIVE -> R.string.vpn_readiness_vpn_active
+            VpnReadiness.NETWORK_UNAVAILABLE -> R.string.vpn_readiness_network_unavailable
+            VpnReadiness.NEEDS_CONSENT -> R.string.vpn_readiness_consent_required
+            VpnReadiness.PREPARED -> R.string.vpn_readiness_prepared
         })
     }
 
