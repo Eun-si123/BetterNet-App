@@ -116,3 +116,68 @@ private fun checksumTcp(initial: Int): Int {
     while (sum > 0xffff) sum = (sum and 0xffff) + (sum ushr 16)
     return sum.inv() and 0xffff
 }
+
+
+/**
+ * Offline, bounded server-to-client TCP payload response for one established
+ * flow. No VPN or gateway invokes this yet. A zero receive window is preserved:
+ * this does not permit client payload or imply full TCP retransmission support.
+ */
+internal fun buildTcpDataReply(
+    source: java.net.InetAddress,
+    destination: java.net.InetAddress,
+    sourcePort: Int,
+    destinationPort: Int,
+    sequence: Long,
+    acknowledgement: Long,
+    payload: ByteArray,
+    mtu: Int,
+): ByteArray? {
+    require(mtu in 1280..9000) { "TUN MTU must support IPv6 and be bounded" }
+    val src = source.address
+    val dst = destination.address
+    if (src.size !in listOf(4, 16) || dst.size != src.size ||
+        sourcePort !in 1..65535 || destinationPort !in 1..65535 ||
+        sequence !in 0..0xffff_ffffL || acknowledgement !in 0..0xffff_ffffL) return null
+    val ipBytes = if (src.size == 4) 20 else 40
+    if (payload.isEmpty() || payload.size > minOf(1460, mtu - ipBytes - 20)) return null
+    val tcpBytes = 20 + payload.size
+    val reply = ByteArray(ipBytes + tcpBytes)
+    fun put16(at: Int, value: Int) {
+        reply[at] = (value ushr 8).toByte()
+        reply[at + 1] = value.toByte()
+    }
+    fun put32(at: Int, value: Long) {
+        put16(at, (value ushr 16).toInt())
+        put16(at + 2, value.toInt())
+    }
+    if (src.size == 4) {
+        reply[0] = 0x45
+        put16(2, reply.size)
+        put16(6, 0x4000)
+        reply[8] = 64
+        reply[9] = 6
+        src.copyInto(reply, 12)
+        dst.copyInto(reply, 16)
+    } else {
+        reply[0] = 0x60
+        put16(4, tcpBytes)
+        reply[6] = 6
+        reply[7] = 64
+        src.copyInto(reply, 8)
+        dst.copyInto(reply, 24)
+    }
+    put16(ipBytes, sourcePort)
+    put16(ipBytes + 2, destinationPort)
+    put32(ipBytes + 4, sequence)
+    put32(ipBytes + 8, acknowledgement)
+    reply[ipBytes + 12] = 0x50
+    reply[ipBytes + 13] = 0x18 // PSH | ACK
+    put16(ipBytes + 14, 0) // No client payload accepted.
+    payload.copyInto(reply, ipBytes + 20)
+    val pseudo = wordSumTcp(src, 0, src.size) +
+        wordSumTcp(dst, 0, dst.size) + tcpBytes + 6
+    put16(ipBytes + 16, checksumTcp(pseudo + wordSumTcp(reply, ipBytes, tcpBytes)))
+    if (src.size == 4) put16(10, checksumTcp(wordSumTcp(reply, 0, 20)))
+    return reply
+}

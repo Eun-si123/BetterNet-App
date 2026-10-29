@@ -22,6 +22,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
 
     private var flow: Flow? = null
     private var acked = false
+    private var pendingResponseBytes = 0
 
     fun begin(syn: TunIngressResult.Packet, serverIsn: Long, mtu: Int, nowMillis: Long): ByteArray? {
         if (nowMillis < 0) return null
@@ -38,6 +39,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             (serverIsn + 1) and 0xffff_ffffL, nowMillis,
         )
         acked = false
+        pendingResponseBytes = 0
         return synAck
     }
 
@@ -64,6 +66,49 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         return true
     }
 
+    /**
+     * Prepare at most one bounded outbound TCP data segment after the handshake.
+     * A future gateway controller must own delivery/retransmission before use.
+     * The receive window remains zero; client application bytes are NOT accepted.
+     */
+    fun offerResponse(payload: ByteArray, mtu: Int, nowMillis: Long): ByteArray? {
+        expire(nowMillis)
+        val current = flow ?: return null
+        if (!acked || pendingResponseBytes != 0) return null
+        val reply = buildTcpDataReply(
+            current.destination, current.source,
+            current.destinationPort, current.sourcePort,
+            current.serverNext, current.clientNext, payload, mtu,
+        ) ?: return null
+        pendingResponseBytes = payload.size
+        return reply
+    }
+
+    /** Advance the server sequence only on an exact, checksummed peer ACK. */
+    fun acceptResponseAck(packet: TunIngressResult.Packet, nowMillis: Long): Boolean {
+        expire(nowMillis)
+        val current = flow ?: return false
+        if (!acked || pendingResponseBytes == 0) return false
+        val bytes = packet.bytes
+        val header = parseTunPacketHeader(bytes, bytes.size) ?: return false
+        if (header.protocol != 6 || header.source != current.source ||
+            header.destination != current.destination ||
+            header.sourcePort != current.sourcePort ||
+            header.destinationPort != current.destinationPort ||
+            header.transportHeaderBytes != 20 ||
+            header.transportOffset + 20 != bytes.size) return false
+        val offset = header.transportOffset
+        if ((bytes[offset + 12].toInt() and 15) != 0 ||
+            (bytes[offset + 13].toInt() and 255) != 0x10 ||
+            read16(bytes, offset + 18) != 0 ||
+            read32(bytes, offset + 4) != current.clientNext ||
+            read32(bytes, offset + 8) !=
+                ((current.serverNext + pendingResponseBytes) and 0xffff_ffffL)) return false
+        flow = current.copy(serverNext = (current.serverNext + pendingResponseBytes) and 0xffff_ffffL)
+        pendingResponseBytes = 0
+        return true
+    }
+
     fun isEstablished(nowMillis: Long): Boolean {
         expire(nowMillis)
         return acked
@@ -72,6 +117,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     fun close() {
         flow = null
         acked = false
+        pendingResponseBytes = 0
     }
 
     private fun expire(nowMillis: Long) {

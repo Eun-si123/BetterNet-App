@@ -196,6 +196,66 @@ class TunTcpSynAckTest {
         assertTrue(handshake.acceptFinalAck(finalAck(syn, 60), 113))
     }
 
+    @Test fun returnsBoundedChecksummedDataAndTracksExactAcknowledgement() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val handshake = OfflineTcpHandshake(1000)
+            val serverIsn = 0xffff_fffdL
+            assertNotNull(handshake.begin(syn, serverIsn, 1280, 100))
+            val payload = "hello".toByteArray(Charsets.US_ASCII)
+            assertNull(handshake.offerResponse(payload, 1280, 101)) // third ACK missing
+            assertTrue(handshake.acceptFinalAck(finalAck(syn, serverIsn), 102))
+            assertNull(handshake.offerResponse(byteArrayOf(), 1280, 103))
+            assertNull(handshake.offerResponse(ByteArray(2000), 1280, 103))
+            val response = handshake.offerResponse(payload, 1280, 104)!!
+            val ip = if (version == 4) 20 else 40
+            assertEquals(ip + 20 + payload.size, response.size)
+            assertEquals(0, tcpChecksum(response, version))
+            if (version == 4) assertEquals(0, checksum(sum(response, 0, 20)))
+            val header = parseTunPacketHeader(response, response.size)!!
+            assertEquals(syn.header.destination, header.source)
+            assertEquals(syn.header.source, header.destination)
+            assertEquals(443, header.sourcePort)
+            assertEquals(49152, header.destinationPort)
+            assertEquals(0xffff_fffeL, u32(response, ip + 4))
+            assertEquals(0L, u32(response, ip + 8))
+            assertEquals(0x18, response[ip + 13].toInt() and 255)
+            assertEquals(0, u16(response, ip + 14))
+            assertArrayEquals(payload, response.copyOfRange(ip + 20, response.size))
+            assertNull(handshake.offerResponse(payload, 1280, 105)) // one in-flight only
+
+            assertFalse(handshake.acceptResponseAck(finalAck(syn, serverIsn, acknowledgement = 2), 106))
+            assertFalse(handshake.acceptResponseAck(finalAck(syn, serverIsn,
+                acknowledgement = 3, flags = 0x18), 107))
+            assertFalse(handshake.acceptResponseAck(finalAck(syn, serverIsn,
+                acknowledgement = 3, sourcePort = 49153), 108))
+            assertFalse(handshake.acceptResponseAck(finalAck(syn, serverIsn,
+                acknowledgement = 3, sequence = 1), 109))
+            assertTrue(handshake.acceptResponseAck(finalAck(syn, serverIsn,
+                acknowledgement = 3), 110))
+            assertFalse(handshake.acceptResponseAck(finalAck(syn, serverIsn,
+                acknowledgement = 3), 111))
+            val second = handshake.offerResponse(byteArrayOf(42), 1280, 112)!!
+            assertEquals(3L, u32(second, ip + 4)) // wrapped and advanced
+            assertFalse(handshake.acceptResponseAck(finalAck(syn, serverIsn,
+                acknowledgement = 4), 110)) // clock rollback fails closed
+            assertFalse(handshake.isEstablished(113))
+        }
+    }
+
+    @Test fun responseReplyRejectsInvalidMtuPayloadAndAddressFamily() {
+        val syn = request(4)
+        val handshake = OfflineTcpHandshake(100)
+        assertNotNull(handshake.begin(syn, 123L, 1280, 10))
+        assertTrue(handshake.acceptFinalAck(finalAck(syn, 123L), 11))
+        assertNull(handshake.offerResponse(ByteArray(1241), 1280, 12))
+        assertNotNull(handshake.offerResponse(ByteArray(1240), 1280, 13))
+        assertFalse(handshake.acceptResponseAck(finalAck(syn, 123L, acknowledgement = 1364), 110))
+        assertFalse(handshake.isEstablished(111))
+        assertNull(buildTcpDataReply(syn.header.source, java.net.InetAddress.getByAddress(ByteArray(16)),
+            443, 49152, 1, 1, byteArrayOf(1), 1280))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsUnboundedMtu() {
         buildTcpSynAck(request(4), 123L, 1000)
