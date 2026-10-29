@@ -16,7 +16,8 @@ internal fun connectVerifiedGatewayTls(
     // Validate identity before even opening a TCP connection.
     require(isValidGatewayName(serverName)) { "Invalid TLS gateway hostname" }
     return establishVerifiedGatewayTls(
-        connectProtectedSocket(address, timeoutMs, protect, socketFactory, bind), address, serverName, tlsFactory
+        connectProtectedSocket(address, timeoutMs, protect, socketFactory, bind),
+        address, serverName, tlsFactory, timeoutMs
     )
 }
 
@@ -31,8 +32,10 @@ internal fun establishVerifiedGatewayTls(
     resolvedAddress: InetSocketAddress,
     serverName: String,
     factory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
+    handshakeTimeoutMs: Int = 10_000,
 ): SSLSocket {
     try {
+        require(handshakeTimeoutMs in 1..10_000) { "TLS handshake timeout must be bounded" }
         require(!resolvedAddress.isUnresolved) { "Gateway address must be resolved" }
         require(protectedSocket.isConnected && !protectedSocket.isClosed) { "Protected socket must be connected" }
         require(isValidGatewayName(serverName)) { "Invalid TLS gateway hostname" }
@@ -40,7 +43,9 @@ internal fun establishVerifiedGatewayTls(
         val tls = factory.createSocket(protectedSocket, serverName, resolvedAddress.port, true) as SSLSocket
         try {
             tls.useClientMode = true
-            tls.soTimeout = 10_000
+            // Cap TLS handshake socket reads by the caller's budget,
+            // not the previous fixed 10-second timeout.
+            tls.soTimeout = handshakeTimeoutMs
             val secureProtocols = tls.supportedProtocols.filter { it == "TLSv1.3" || it == "TLSv1.2" }
             check(secureProtocols.isNotEmpty()) { "No acceptable TLS protocol" }
             tls.enabledProtocols = secureProtocols.toTypedArray()

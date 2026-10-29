@@ -3,6 +3,7 @@ package io.betternet.next
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketAddress
 import java.io.IOException
 import javax.net.ssl.HandshakeCompletedListener
 import javax.net.ssl.SSLParameters
@@ -88,6 +89,52 @@ class GatewayTlsTest {
         assertEquals(listOf("wrap:gateway.example:443:true", "timeout:10000", "protocols", "identity:HTTPS", "handshake"), events)
         assertArrayEquals(arrayOf("TLSv1.3", "TLSv1.2"), tls.enabledProtocols)
         assertFalse(raw.closed)
+    }
+
+    @Test fun callerBudgetBoundsTlsHandshakeAndInvalidBudgetClosesSocket() {
+        val events = mutableListOf<String>()
+        val tls = TestTlsSocket(events)
+        val raw = ConnectedSocket()
+        assertSame(tls, establishVerifiedGatewayTls(
+            raw, address, "gateway.example", TestFactory(tls, events), 250
+        ))
+        assertEquals("timeout:250", events[1])
+        assertTrue(events.indexOf("timeout:250") < events.indexOf("handshake"))
+
+        // Verify the public dial path propagates the caller budget through
+        // protect -> connect -> TLS, without opening a real network socket.
+        val dialEvents = mutableListOf<String>()
+        val dialTls = TestTlsSocket(dialEvents)
+        val dialSocket = object : Socket() {
+            override fun isConnected() = true
+            override fun connect(endpoint: SocketAddress?, timeout: Int) {
+                dialEvents.add("connect:$timeout")
+            }
+        }
+        assertSame(dialTls, connectVerifiedGatewayTls(
+            address, "gateway.example", 250,
+            { dialEvents.add("protect"); true },
+            { dialSocket }, TestFactory(dialTls, dialEvents)
+        ))
+        assertEquals(listOf(
+            "protect", "connect:250", "wrap:gateway.example:443:true",
+            "timeout:250", "protocols", "identity:HTTPS", "handshake"
+        ), dialEvents)
+
+        for (invalid in listOf(0, 10_001)) {
+            val rejectedEvents = mutableListOf<String>()
+            val rejectedRaw = ConnectedSocket()
+            try {
+                establishVerifiedGatewayTls(
+                    rejectedRaw, address, "gateway.example",
+                    TestFactory(TestTlsSocket(rejectedEvents), rejectedEvents), invalid
+                )
+                fail("Invalid TLS handshake budget must be rejected")
+            } catch (_: IllegalArgumentException) {
+                assertTrue(rejectedRaw.closed)
+                assertTrue("Invalid budget must not create TLS", rejectedEvents.isEmpty())
+            }
+        }
     }
 
     @Test fun authenticatedConnectRefusesUnderlyingBindFailureBeforeTls() {
