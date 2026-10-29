@@ -23,6 +23,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     private var flow: Flow? = null
     private var acked = false
     private var pendingResponseBytes = 0
+    private var lastSeenAt = -1L
 
     fun begin(syn: TunIngressResult.Packet, serverIsn: Long, mtu: Int, nowMillis: Long): ByteArray? {
         if (nowMillis < 0) return null
@@ -40,6 +41,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         )
         acked = false
         pendingResponseBytes = 0
+        lastSeenAt = nowMillis
         return synAck
     }
 
@@ -118,12 +120,18 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         flow = null
         acked = false
         pendingResponseBytes = 0
+        lastSeenAt = -1L
     }
 
     private fun expire(nowMillis: Long) {
         val current = flow ?: return
-        // Negative or non-monotonic time is not a reason to extend a lease.
-        if (nowMillis < current.startedAt || nowMillis - current.startedAt >= lifetimeMillis) close()
+        // Reject rollback relative to the most recent operation, not merely
+        // the initial SYN. The lease also has a fixed absolute deadline.
+        if (nowMillis < lastSeenAt || nowMillis - current.startedAt >= lifetimeMillis) {
+            close()
+        } else {
+            lastSeenAt = nowMillis
+        }
     }
 
     private fun read16(bytes: ByteArray, at: Int): Int =
