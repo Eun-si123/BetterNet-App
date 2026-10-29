@@ -466,7 +466,11 @@ class TunTcpSynAckTest {
             assertNotNull(flow.offerResponse(byteArrayOf(1), 1280, 104))
             assertNull(flow.acceptClientFin(fin, 105) { shutdowns++ }) // pending response
             assertTrue(flow.acceptResponseAck(finalAck(syn, isn, acknowledgement = 1), 106))
-            val ack = flow.acceptClientFin(fin, 107) { shutdowns++ }!!
+            // The FIN must acknowledge the response that was just accepted;
+            // the original pre-response FIN is stale and must not half-close.
+            assertNull(flow.acceptClientFin(fin, 107) { shutdowns++ })
+            val acknowledgedFin = finalAck(syn, isn, flags = 0x11, acknowledgement = 1)
+            val ack = flow.acceptClientFin(acknowledgedFin, 107) { shutdowns++ }!!
             val ip = if (version == 4) 20 else 40
             assertEquals(1, shutdowns)
             assertEquals(0, tcpChecksum(ack, version))
