@@ -1,5 +1,7 @@
 package io.betternet.next
 
+import java.io.InputStream
+import java.io.IOException
 import java.io.OutputStream
 
 /**
@@ -162,6 +164,40 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         ) ?: return null
         pendingResponseBytes = payload.size
         return reply
+    }
+
+    /**
+     * Read at most one MTU-sized segment from a caller-owned, authenticated
+     * CONNECT tunnel and prepare its TUN reply. Never consume stream bytes if
+     * the flow cannot accept another unacknowledged response segment.
+     *
+     * The caller must configure a bounded socket read timeout and serialize
+     * access to this offline flow. EOF or a read failure retires the flow; a
+     * zero-byte read does not advance it. No VPN or socket is created here.
+     */
+    fun readTunnelResponse(tunnelInput: InputStream, mtu: Int, nowMillis: Long): ByteArray? {
+        require(mtu in 1280..9000) { "TUN MTU must support IPv6 and be bounded" }
+        expire(nowMillis)
+        val current = flow ?: return null
+        if (!acked || pendingResponseBytes != 0 || pendingClientPayload != null) return null
+        val ipBytes = if (current.source.address.size == 4) 20 else 40
+        val buffer = ByteArray(minOf(1460, mtu - ipBytes - 20))
+        val read = try {
+            tunnelInput.read(buffer, 0, buffer.size)
+        } catch (failure: IOException) {
+            close()
+            try { tunnelInput.close() } catch (closeFailure: IOException) {
+                failure.addSuppressed(closeFailure)
+            }
+            throw failure
+        }
+        if (read < 0) {
+            close()
+            tunnelInput.close()
+            return null
+        }
+        if (read == 0) return null
+        return offerResponse(buffer.copyOf(read), mtu, nowMillis)
     }
 
     /** Advance the server sequence only on an exact, checksummed peer ACK. */

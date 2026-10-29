@@ -1,5 +1,7 @@
 package io.betternet.next
 
+import java.io.ByteArrayInputStream
+import java.io.InputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.OutputStream
@@ -356,5 +358,60 @@ class TunTcpSynAckTest {
     @Test(expected = IllegalArgumentException::class)
     fun rejectsUnboundedMtu() {
         buildTcpSynAck(request(4), 123L, 1000)
+    }
+
+    @Test fun readsOnlyOneMtuBoundedGatewaySegmentUntilClientAckForBothFamilies() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val flow = OfflineTcpHandshake()
+            val isn = 0x1234L
+            assertNotNull(flow.begin(syn, isn, 1280, 100))
+            val sourceBytes = ByteArray(1400) { (it % 251).toByte() }
+            val stream = ByteArrayInputStream(sourceBytes)
+            assertNull(flow.readTunnelResponse(stream, 1280, 101)) // not established
+            assertEquals(sourceBytes.size, stream.available())
+            assertTrue(flow.acceptFinalAck(finalAck(syn, isn), 102))
+            val first = flow.readTunnelResponse(stream, 1280, 103)!!
+            val ip = if (version == 4) 20 else 40
+            val segmentSize = 1280 - ip - 20
+            assertEquals(0, tcpChecksum(first, version))
+            assertArrayEquals(sourceBytes.copyOfRange(0, segmentSize),
+                first.copyOfRange(ip + 20, first.size))
+            assertEquals(sourceBytes.size - segmentSize, stream.available())
+            assertNull(flow.readTunnelResponse(stream, 1280, 104)) // no read-ahead
+            assertEquals(sourceBytes.size - segmentSize, stream.available())
+            assertTrue(flow.acceptResponseAck(finalAck(syn, isn,
+                acknowledgement = (isn + 1 + segmentSize) and 0xffff_ffffL), 105))
+            val second = flow.readTunnelResponse(stream, 1280, 106)!!
+            assertArrayEquals(sourceBytes.copyOfRange(segmentSize, sourceBytes.size),
+                second.copyOfRange(ip + 20, second.size))
+            assertEquals(0, stream.available())
+            assertTrue(flow.acceptResponseAck(finalAck(syn, isn,
+                acknowledgement = (isn + 1 + sourceBytes.size) and 0xffff_ffffL), 107))
+            assertNull(flow.readTunnelResponse(stream, 1280, 108)) // EOF retires flow
+            assertFalse(flow.isEstablished(109))
+        }
+    }
+
+    @Test fun gatewayReadFailureClosesFlowAndDoesNotGenerateResponse() {
+        val syn = request(4)
+        val flow = OfflineTcpHandshake()
+        assertNotNull(flow.begin(syn, 99, 1280, 1))
+        assertTrue(flow.acceptFinalAck(finalAck(syn, 99), 2))
+        var closed = false
+        val broken = object : InputStream() {
+            override fun read(): Int = throw IOException("simulated tunnel read failure")
+            override fun read(b: ByteArray, off: Int, len: Int): Int = throw IOException("simulated tunnel read failure")
+            override fun close() { closed = true }
+        }
+        try {
+            flow.readTunnelResponse(broken, 1280, 3)
+            fail("Expected a gateway read failure")
+        } catch (expected: IOException) {
+            assertEquals("simulated tunnel read failure", expected.message)
+        }
+        assertTrue(closed)
+        assertFalse(flow.isEstablished(4))
+        assertNull(flow.offerResponse(byteArrayOf(1), 1280, 5))
     }
 }
