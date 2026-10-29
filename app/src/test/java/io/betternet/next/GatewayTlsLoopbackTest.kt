@@ -538,4 +538,161 @@ class GatewayTlsLoopbackTest {
         }
     }
 
+
+    private fun setDns16(bytes: ByteArray, offset: Int, value: Int) {
+        bytes[offset] = (value ushr 8).toByte()
+        bytes[offset + 1] = value.toByte()
+    }
+
+    private fun dnsChecksum(bytes: ByteArray, start: Int, length: Int, initial: Int = 0): Int {
+        var sum = initial
+        for (i in 0 until length step 2) {
+            sum += (bytes[start + i].toInt() and 255) shl 8
+            if (i + 1 < length) sum += bytes[start + i + 1].toInt() and 255
+        }
+        while (sum > 65535) sum = (sum and 65535) + (sum ushr 16)
+        return sum.inv() and 65535
+    }
+
+    private fun tunDnsRequest(ipv6: Boolean): TunIngressResult.Packet {
+        val dns = dnsQuery()
+        val offset = if (ipv6) 40 else 20
+        val bytes = ByteArray(offset + 8 + dns.size)
+        bytes[0] = if (ipv6) 0x60 else 0x45
+        if (ipv6) {
+            setDns16(bytes, 4, 8 + dns.size)
+            bytes[6] = 17
+            bytes[7] = 64
+            bytes[8] = 0x20
+            bytes[9] = 0x01
+            bytes[23] = 1
+            bytes[24] = 0x20
+            bytes[25] = 0x01
+            bytes[39] = 2
+        } else {
+            setDns16(bytes, 2, bytes.size)
+            bytes[8] = 64
+            bytes[9] = 17
+            bytes[12] = 192.toByte()
+            bytes[14] = 2
+            bytes[15] = 10
+            bytes[16] = 198.toByte()
+            bytes[17] = 51
+            bytes[18] = 100
+            bytes[19] = 2
+            setDns16(bytes, 10, dnsChecksum(bytes, 0, 20))
+        }
+        setDns16(bytes, offset, 49152)
+        setDns16(bytes, offset + 2, 53)
+        setDns16(bytes, offset + 4, 8 + dns.size)
+        dns.copyInto(bytes, offset + 8)
+        if (ipv6) {
+            val addresses = bytes.copyOfRange(8, 24) + bytes.copyOfRange(24, 40)
+            val pseudo = (dnsChecksum(addresses, 0, 32).inv() and 65535) +
+                17 + 8 + dns.size
+            val value = dnsChecksum(bytes, offset, 8 + dns.size, pseudo)
+            setDns16(bytes, offset + 6, if (value == 0) 65535 else value)
+        }
+        return TunIngressResult.Packet(bytes, parseTunPacketHeader(bytes, bytes.size)!!)
+    }
+
+    @Test fun verifiedTlsDnsExchangeWritesOneCorrelatedIpv4AndIpv6TunReply() {
+        for (ipv6 in listOf(false, true)) {
+            val tls = contexts()
+            val query = dnsQuery()
+            val response = query.clone().apply { this[2] = 0x81.toByte(); this[3] = 0x80.toByte() }
+            val request = tunDnsRequest(ipv6)
+            withServer(tls.server, { peer ->
+                peer.startHandshake()
+                val prefix = peer.inputStream.readNBytes(2)
+                assertEquals(query.size, ((prefix[0].toInt() and 255) shl 8) or
+                    (prefix[1].toInt() and 255))
+                assertArrayEquals(query, peer.inputStream.readNBytes(query.size))
+                peer.outputStream.write(byteArrayOf(0, response.size.toByte()) + response)
+                peer.outputStream.flush()
+            }) { address ->
+                val pending = PendingDnsReplies(maxPending = 1)
+                val out = java.io.ByteArrayOutputStream()
+                val socket = connectVerifiedGatewayTls(
+                    address, "gateway.example", 3_000, { true },
+                    tlsFactory = tls.trustedClient.socketFactory
+                )
+                assertTrue(exchangeOneTunDnsQueryOverTls(socket, request, pending, out, 1280, 3_000))
+                assertTrue("Single-use TLS socket must close on success", socket.isClosed)
+                assertArrayEquals(buildDnsUdpReply(request, response, 1280), out.toByteArray())
+                assertNotNull("Successful reply must release pending slot", pending.register(request))
+            }
+        }
+    }
+
+    @Test fun mismatchedDnsReplyNeverReachesTunAndReleasesSlot() {
+        val tls = contexts()
+        val request = tunDnsRequest(false)
+        val response = dnsQuery().apply {
+            this[2] = 0x81.toByte()
+            this[3] = 0x80.toByte()
+            this[13] = 'b'.code.toByte()
+        }
+        withServer(tls.server, { peer ->
+            peer.startHandshake()
+            val prefix = peer.inputStream.readNBytes(2)
+            val length = ((prefix[0].toInt() and 255) shl 8) or (prefix[1].toInt() and 255)
+            peer.inputStream.readNBytes(length)
+            peer.outputStream.write(byteArrayOf(0, response.size.toByte()) + response)
+            peer.outputStream.flush()
+        }) { address ->
+            val pending = PendingDnsReplies(maxPending = 1)
+            val out = java.io.ByteArrayOutputStream()
+            val socket = connectVerifiedGatewayTls(
+                address, "gateway.example", 3_000, { true },
+                tlsFactory = tls.trustedClient.socketFactory
+            )
+            assertFalse(exchangeOneTunDnsQueryOverTls(socket, request, pending, out, 1280, 3_000))
+            assertEquals(0, out.size())
+            assertTrue(socket.isClosed)
+            assertNotNull(pending.register(request))
+        }
+    }
+
+    @Test fun tlsFramingErrorNeverWritesTunAndReleasesPendingSlot() {
+        val tls = contexts()
+        val request = tunDnsRequest(false)
+        withServer(tls.server, { peer ->
+            peer.startHandshake()
+            val prefix = peer.inputStream.readNBytes(2)
+            val length = ((prefix[0].toInt() and 255) shl 8) or (prefix[1].toInt() and 255)
+            peer.inputStream.readNBytes(length)
+            peer.outputStream.write(byteArrayOf(0x04, 0xd1.toByte()))
+            peer.outputStream.flush()
+        }) { address ->
+            val pending = PendingDnsReplies(maxPending = 1)
+            val out = java.io.ByteArrayOutputStream()
+            val socket = connectVerifiedGatewayTls(
+                address, "gateway.example", 3_000, { true },
+                tlsFactory = tls.trustedClient.socketFactory
+            )
+            try {
+                exchangeOneTunDnsQueryOverTls(socket, request, pending, out, 1280, 3_000)
+                fail("Oversized TLS reply must be rejected")
+            } catch (_: java.io.IOException) {
+                assertTrue(socket.isClosed)
+                assertEquals(0, out.size())
+                assertNotNull(pending.register(request))
+            }
+        }
+    }
+
+    @Test fun malformedTunDnsQueryCannotSendOverTls() {
+        val socket = (javax.net.ssl.SSLContext.getDefault().socketFactory.createSocket()
+            as SSLSocket)
+        val request = tunDnsRequest(false)
+        val malformed = request.copy(bytes = request.bytes.clone().apply { this[30] = 0x81.toByte() })
+        val pending = PendingDnsReplies(maxPending = 1)
+        assertFalse(exchangeOneTunDnsQueryOverTls(
+            socket, malformed, pending, java.io.ByteArrayOutputStream(), 1280, 3_000
+        ))
+        assertTrue(socket.isClosed)
+        assertNotNull(pending.register(request))
+    }
+
 }

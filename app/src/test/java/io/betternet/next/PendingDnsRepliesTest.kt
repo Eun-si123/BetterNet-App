@@ -118,6 +118,16 @@ class PendingDnsRepliesTest {
         assertNull(pending.consume(next, response(), 1280))
     }
 
+    @Test fun cancelledExchangeReleasesCapacityAndCannotBeReplayed() {
+        val pending = PendingDnsReplies(maxPending = 1)
+        val handle = pending.register(request())!!
+        assertNull(pending.register(request()))
+        pending.cancel(handle)
+        assertNull(pending.consume(handle, response(), 1280))
+        assertNotNull(pending.register(request()))
+        pending.cancel(handle) // idempotent, does not cancel another request
+    }
+
     @Test fun snapshotsInputAndFailsClosedOnMismatchedQuestion() {
         val pending = PendingDnsReplies()
         val original = request()

@@ -47,6 +47,12 @@ internal class PendingDnsReplies(
         return buildDnsUdpReply(entry.request, dnsResponse, mtu)
     }
 
+    /** Release a failed/cancelled exchange without waiting for its TTL. */
+    @Synchronized
+    fun cancel(handle: Long) {
+        pending.remove(handle)
+    }
+
     /** Called when the future VPN session closes or its upstream changes. */
     @Synchronized
     fun clear() = pending.clear()
