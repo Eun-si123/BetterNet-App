@@ -73,6 +73,11 @@ internal fun parseTunPacketHeader(packet: ByteArray, readBytes: Int): TunPacketH
     val headerBytes = if (protocol == 6) {
         val length = (u8(ipHeaderBytes + 12) ushr 4) * 4
         if (length < 20 || length > remaining) return null
+        // TCP checksums are mandatory for both IP families. Never admit a
+        // corrupt segment to a future state machine or gateway forwarding path.
+        if (!hasValidTcpChecksum(
+                packet, ipHeaderBytes, remaining, sourceOffset, destinationOffset, addressBytes
+            )) return null
         length
     } else {
         if (u16(ipHeaderBytes + 4) != remaining) return null
@@ -86,4 +91,34 @@ internal fun parseTunPacketHeader(packet: ByteArray, readBytes: Int): TunPacketH
         InetAddress.getByAddress(packet.copyOfRange(destinationOffset, destinationOffset + addressBytes)),
         u16(ipHeaderBytes), u16(ipHeaderBytes + 2), ipHeaderBytes, headerBytes, readBytes,
     )
+}
+
+/**
+ * Verify the complete TCP segment (header, options and payload) with the
+ * IPv4/IPv6 pseudo-header. In particular, this binds the segment to the IP
+ * source/destination addresses, not merely to its own TCP header bytes.
+ * Fragmented packets and IPv6 extension headers are rejected by the caller.
+ */
+private fun hasValidTcpChecksum(
+    packet: ByteArray, offset: Int, length: Int,
+    sourceOffset: Int, destinationOffset: Int, addressBytes: Int,
+): Boolean {
+    fun sumWords(start: Int, count: Int): Int {
+        var sum = 0
+        var at = start
+        val end = start + count
+        while (at + 1 < end) {
+            sum += ((packet[at].toInt() and 0xff) shl 8) or (packet[at + 1].toInt() and 0xff)
+            at += 2
+        }
+        if (at < end) sum += (packet[at].toInt() and 0xff) shl 8
+        return sum
+    }
+    // Both pseudo-header formats contribute the segment length and protocol 6.
+    // The IPv6 32-bit length's high half is zero (jumbograms unsupported).
+    var sum = sumWords(sourceOffset, addressBytes) +
+        sumWords(destinationOffset, addressBytes) + length + 6 +
+        sumWords(offset, length)
+    while (sum > 0xffff) sum = (sum and 0xffff) + (sum ushr 16)
+    return sum == 0xffff
 }
