@@ -440,6 +440,69 @@ class TunTcpSynAckTest {
         }
     }
 
+    @Test fun finHalfCloseOnlyAfterValidatedUpstreamShutdownForBothFamilies() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val flow = OfflineTcpHandshake()
+            val isn = 0xffff_ffffL
+            assertNotNull(flow.begin(syn, isn, 1280, 100, clientWindow = 8))
+            val fin = finalAck(syn, isn, flags = 0x11)
+            var shutdowns = 0
+            assertNull(flow.acceptClientFin(fin, 101) { shutdowns++ }) // no handshake
+            assertTrue(flow.acceptFinalAck(finalAck(syn, isn), 102))
+            val corrupt = fin.bytes.clone().apply { this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte() }
+            for (bad in listOf(
+                finalAck(syn, isn, flags = 0x11, sequence = 1),
+                finalAck(syn, isn, flags = 0x11, acknowledgement = 7),
+                finalAck(syn, isn, flags = 0x11, sourcePort = 49153),
+                finalAck(syn, isn, flags = 0x19),
+                finalAck(syn, isn, flags = 0x11, payload = byteArrayOf(9)),
+                fin.copy(bytes = corrupt),
+            )) {
+                assertNull(flow.acceptClientFin(bad, 103) { shutdowns++ })
+                assertTrue(flow.isEstablished(103))
+            }
+            assertEquals(0, shutdowns)
+            assertNotNull(flow.offerResponse(byteArrayOf(1), 1280, 104))
+            assertNull(flow.acceptClientFin(fin, 105) { shutdowns++ }) // pending response
+            assertTrue(flow.acceptResponseAck(finalAck(syn, isn, acknowledgement = 1), 106))
+            val ack = flow.acceptClientFin(fin, 107) { shutdowns++ }!!
+            val ip = if (version == 4) 20 else 40
+            assertEquals(1, shutdowns)
+            assertEquals(0, tcpChecksum(ack, version))
+            assertEquals(0x10, ack[ip + 13].toInt() and 255)
+            assertEquals(0, u16(ack, ip + 14))
+            assertEquals(1L, u32(ack, ip + 8)) // client ISN wraps, FIN consumes one
+            assertEquals(1L, u32(ack, ip + 4))
+            assertNull(flow.acceptClientFin(fin, 108) { shutdowns++ })
+            assertEquals(1, shutdowns)
+            assertNull(flow.stageClientPayload(finalAck(syn, isn, flags = 0x18,
+                sequence = 1, acknowledgement = 1, payload = byteArrayOf(4)), 109))
+            // A FIN does not discard the gateway-to-client response half.
+            assertNotNull(flow.offerResponse(byteArrayOf(5), 1280, 110))
+            assertTrue(flow.acceptResponseAck(finalAck(syn, isn,
+                sequence = 1, acknowledgement = 2), 111))
+            assertTrue(flow.isEstablished(112))
+        }
+    }
+
+    @Test fun finHalfCloseFailureNeverAcknowledgesAndRetiresFlow() {
+        val syn = request(4)
+        val flow = OfflineTcpHandshake()
+        assertNotNull(flow.begin(syn, 9, 1280, 100))
+        assertTrue(flow.acceptFinalAck(finalAck(syn, 9), 101))
+        try {
+            flow.acceptClientFin(finalAck(syn, 9, flags = 0x11), 102) {
+                throw IOException("upstream shutdown failed")
+            }
+            fail("Expected half-close failure")
+        } catch (expected: IOException) {
+            assertEquals("upstream shutdown failed", expected.message)
+        }
+        assertFalse(flow.isEstablished(103))
+        assertNull(flow.offerResponse(byteArrayOf(1), 1280, 104))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsUnboundedMtu() {
         buildTcpSynAck(request(4), 123L, 1000)

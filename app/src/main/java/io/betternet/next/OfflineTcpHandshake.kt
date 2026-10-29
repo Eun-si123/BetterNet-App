@@ -35,6 +35,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     private var responseRetries = 0
     private var pendingClientPayload: ByteArray? = null
     private var receiveWindow = 0
+    private var clientHalfClosed = false
     private var lastSeenAt = -1L
 
     fun begin(syn: TunIngressResult.Packet, serverIsn: Long, mtu: Int, nowMillis: Long,
@@ -60,6 +61,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         responseRetries = 0
         pendingClientPayload = null
         receiveWindow = clientWindow
+        clientHalfClosed = false
         lastSeenAt = nowMillis
         return synAck
     }
@@ -95,7 +97,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     fun stageClientPayload(packet: TunIngressResult.Packet, nowMillis: Long): ByteArray? {
         expire(nowMillis)
         val current = flow ?: return null
-        if (!acked || receiveWindow == 0 || pendingClientPayload != null) return null
+        if (!acked || clientHalfClosed || receiveWindow == 0 || pendingClientPayload != null) return null
         val bytes = packet.bytes
         val header = parseTunPacketHeader(bytes, bytes.size) ?: return null
         if (header.protocol != 6 || header.source != current.source ||
@@ -262,6 +264,56 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     }
 
     /**
+     * Accept a payload-free FIN only after the authenticated tunnel's writer
+     * has completed a caller-supplied upstream half-close. A plain TLS output
+     * stream close is NOT automatically a safe half-close; the caller must
+     * provide transport-specific semantics. This offline controller does not
+     * own the tunnel or emit anything to TUN.
+     *
+     * Pending client payloads or unacknowledged server responses are rejected
+     * rather than guessing TCP sequence/ACK state. A rejected FIN must not
+     * acknowledge bytes or invoke the callback. On upstream failure, retire
+     * the flow without sending a misleading FIN ACK. Serialize all calls.
+     */
+    fun acceptClientFin(
+        packet: TunIngressResult.Packet, nowMillis: Long, halfCloseUpstream: () -> Unit,
+    ): ByteArray? {
+        expire(nowMillis)
+        val current = flow ?: return null
+        if (!acked || clientHalfClosed || pendingClientPayload != null || pendingResponseBytes != 0) return null
+        val bytes = packet.bytes
+        val header = parseTunPacketHeader(bytes, bytes.size) ?: return null
+        if (header.protocol != 6 || header.source != current.source ||
+            header.destination != current.destination ||
+            header.sourcePort != current.sourcePort ||
+            header.destinationPort != current.destinationPort ||
+            header.transportHeaderBytes != 20 ||
+            header.transportOffset + 20 != bytes.size) return null
+        val offset = header.transportOffset
+        if ((bytes[offset + 12].toInt() and 15) != 0 ||
+            (bytes[offset + 13].toInt() and 255) != 0x11 || // FIN | ACK only.
+            read16(bytes, offset + 18) != 0 ||
+            read32(bytes, offset + 4) != current.clientNext ||
+            read32(bytes, offset + 8) != current.serverNext) return null
+        val next = (current.clientNext + 1) and 0xffff_ffffL
+        val ack = buildTcpDeliveryAck(
+            current.destination, current.source,
+            current.destinationPort, current.sourcePort,
+            current.serverNext, next, 0,
+        ) ?: return null
+        try {
+            halfCloseUpstream()
+        } catch (failure: Exception) {
+            close()
+            throw failure
+        }
+        flow = current.copy(clientNext = next)
+        clientHalfClosed = true
+        receiveWindow = 0
+        return ack
+    }
+
+    /**
      * Retire only an exact, checksummed client RST for the established tuple.
      * A forged/stale RST must not discard a live flow. No RST is generated or
      * sent to the network by this offline controller.
@@ -306,6 +358,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         responseRetries = 0
         pendingClientPayload = null
         receiveWindow = 0
+        clientHalfClosed = false
         lastSeenAt = -1L
     }
 
