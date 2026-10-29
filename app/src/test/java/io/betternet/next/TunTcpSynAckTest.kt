@@ -540,8 +540,18 @@ class TunTcpSynAckTest {
             assertEquals(0, stream.available())
             assertTrue(flow.acceptResponseAck(finalAck(syn, isn,
                 acknowledgement = (isn + 1 + sourceBytes.size) and 0xffff_ffffL), 107))
-            assertNull(flow.readTunnelResponse(stream, 1280, 108)) // EOF retires flow
-            assertFalse(flow.isEstablished(109))
+            val fin = flow.readTunnelResponse(stream, 1280, 108)!! // EOF half-closes
+            assertEquals(0x11, fin[ip + 13].toInt() and 255)
+            assertEquals(0, tcpChecksum(fin, version))
+            assertEquals((isn + 1 + sourceBytes.size) and 0xffff_ffffL, u32(fin, ip + 4))
+            assertTrue(flow.isEstablished(109)) // wait for peer FIN and exact ACK
+            assertNull(flow.readTunnelResponse(stream, 1280, 110))
+            assertFalse(flow.acceptResponseAck(finalAck(syn, isn,
+                acknowledgement = (isn + 1 + sourceBytes.size) and 0xffff_ffffL), 111))
+            assertTrue(flow.acceptResponseAck(finalAck(syn, isn,
+                acknowledgement = (isn + 2 + sourceBytes.size) and 0xffff_ffffL), 112))
+            assertNull(flow.readTunnelResponse(stream, 1280, 113))
+            assertTrue(flow.isEstablished(114))
         }
     }
 
@@ -613,4 +623,90 @@ class TunTcpSynAckTest {
         assertFalse(flow.isEstablished(4))
         assertNull(flow.offerResponse(byteArrayOf(1), 1280, 5))
     }
+
+    @Test fun gatewayEofFinRetransmitsAndClosesOnlyAfterBothHalvesForBothFamilies() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val flow = OfflineTcpHandshake(10_000)
+            val isn = 0xffff_ffffL
+            val ip = if (version == 4) 20 else 40
+            assertNotNull(flow.begin(syn, isn, 1280, 100))
+            assertTrue(flow.acceptFinalAck(finalAck(syn, isn), 101))
+            val eof = ByteArrayInputStream(byteArrayOf())
+            val fin = flow.readTunnelResponse(eof, 1280, 200)!!
+            assertEquals(ip + 20, fin.size)
+            assertEquals(0x11, fin[ip + 13].toInt() and 255)
+            assertEquals(0, tcpChecksum(fin, version))
+            assertEquals(0L, u32(fin, ip + 4)) // server sequence wrapped
+            assertEquals(0L, u32(fin, ip + 8)) // client sequence wrapped
+            assertNull(flow.offerResponse(byteArrayOf(9), 1280, 201))
+            assertNull(flow.readTunnelResponse(eof, 1280, 202))
+            assertFalse(flow.acceptResponseAck(finalAck(syn, isn, acknowledgement = 0), 203))
+            assertFalse(flow.acceptResponseAck(finalAck(syn, isn,
+                acknowledgement = 1, flags = 0x18), 204))
+            val corrupt = finalAck(syn, isn, acknowledgement = 1)
+            val corrupted = corrupt.bytes.clone().apply {
+                this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte()
+            }
+            assertFalse(flow.acceptResponseAck(corrupt.copy(bytes = corrupted), 205))
+            assertNull(flow.retryPendingResponse(699))
+            val retransmit = flow.retryPendingResponse(700)!!
+            assertArrayEquals(fin, retransmit)
+            retransmit[retransmit.lastIndex] = 0 // defensive copy
+            assertNull(flow.retryPendingResponse(1699))
+            assertArrayEquals(fin, flow.retryPendingResponse(1700))
+            assertTrue(flow.acceptResponseAck(finalAck(syn, isn, acknowledgement = 1), 1701))
+            assertNull(flow.retryPendingResponse(2201))
+            assertNull(flow.offerResponse(byteArrayOf(1), 1280, 2202))
+            var halfCloses = 0
+            val clientFin = finalAck(syn, isn, flags = 0x11, acknowledgement = 1)
+            val ack = flow.acceptClientFin(clientFin, 2203) { halfCloses++ }!!
+            assertEquals(1, halfCloses)
+            assertEquals(0x10, ack[ip + 13].toInt() and 255)
+            assertEquals(0, tcpChecksum(ack, version))
+            assertEquals(1L, u32(ack, ip + 4))
+            assertEquals(1L, u32(ack, ip + 8))
+            assertFalse(flow.isEstablished(2204))
+        }
+    }
+
+    @Test fun clientHalfCloseThenGatewayEofFinAckRetiresFlow() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val flow = OfflineTcpHandshake()
+            assertNotNull(flow.begin(syn, 123, 1280, 100))
+            assertTrue(flow.acceptFinalAck(finalAck(syn, 123), 101))
+            assertNotNull(flow.acceptClientFin(finalAck(syn, 123, flags = 0x11), 102) { })
+            val fin = flow.readTunnelResponse(ByteArrayInputStream(byteArrayOf()), 1280, 103)!!
+            val ip = if (version == 4) 20 else 40
+            assertEquals(1L, u32(fin, ip + 8)) // acknowledges client's FIN
+            assertFalse(flow.acceptResponseAck(finalAck(syn, 123,
+                acknowledgement = 125), 104)) // stale client sequence
+            assertTrue(flow.acceptResponseAck(finalAck(syn, 123,
+                sequence = 1, acknowledgement = 125), 105))
+            assertFalse(flow.isEstablished(106))
+            assertNull(flow.retryPendingResponse(107))
+        }
+    }
+
+    @Test fun gatewayEofCloseFailureRetiresFlowWithoutFin() {
+        val syn = request(4)
+        val flow = OfflineTcpHandshake()
+        assertNotNull(flow.begin(syn, 42, 1280, 100))
+        assertTrue(flow.acceptFinalAck(finalAck(syn, 42), 101))
+        val broken = object : InputStream() {
+            override fun read(): Int = -1
+            override fun read(b: ByteArray, off: Int, len: Int): Int = -1
+            override fun close() { throw IOException("close failed") }
+        }
+        try {
+            flow.readTunnelResponse(broken, 1280, 102)
+            fail("Expected stream close failure")
+        } catch (expected: IOException) {
+            assertEquals("close failed", expected.message)
+        }
+        assertFalse(flow.isEstablished(103))
+        assertNull(flow.retryPendingResponse(104))
+    }
+
 }

@@ -192,8 +192,11 @@ internal fun buildTcpDeliveryAck(
     source: java.net.InetAddress, destination: java.net.InetAddress,
     sourcePort: Int, destinationPort: Int,
     sequence: Long, acknowledgement: Long, receiveWindow: Int = 0,
+    fin: Boolean = false,
 ): ByteArray? {
-    require(receiveWindow in 0..1024) { "Receive window must be bounded" }
+    require(receiveWindow in 0..1024 && (!fin || receiveWindow == 0)) {
+        "FIN must advertise a closed receive window"
+    }
     val src = source.address
     val dst = destination.address
     if (src.size !in listOf(4, 16) || dst.size != src.size ||
@@ -230,7 +233,7 @@ internal fun buildTcpDeliveryAck(
     put32(ipBytes + 4, sequence)
     put32(ipBytes + 8, acknowledgement)
     packet[ipBytes + 12] = 0x50
-    packet[ipBytes + 13] = 0x10
+    packet[ipBytes + 13] = (if (fin) 0x11 else 0x10).toByte() // FIN | ACK or ACK
     // Only advertise a bounded window when the caller explicitly has capacity.
     put16(ipBytes + 14, receiveWindow)
     val pseudo = wordSumTcp(src, 0, src.size) + wordSumTcp(dst, 0, dst.size) + 20 + 6
@@ -238,3 +241,13 @@ internal fun buildTcpDeliveryAck(
     if (src.size == 4) put16(10, checksumTcp(wordSumTcp(packet, 0, 20)))
     return packet
 }
+
+/** One checksummed, payload-free server FIN; consumes one sequence number on ACK. */
+internal fun buildTcpFinAck(
+    source: java.net.InetAddress, destination: java.net.InetAddress,
+    sourcePort: Int, destinationPort: Int,
+    sequence: Long, acknowledgement: Long,
+): ByteArray? = buildTcpDeliveryAck(
+    source, destination, sourcePort, destinationPort,
+    sequence, acknowledgement, fin = true,
+)

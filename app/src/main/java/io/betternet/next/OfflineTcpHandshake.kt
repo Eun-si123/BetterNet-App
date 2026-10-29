@@ -30,6 +30,8 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     private var flow: Flow? = null
     private var acked = false
     private var pendingResponseBytes = 0
+    private var serverFinPending = false
+    private var serverHalfClosed = false
     private var pendingResponsePacket: ByteArray? = null
     private var responseSentAt = -1L
     private var responseRetries = 0
@@ -56,6 +58,8 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         )
         acked = false
         pendingResponseBytes = 0
+        serverFinPending = false
+        serverHalfClosed = false
         pendingResponsePacket = null
         responseSentAt = -1L
         responseRetries = 0
@@ -97,7 +101,8 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     fun stageClientPayload(packet: TunIngressResult.Packet, nowMillis: Long): ByteArray? {
         expire(nowMillis)
         val current = flow ?: return null
-        if (!acked || clientHalfClosed || receiveWindow == 0 || pendingClientPayload != null) return null
+        if (!acked || clientHalfClosed || serverFinPending ||
+            receiveWindow == 0 || pendingClientPayload != null) return null
         val bytes = packet.bytes
         val header = parseTunPacketHeader(bytes, bytes.size) ?: return null
         if (header.protocol != 6 || header.source != current.source ||
@@ -170,7 +175,8 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     fun offerResponse(payload: ByteArray, mtu: Int, nowMillis: Long): ByteArray? {
         expire(nowMillis)
         val current = flow ?: return null
-        if (!acked || pendingResponseBytes != 0 || pendingClientPayload != null) return null
+        if (!acked || serverFinPending || serverHalfClosed ||
+            pendingResponseBytes != 0 || pendingClientPayload != null) return null
         val reply = buildTcpDataReply(
             current.destination, current.source,
             current.destinationPort, current.sourcePort,
@@ -192,7 +198,8 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
      */
     fun retryPendingResponse(nowMillis: Long): ByteArray? {
         expire(nowMillis)
-        if (!acked || pendingResponseBytes == 0 || responseRetries >= 3) return null
+        if (!acked || (pendingResponseBytes == 0 && !serverFinPending) ||
+            responseRetries >= 3) return null
         val packet = pendingResponsePacket ?: return null
         val delayMillis = 500L shl responseRetries
         if (nowMillis - responseSentAt < delayMillis) return null
@@ -207,14 +214,16 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
      * the flow cannot accept another unacknowledged response segment.
      *
      * The caller must configure a bounded socket read timeout and serialize
-     * access to this offline flow. EOF or a read failure retires the flow; a
-     * zero-byte read does not advance it. No VPN or socket is created here.
+     * access to this offline flow. Read failure retires the flow; a zero-byte
+     * read does not advance it. Clean EOF produces a FIN packet,
+     * which must be acknowledged before the flow can finish; no VPN is created.
      */
     fun readTunnelResponse(tunnelInput: InputStream, mtu: Int, nowMillis: Long): ByteArray? {
         require(mtu in 1280..9000) { "TUN MTU must support IPv6 and be bounded" }
         expire(nowMillis)
         val current = flow ?: return null
-        if (!acked || pendingResponseBytes != 0 || pendingClientPayload != null) return null
+        if (!acked || serverFinPending || serverHalfClosed ||
+            pendingResponseBytes != 0 || pendingClientPayload != null) return null
         val ipBytes = if (current.source.address.size == 4) 20 else 40
         val buffer = ByteArray(minOf(1460, mtu - ipBytes - 20))
         val read = try {
@@ -227,9 +236,24 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             throw failure
         }
         if (read < 0) {
-            close()
-            tunnelInput.close()
-            return null
+            // EOF closes only the gateway-to-client half, not the client's TCP
+            // half. Do not send a FIN if cleanup failed or state expired.
+            try {
+                tunnelInput.close()
+            } catch (failure: IOException) {
+                close()
+                throw failure
+            }
+            val fin = buildTcpFinAck(
+                current.destination, current.source,
+                current.destinationPort, current.sourcePort,
+                current.serverNext, current.clientNext,
+            ) ?: run { close(); return null }
+            serverFinPending = true
+            pendingResponsePacket = fin.copyOf()
+            responseSentAt = nowMillis
+            responseRetries = 0
+            return fin
         }
         if (read == 0) return null
         return offerResponse(buffer.copyOf(read), mtu, nowMillis)
@@ -239,7 +263,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     fun acceptResponseAck(packet: TunIngressResult.Packet, nowMillis: Long): Boolean {
         expire(nowMillis)
         val current = flow ?: return false
-        if (!acked || pendingResponseBytes == 0) return false
+        if (!acked || (pendingResponseBytes == 0 && !serverFinPending)) return false
         val bytes = packet.bytes
         val header = parseTunPacketHeader(bytes, bytes.size) ?: return false
         if (header.protocol != 6 || header.source != current.source ||
@@ -249,17 +273,21 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             header.transportHeaderBytes != 20 ||
             header.transportOffset + 20 != bytes.size) return false
         val offset = header.transportOffset
+        val consumed = pendingResponseBytes + (if (serverFinPending) 1 else 0)
         if ((bytes[offset + 12].toInt() and 15) != 0 ||
             (bytes[offset + 13].toInt() and 255) != 0x10 ||
             read16(bytes, offset + 18) != 0 ||
             read32(bytes, offset + 4) != current.clientNext ||
             read32(bytes, offset + 8) !=
-                ((current.serverNext + pendingResponseBytes) and 0xffff_ffffL)) return false
-        flow = current.copy(serverNext = (current.serverNext + pendingResponseBytes) and 0xffff_ffffL)
+                ((current.serverNext + consumed) and 0xffff_ffffL)) return false
+        flow = current.copy(serverNext = (current.serverNext + consumed) and 0xffff_ffffL)
         pendingResponseBytes = 0
+        if (serverFinPending) serverHalfClosed = true
+        serverFinPending = false
         pendingResponsePacket = null
         responseSentAt = -1L
         responseRetries = 0
+        if (serverHalfClosed && clientHalfClosed) close()
         return true
     }
 
@@ -280,7 +308,8 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     ): ByteArray? {
         expire(nowMillis)
         val current = flow ?: return null
-        if (!acked || clientHalfClosed || pendingClientPayload != null || pendingResponseBytes != 0) return null
+        if (!acked || clientHalfClosed || pendingClientPayload != null ||
+            pendingResponseBytes != 0 || serverFinPending) return null
         val bytes = packet.bytes
         val header = parseTunPacketHeader(bytes, bytes.size) ?: return null
         if (header.protocol != 6 || header.source != current.source ||
@@ -310,6 +339,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         flow = current.copy(clientNext = next)
         clientHalfClosed = true
         receiveWindow = 0
+        if (serverHalfClosed) close()
         return ack
     }
 
@@ -333,7 +363,8 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         val offset = header.transportOffset
         val flags = bytes[offset + 13].toInt() and 255
         val acknowledgement = read32(bytes, offset + 8)
-        val expectedPendingAck = (current.serverNext + pendingResponseBytes) and 0xffff_ffffL
+        val expectedPendingAck = (current.serverNext + pendingResponseBytes +
+            (if (serverFinPending) 1 else 0)) and 0xffff_ffffL
         if ((bytes[offset + 12].toInt() and 15) != 0 ||
             read16(bytes, offset + 18) != 0 ||
             flags != 0x14 || // RST | ACK; no SYN/FIN/PSH/ECN/NS.
@@ -353,6 +384,8 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         flow = null
         acked = false
         pendingResponseBytes = 0
+        serverFinPending = false
+        serverHalfClosed = false
         pendingResponsePacket = null
         responseSentAt = -1L
         responseRetries = 0
