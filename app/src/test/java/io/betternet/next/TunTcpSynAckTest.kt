@@ -419,7 +419,9 @@ class TunTcpSynAckTest {
                 finalAck(syn, isn, flags = 0x14, payload = byteArrayOf(1)),
                 reset.copy(bytes = badChecksum),
             )) {
-                assertFalse(flow.acceptClientReset(bad, 104))
+                // Same monotonic instant for each negative case: time rollback
+                // intentionally retires the flow and would mask RST validation.
+                assertFalse(flow.acceptClientReset(bad, 105))
                 assertTrue(flow.isEstablished(105))
             }
             // A reset acknowledging in-flight bytes is accepted, including wraparound.
