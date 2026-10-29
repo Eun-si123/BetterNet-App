@@ -133,7 +133,14 @@ internal fun connectProtectedSocket(
     try {
         check(protect(socket)) { "Gateway socket could not be excluded from the VPN" }
         bind(socket) // Binding failures close the socket, never use default routing.
-        socket.connect(address, timeoutMs)
+        try {
+            socket.connect(address, timeoutMs)
+        } catch (failure: SocketTimeoutException) {
+            // Only a TCP connect timeout may trigger another resolved-address
+            // attempt. A TLS handshake or authenticated CONNECT timeout must
+            // not replay the credential or start another gateway connection.
+            throw GatewayTcpConnectTimeout(failure)
+        }
         return socket
     } catch (failure: Throwable) {
         try {
@@ -143,6 +150,11 @@ internal fun connectProtectedSocket(
         }
         throw failure
     }
+}
+
+private class GatewayTcpConnectTimeout(cause: SocketTimeoutException) :
+    SocketTimeoutException("Gateway TCP connect timed out") {
+    init { initCause(cause) }
 }
 
 /** DNS must be performed by the chosen underlying Network, never system DNS. */
@@ -163,8 +175,8 @@ private fun resolveGatewayAddresses(
 
 /**
  * One shared timeout across a bounded IPv6/IPv4 address list. Retry only
- * transport reachability failures; never retry a TLS identity failure, failed
- * VPN protection, or failed network binding on an unintended default route.
+ * TCP connect reachability failures; never retry a TLS handshake/CONNECT
+ * timeout, TLS identity failure, failed protection or network binding.
  * The dial callback must close each failed socket before throwing.
  */
 internal fun <T> connectWithGatewayAddressFallback(
@@ -186,7 +198,7 @@ internal fun <T> connectWithGatewayAddressFallback(
             return dial(address, attemptTimeout)
         } catch (failure: IOException) {
             if (failure !is ConnectException && failure !is NoRouteToHostException &&
-                failure !is SocketTimeoutException) throw failure
+                failure !is GatewayTcpConnectTimeout) throw failure
             lastFailure = failure
         }
     }

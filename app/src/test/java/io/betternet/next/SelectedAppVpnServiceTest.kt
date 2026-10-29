@@ -307,6 +307,44 @@ class SelectedAppVpnServiceTest {
         }
     }
 
+    @Test fun tcpConnectTimeoutMayRetryButTlsOrConnectTimeoutNeverDoes() {
+        val ipv6 = InetAddress.getByAddress(ByteArray(16).apply { this[15] = 1 })
+        val ipv4 = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
+        var attempts = 0
+        var closed = 0
+        connectWithGatewayAddressFallback(
+            "gateway.example", 443, 1_000,
+            { arrayOf(ipv6, ipv4) },
+            { address, timeout ->
+                connectProtectedSocket(address, timeout, { true }, {
+                    attempts++
+                    object : Socket() {
+                        override fun connect(endpoint: SocketAddress?, timeout: Int) {
+                            if (attempts == 1) throw SocketTimeoutException("TCP dial timed out")
+                        }
+                        override fun close() { closed++ }
+                    }
+                })
+            },
+        ).close()
+        assertEquals("TCP dial timeout can try another same-network address", 2, attempts)
+        assertEquals("Both sockets must be closed", 2, closed)
+
+        attempts = 0
+        val postConnectTimeout = SocketTimeoutException("TLS or CONNECT read timed out")
+        try {
+            connectWithGatewayAddressFallback(
+                "gateway.example", 443, 1_000,
+                { arrayOf(ipv6, ipv4) },
+                { _, _ -> attempts++; throw postConnectTimeout },
+            )
+            fail("A post-connect timeout must not retry authentication")
+        } catch (failure: SocketTimeoutException) {
+            assertTrue(failure === postConnectTimeout)
+            assertEquals(1, attempts)
+        }
+    }
+
     @Test fun invalidOrEmptyDnsCannotDialAnyGateway() {
         var lookups = 0
         var attempts = 0
