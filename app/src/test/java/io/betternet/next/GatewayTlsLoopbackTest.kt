@@ -154,7 +154,7 @@ class GatewayTlsLoopbackTest {
                 bind = { events.add("bound") },
             ).use {
                     assertEquals(listOf("protected", "bound"), events)
-                    assertEquals("CONNECT response budget must not constrain tunneled data", 10_000, it.soTimeout)
+                    assertEquals("CONNECT must restore the caller-bounded TLS read timeout", 3_000, it.soTimeout)
                     val bytes = ByteArray(6)
                     var offset = 0
                     while (offset < bytes.size) {
