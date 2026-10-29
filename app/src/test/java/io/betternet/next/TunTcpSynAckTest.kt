@@ -125,6 +125,77 @@ class TunTcpSynAckTest {
         }
     }
 
+
+    private fun finalAck(syn: TunIngressResult.Packet, serverIsn: Long, flags: Int = 0x10,
+                         sequence: Long = 0L, acknowledgement: Long = (serverIsn + 1) and 0xffff_ffffL,
+                         payload: ByteArray = byteArrayOf(), sourcePort: Int = 49152): TunIngressResult.Packet {
+        val version = syn.header.ipVersion
+        val ip = if (version == 4) 20 else 40
+        val b = syn.bytes.copyOf(ip + 20 + payload.size)
+        if (version == 4) put16(b, 2, b.size) else put16(b, 4, b.size - ip)
+        put16(b, ip, sourcePort)
+        put32(b, ip + 4, sequence)
+        put32(b, ip + 8, acknowledgement)
+        b[ip + 12] = 0x50
+        b[ip + 13] = flags.toByte()
+        payload.copyInto(b, ip + 20)
+        put16(b, ip + 16, 0)
+        if (version == 4) put16(b, 10, 0)
+        put16(b, ip + 16, tcpChecksum(b, version))
+        if (version == 4) put16(b, 10, checksum(sum(b, 0, 20)))
+        return TunIngressResult.Packet(b, parseTunPacketHeader(b, b.size)!!)
+    }
+
+    @Test fun tracksExactlyOneHandshakeAndWraparoundForBothIpFamilies() {
+        for (version in listOf(4, 6)) {
+            val handshake = OfflineTcpHandshake(1000)
+            val syn = request(version)
+            val reply = handshake.begin(syn, 0xffff_ffffL, 1280, 100)!!
+            assertEquals(0x12, reply[if (version == 4) 33 else 53].toInt() and 255)
+            assertFalse(handshake.isEstablished(101))
+            assertNull(handshake.begin(syn, 1L, 1280, 102))
+            assertTrue(handshake.acceptFinalAck(finalAck(syn, 0xffff_ffffL), 103))
+            assertTrue(handshake.isEstablished(104))
+            assertFalse(handshake.acceptFinalAck(finalAck(syn, 0xffff_ffffL), 105))
+            assertFalse(handshake.isEstablished(1100)) // expired, no immortal flow
+            assertNotNull(handshake.begin(syn, 2L, 1280, 1101))
+            handshake.close()
+            assertFalse(handshake.isEstablished(1102))
+        }
+    }
+
+    @Test fun rejectsCrossFlowReplaysPayloadAndWrongSequenceWithoutChangingState() {
+        for (version in listOf(4, 6)) {
+            val handshake = OfflineTcpHandshake()
+            val syn = request(version)
+            assertNotNull(handshake.begin(syn, 123L, 1280, 500))
+            for (bad in listOf(
+                finalAck(syn, 123L, acknowledgement = 125),
+                finalAck(syn, 123L, sequence = 1),
+                finalAck(syn, 123L, flags = 0x18),
+                finalAck(syn, 123L, payload = byteArrayOf(1)),
+                finalAck(syn, 123L, sourcePort = 49153),
+            )) {
+                assertFalse(handshake.acceptFinalAck(bad, 501))
+                assertFalse(handshake.isEstablished(502))
+            }
+            assertFalse(handshake.acceptFinalAck(finalAck(syn, 123L), 499))
+            assertFalse(handshake.isEstablished(503)) // clock rollback drops state
+            assertNotNull(handshake.begin(syn, 124L, 1280, 504))
+            assertTrue(handshake.acceptFinalAck(finalAck(syn, 124L), 505))
+        }
+    }
+
+    @Test fun expiredHandshakeRejectsLateAckAndCanBeSafelyReplaced() {
+        val handshake = OfflineTcpHandshake(10)
+        val syn = request(4)
+        assertNotNull(handshake.begin(syn, 50, 1280, 100))
+        assertFalse(handshake.acceptFinalAck(finalAck(syn, 50), 110))
+        assertNotNull(handshake.begin(syn, 60, 1280, 111))
+        assertFalse(handshake.acceptFinalAck(finalAck(syn, 50), 112))
+        assertTrue(handshake.acceptFinalAck(finalAck(syn, 60), 113))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsUnboundedMtu() {
         buildTcpSynAck(request(4), 123L, 1000)
