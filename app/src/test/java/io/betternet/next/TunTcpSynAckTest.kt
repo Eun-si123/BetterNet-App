@@ -436,6 +436,53 @@ class TunTcpSynAckTest {
         }
     }
 
+    @Test fun retriesOnlyExactUnacknowledgedResponseWithBoundedBackoff() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val flow = OfflineTcpHandshake(10_000)
+            val isn = 0xffff_fffeL
+            assertNotNull(flow.begin(syn, isn, 1280, 100))
+            assertTrue(flow.acceptFinalAck(finalAck(syn, isn), 101))
+            assertNull(flow.retryPendingResponse(102))
+            val initial = flow.offerResponse(byteArrayOf(7, 8, 9), 1280, 200)!!
+            assertFalse(flow.acceptResponseAck(finalAck(syn, isn,
+                acknowledgement = 3), 201)) // wrong ACK must retain cached bytes
+            assertNull(flow.retryPendingResponse(699))
+            val first = flow.retryPendingResponse(700)!!
+            assertArrayEquals(initial, first)
+            first[first.lastIndex] = 0 // defensive copy; cached packet stays intact
+            assertNull(flow.retryPendingResponse(1699))
+            assertArrayEquals(initial, flow.retryPendingResponse(1700))
+            assertNull(flow.retryPendingResponse(3699))
+            assertArrayEquals(initial, flow.retryPendingResponse(3700))
+            assertNull(flow.retryPendingResponse(8000)) // retry budget exhausted
+            assertNull(flow.offerResponse(byteArrayOf(1), 1280, 8001))
+            assertTrue(flow.acceptResponseAck(finalAck(syn, isn,
+                acknowledgement = 2), 8002)) // sequence wraps: 0xffffffff + 3 -> 2
+            assertNull(flow.retryPendingResponse(8003))
+            assertNotNull(flow.offerResponse(byteArrayOf(42), 1280, 8004))
+            assertNull(flow.retryPendingResponse(8503)) // fresh retry clock
+            assertNotNull(flow.retryPendingResponse(8504))
+            assertFalse(flow.isEstablished(10_100)) // hard lease retires flow
+            assertNull(flow.retryPendingResponse(10_101))
+        }
+    }
+
+    @Test fun retryNeverRevivesFlowAfterClockRollbackOrClose() {
+        val syn = request(4)
+        val flow = OfflineTcpHandshake(5000)
+        assertNotNull(flow.begin(syn, 123, 1280, 100))
+        assertTrue(flow.acceptFinalAck(finalAck(syn, 123), 101))
+        assertNotNull(flow.offerResponse(byteArrayOf(1), 1280, 102))
+        assertNull(flow.retryPendingResponse(101)) // rollback closes state
+        assertFalse(flow.isEstablished(103))
+        assertNotNull(flow.begin(syn, 124, 1280, 104))
+        assertTrue(flow.acceptFinalAck(finalAck(syn, 124), 105))
+        assertNotNull(flow.offerResponse(byteArrayOf(2), 1280, 106))
+        flow.close()
+        assertNull(flow.retryPendingResponse(1000))
+    }
+
     @Test fun gatewayReadFailureClosesFlowAndDoesNotGenerateResponse() {
         val syn = request(4)
         val flow = OfflineTcpHandshake()

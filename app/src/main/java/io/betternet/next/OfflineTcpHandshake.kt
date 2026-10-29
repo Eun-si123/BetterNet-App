@@ -30,6 +30,9 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     private var flow: Flow? = null
     private var acked = false
     private var pendingResponseBytes = 0
+    private var pendingResponsePacket: ByteArray? = null
+    private var responseSentAt = -1L
+    private var responseRetries = 0
     private var pendingClientPayload: ByteArray? = null
     private var receiveWindow = 0
     private var lastSeenAt = -1L
@@ -52,6 +55,9 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         )
         acked = false
         pendingResponseBytes = 0
+        pendingResponsePacket = null
+        responseSentAt = -1L
+        responseRetries = 0
         pendingClientPayload = null
         receiveWindow = clientWindow
         lastSeenAt = nowMillis
@@ -169,7 +175,28 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             current.serverNext, current.clientNext, payload, mtu,
         ) ?: return null
         pendingResponseBytes = payload.size
+        pendingResponsePacket = reply.copyOf()
+        responseSentAt = nowMillis
+        responseRetries = 0
         return reply
+    }
+
+    /**
+     * Reissue only the exact unacknowledged server segment. A caller must
+     * serialize writes to TUN and schedule retries using monotonic time.
+     * Exponential backoff (500/1000/2000 ms), three retries maximum; never
+     * reread the gateway stream or advance the server sequence on a retry.
+     * The fixed flow lease still bounds total lifetime.
+     */
+    fun retryPendingResponse(nowMillis: Long): ByteArray? {
+        expire(nowMillis)
+        if (!acked || pendingResponseBytes == 0 || responseRetries >= 3) return null
+        val packet = pendingResponsePacket ?: return null
+        val delayMillis = 500L shl responseRetries
+        if (nowMillis - responseSentAt < delayMillis) return null
+        responseRetries++
+        responseSentAt = nowMillis
+        return packet.copyOf()
     }
 
     /**
@@ -228,6 +255,9 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
                 ((current.serverNext + pendingResponseBytes) and 0xffff_ffffL)) return false
         flow = current.copy(serverNext = (current.serverNext + pendingResponseBytes) and 0xffff_ffffL)
         pendingResponseBytes = 0
+        pendingResponsePacket = null
+        responseSentAt = -1L
+        responseRetries = 0
         return true
     }
 
@@ -240,6 +270,9 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         flow = null
         acked = false
         pendingResponseBytes = 0
+        pendingResponsePacket = null
+        responseSentAt = -1L
+        responseRetries = 0
         pendingClientPayload = null
         receiveWindow = 0
         lastSeenAt = -1L
