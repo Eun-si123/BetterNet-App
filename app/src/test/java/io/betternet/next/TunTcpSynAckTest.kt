@@ -398,6 +398,46 @@ class TunTcpSynAckTest {
         }
     }
 
+    @Test fun exactClientResetRetiresFlowButSpoofedOrMalformedResetCannot() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val flow = OfflineTcpHandshake()
+            val isn = 0xffff_fffeL
+            assertNotNull(flow.begin(syn, isn, 1280, 100, clientWindow = 8))
+            val reset = finalAck(syn, isn, flags = 0x14)
+            assertFalse(flow.acceptClientReset(reset, 101)) // no handshake yet
+            assertTrue(flow.acceptFinalAck(finalAck(syn, isn), 102))
+            assertNotNull(flow.offerResponse(byteArrayOf(7, 8, 9), 1280, 103))
+            val badChecksum = reset.bytes.clone().apply {
+                this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte()
+            }
+            for (bad in listOf(
+                finalAck(syn, isn, flags = 0x14, sequence = 1),
+                finalAck(syn, isn, flags = 0x14, acknowledgement = 123),
+                finalAck(syn, isn, flags = 0x14, sourcePort = 49153),
+                finalAck(syn, isn, flags = 0x15),
+                finalAck(syn, isn, flags = 0x14, payload = byteArrayOf(1)),
+                reset.copy(bytes = badChecksum),
+            )) {
+                assertFalse(flow.acceptClientReset(bad, 104))
+                assertTrue(flow.isEstablished(105))
+            }
+            // A reset acknowledging in-flight bytes is accepted, including wraparound.
+            assertTrue(flow.acceptClientReset(finalAck(syn, isn, flags = 0x14,
+                acknowledgement = 2), 106))
+            assertFalse(flow.isEstablished(107))
+            assertNull(flow.retryPendingResponse(108))
+            assertNull(flow.stageClientPayload(finalAck(syn, isn, flags = 0x18,
+                payload = byteArrayOf(1)), 109))
+            // Reusing the old reset cannot affect a fresh flow with a different ISN.
+            assertNotNull(flow.begin(syn, 55, 1280, 110))
+            assertTrue(flow.acceptFinalAck(finalAck(syn, 55), 111))
+            assertFalse(flow.acceptClientReset(reset, 112))
+            assertTrue(flow.acceptClientReset(finalAck(syn, 55, flags = 0x14), 113))
+            assertFalse(flow.isEstablished(114))
+        }
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsUnboundedMtu() {
         buildTcpSynAck(request(4), 123L, 1000)

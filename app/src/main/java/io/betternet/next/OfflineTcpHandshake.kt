@@ -261,6 +261,37 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         return true
     }
 
+    /**
+     * Retire only an exact, checksummed client RST for the established tuple.
+     * A forged/stale RST must not discard a live flow. No RST is generated or
+     * sent to the network by this offline controller.
+     */
+    fun acceptClientReset(packet: TunIngressResult.Packet, nowMillis: Long): Boolean {
+        expire(nowMillis)
+        val current = flow ?: return false
+        if (!acked) return false
+        val bytes = packet.bytes
+        val header = parseTunPacketHeader(bytes, bytes.size) ?: return false
+        if (header.protocol != 6 || header.source != current.source ||
+            header.destination != current.destination ||
+            header.sourcePort != current.sourcePort ||
+            header.destinationPort != current.destinationPort ||
+            header.transportHeaderBytes != 20 ||
+            header.transportOffset + 20 != bytes.size) return false
+        val offset = header.transportOffset
+        val flags = bytes[offset + 13].toInt() and 255
+        val acknowledgement = read32(bytes, offset + 8)
+        val expectedPendingAck = (current.serverNext + pendingResponseBytes) and 0xffff_ffffL
+        if ((bytes[offset + 12].toInt() and 15) != 0 ||
+            read16(bytes, offset + 18) != 0 ||
+            flags != 0x14 || // RST | ACK; no SYN/FIN/PSH/ECN/NS.
+            read32(bytes, offset + 4) != current.clientNext ||
+            (acknowledgement != current.serverNext &&
+                acknowledgement != expectedPendingAck)) return false
+        close()
+        return true
+    }
+
     fun isEstablished(nowMillis: Long): Boolean {
         expire(nowMillis)
         return acked
