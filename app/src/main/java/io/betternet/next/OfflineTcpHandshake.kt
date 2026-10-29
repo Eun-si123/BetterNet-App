@@ -9,9 +9,9 @@ import java.io.OutputStream
  * This does not open a socket or establish a VPN. The caller must supply a
  * previously authenticated, protected CONNECT stream before forwarding bytes.
  * The SYN-ACK defaults to a zero receive window. A caller may explicitly opt
- * into a maximum 1024-byte, one-segment offline staging window; no payload is
- * acknowledged until an explicitly supplied authenticated CONNECT stream
- * accepts the payload write and flush. That is NOT proof of remote delivery.
+ * into a maximum 1024-byte, one-segment offline staging window; it may
+ * reopen the same bounded window only after a successful tunnel write/flush.
+ * That is local acceptance, NOT proof of remote delivery.
  * Caller supplies a fresh unpredictable server ISN and monotonic time.
  */
 internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
@@ -121,8 +121,13 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
      * If the write or flush fails, the segment may have been partly transmitted:
      * close the stream and discard the flow instead of risking a duplicate write.
      * The caller still owns closing the associated tunnel on normal completion.
+     * nextReceiveWindow is explicitly opt-in: only reopen the bounded client
+     * window if the authenticated stream is ready for another segment.
      */
-    fun forwardStagedClientPayload(tunnelOutput: OutputStream, nowMillis: Long): ByteArray? {
+    fun forwardStagedClientPayload(
+        tunnelOutput: OutputStream, nowMillis: Long, nextReceiveWindow: Int = 0,
+    ): ByteArray? {
+        require(nextReceiveWindow in 0..1024) { "Receive window must be bounded" }
         expire(nowMillis)
         val current = flow ?: return null
         val payload = pendingClientPayload ?: return null
@@ -130,7 +135,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         val ack = buildTcpDeliveryAck(
             current.destination, current.source,
             current.destinationPort, current.sourcePort,
-            current.serverNext, next,
+            current.serverNext, next, nextReceiveWindow,
         ) ?: return null
         try {
             tunnelOutput.write(payload)
@@ -144,14 +149,15 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         }
         flow = current.copy(clientNext = next)
         pendingClientPayload = null
-        receiveWindow = 0
+        receiveWindow = nextReceiveWindow
         return ack
     }
 
     /**
      * Prepare at most one bounded outbound TCP data segment after the handshake.
      * A future gateway controller must own delivery/retransmission before use.
-     * The receive window remains zero; client application bytes are NOT accepted.
+     * Client application bytes are only accepted when a bounded window was
+     * explicitly advertised by the caller after a successful tunnel write.
      */
     fun offerResponse(payload: ByteArray, mtu: Int, nowMillis: Long): ByteArray? {
         expire(nowMillis)

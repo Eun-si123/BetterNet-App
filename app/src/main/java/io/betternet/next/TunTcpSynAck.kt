@@ -184,14 +184,16 @@ internal fun buildTcpDataReply(
     return reply
 }
 
-/** Offline zero-window ACK after the caller has confirmed delivery of client bytes.
+/** Offline ACK after the caller has locally forwarded client bytes.
+ * The optional bounded receive window is caller-controlled and defaults closed.
  * Does not acknowledge unforwarded bytes or initiate a network connection.
  */
 internal fun buildTcpDeliveryAck(
     source: java.net.InetAddress, destination: java.net.InetAddress,
     sourcePort: Int, destinationPort: Int,
-    sequence: Long, acknowledgement: Long,
+    sequence: Long, acknowledgement: Long, receiveWindow: Int = 0,
 ): ByteArray? {
+    require(receiveWindow in 0..1024) { "Receive window must be bounded" }
     val src = source.address
     val dst = destination.address
     if (src.size !in listOf(4, 16) || dst.size != src.size ||
@@ -229,8 +231,8 @@ internal fun buildTcpDeliveryAck(
     put32(ipBytes + 8, acknowledgement)
     packet[ipBytes + 12] = 0x50
     packet[ipBytes + 13] = 0x10
-    // Window stays closed until an independently reviewed window-update path exists.
-    put16(ipBytes + 14, 0)
+    // Only advertise a bounded window when the caller explicitly has capacity.
+    put16(ipBytes + 14, receiveWindow)
     val pseudo = wordSumTcp(src, 0, src.size) + wordSumTcp(dst, 0, dst.size) + 20 + 6
     put16(ipBytes + 16, checksumTcp(pseudo + wordSumTcp(packet, ipBytes, 20)))
     if (src.size == 4) put16(10, checksumTcp(wordSumTcp(packet, 0, 20)))

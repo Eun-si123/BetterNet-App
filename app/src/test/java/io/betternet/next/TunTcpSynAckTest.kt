@@ -293,6 +293,49 @@ class TunTcpSynAckTest {
         }
     }
 
+    @Test fun forwardsMultipleClientSegmentsOnlyAfterExplicitBoundedWindowReopen() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val state = OfflineTcpHandshake(1000)
+            val isn = 0xffff_fffeL
+            val ip = if (version == 4) 20 else 40
+            assertNotNull(state.begin(syn, isn, 1280, 100, clientWindow = 4))
+            assertTrue(state.acceptFinalAck(finalAck(syn, isn), 101))
+            val first = finalAck(syn, isn, flags = 0x18,
+                acknowledgement = 0xffff_ffffL, payload = byteArrayOf(1, 2, 3))
+            assertNotNull(state.stageClientPayload(first, 102))
+            val output = ByteArrayOutputStream()
+            try {
+                state.forwardStagedClientPayload(output, 103, nextReceiveWindow = 1025)
+                fail("Unbounded advertised window")
+            } catch (_: IllegalArgumentException) { }
+            assertEquals(0, output.size()) // validation must precede any write
+            val firstAck = state.forwardStagedClientPayload(output, 104, nextReceiveWindow = 4)!!
+            assertEquals(4, u16(firstAck, ip + 14))
+            assertEquals(0, tcpChecksum(firstAck, version))
+            assertEquals(3L, u32(firstAck, ip + 8))
+            val stale = finalAck(syn, isn, flags = 0x18,
+                acknowledgement = 0xffff_ffffL, payload = byteArrayOf(7))
+            assertNull(state.stageClientPayload(stale, 105))
+            val second = finalAck(syn, isn, flags = 0x18, sequence = 3,
+                acknowledgement = 0xffff_ffffL, payload = byteArrayOf(4, 5))
+            assertArrayEquals(byteArrayOf(4, 5), state.stageClientPayload(second, 106))
+            val secondAck = state.forwardStagedClientPayload(output, 107)!!
+            assertEquals(0, u16(secondAck, ip + 14)) // default fail-closed
+            assertEquals(5L, u32(secondAck, ip + 8))
+            assertArrayEquals(byteArrayOf(1, 2, 3, 4, 5), output.toByteArray())
+            assertNull(state.stageClientPayload(finalAck(syn, isn, flags = 0x18,
+                sequence = 5, acknowledgement = 0xffff_ffffL,
+                payload = byteArrayOf(6)), 108))
+            // Full offline round trip on the same flow: gateway reply -> TUN.
+            val reply = state.readTunnelResponse(ByteArrayInputStream(byteArrayOf(9, 8)), 1280, 109)!!
+            assertEquals(5L, u32(reply, ip + 8))
+            assertArrayEquals(byteArrayOf(9, 8), reply.copyOfRange(ip + 20, reply.size))
+            assertTrue(state.acceptResponseAck(finalAck(syn, isn,
+                sequence = 5, acknowledgement = 1), 110))
+        }
+    }
+
     @Test fun clientIngressRejectsWrongSequenceAckTupleChecksumAndOversize() {
         for (version in listOf(4, 6)) {
             val syn = request(version)
