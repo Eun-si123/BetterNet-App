@@ -256,6 +256,62 @@ class TunTcpSynAckTest {
             443, 49152, 1, 1, byteArrayOf(1), 1280))
     }
 
+    @Test fun stagesBoundedClientDataAndAcknowledgesOnlyAfterConfirmedDelivery() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val state = OfflineTcpHandshake(1000)
+            val serverIsn = 0xffff_fffeL
+            val synAck = state.begin(syn, serverIsn, 1280, 100, clientWindow = 1024)!!
+            val ip = if (version == 4) 20 else 40
+            assertEquals(1024, u16(synAck, ip + 14))
+            assertTrue(state.acceptFinalAck(finalAck(syn, serverIsn), 101))
+            assertNull(state.confirmClientDelivered(102))
+            val data = byteArrayOf(71, 69, 84)
+            val incoming = finalAck(syn, serverIsn, flags = 0x10,
+                acknowledgement = 0xffff_ffffL, payload = data)
+            assertArrayEquals(data, state.stageClientPayload(incoming, 103))
+            assertNull(state.stageClientPayload(incoming, 104)) // no second buffered segment
+            assertNull(state.offerResponse(byteArrayOf(1), 1280, 105)) // no response before delivery
+            val ack = state.confirmClientDelivered(106)!!
+            assertEquals(0, tcpChecksum(ack, version))
+            if (version == 4) assertEquals(0, checksum(sum(ack, 0, 20)))
+            assertEquals(0x10, ack[ip + 13].toInt() and 255)
+            assertEquals(0, u16(ack, ip + 14)) // no further client window promised
+            assertEquals(3L, u32(ack, ip + 8)) // wrapped client sequence + 3
+            assertEquals(0xffff_ffffL, u32(ack, ip + 4))
+            assertNull(state.confirmClientDelivered(107))
+            assertNull(state.stageClientPayload(incoming, 108)) // zero-window after delivery
+        }
+    }
+
+    @Test fun clientIngressRejectsWrongSequenceAckTupleChecksumAndOversize() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val state = OfflineTcpHandshake(1000)
+            assertNotNull(state.begin(syn, 99L, 1280, 200, clientWindow = 4))
+            assertTrue(state.acceptFinalAck(finalAck(syn, 99L), 201))
+            val valid = finalAck(syn, 99L, flags = 0x18,
+                acknowledgement = 100L, payload = byteArrayOf(1, 2, 3, 4))
+            val corrupted = valid.bytes.clone().apply { this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte() }
+            for (bad in listOf(
+                finalAck(syn, 99L, flags = 0x18, sequence = 1,
+                    acknowledgement = 100L, payload = byteArrayOf(1)),
+                finalAck(syn, 99L, flags = 0x18, acknowledgement = 101L, payload = byteArrayOf(1)),
+                finalAck(syn, 99L, flags = 0x18, acknowledgement = 100L,
+                    sourcePort = 49153, payload = byteArrayOf(1)),
+                finalAck(syn, 99L, flags = 0x18, acknowledgement = 100L,
+                    payload = ByteArray(5)),
+                finalAck(syn, 99L, flags = 0x11, acknowledgement = 100L,
+                    payload = byteArrayOf(1)),
+                valid.copy(bytes = corrupted),
+            )) assertNull(state.stageClientPayload(bad, 202))
+            assertArrayEquals(byteArrayOf(1, 2, 3, 4), state.stageClientPayload(valid, 203))
+            assertNull(state.confirmClientDelivered(1200)) // expired, no stale ACK
+            assertFalse(state.isEstablished(1201))
+        }
+        assertNull(OfflineTcpHandshake().begin(request(4), 1L, 1280, 1, clientWindow = 1025))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsUnboundedMtu() {
         buildTcpSynAck(request(4), 123L, 1000)

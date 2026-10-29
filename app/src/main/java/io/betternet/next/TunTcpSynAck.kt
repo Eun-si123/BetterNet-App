@@ -7,14 +7,16 @@ package io.betternet.next
  * a bounded TCP flow state machine owns the tuple and both sequence spaces.
  *
  * The caller supplies a cryptographically unpredictable 32-bit server ISN.
- * This deliberately advertises a zero receive window: no application payload
- * can be accepted until a separately reviewed flow controller exists.
+ * Defaults to a zero receive window. An explicit bounded window may only be
+ * used with an offline flow controller and a ready authenticated gateway.
  */
 internal fun buildTcpSynAck(
     syn: TunIngressResult.Packet,
     serverIsn: Long,
     mtu: Int,
+    receiveWindow: Int = 0,
 ): ByteArray? {
+    require(receiveWindow in 0..1024) { "Receive window must be bounded" }
     require(mtu in 1280..9000) { "TUN MTU must support IPv6 and be bounded" }
     if (serverIsn !in 0..0xffff_ffffL) return null
     val input = syn.bytes
@@ -67,7 +69,7 @@ internal fun buildTcpSynAck(
     put32(ipBytes + 8, (read32(offset + 4) + 1) and 0xffff_ffffL)
     reply[ipBytes + 12] = 0x60 // 24-byte TCP header
     reply[ipBytes + 13] = 0x12 // SYN | ACK
-    put16(ipBytes + 14, 0) // Fail closed until receive flow control exists.
+    put16(ipBytes + 14, receiveWindow) // Nonzero only for a bounded offline flow controller.
     reply[ipBytes + 20] = 2 // MSS
     reply[ipBytes + 21] = 4
     put16(ipBytes + 22, mss)
@@ -180,4 +182,57 @@ internal fun buildTcpDataReply(
     put16(ipBytes + 16, checksumTcp(pseudo + wordSumTcp(reply, ipBytes, tcpBytes)))
     if (src.size == 4) put16(10, checksumTcp(wordSumTcp(reply, 0, 20)))
     return reply
+}
+
+/** Offline zero-window ACK after the caller has confirmed delivery of client bytes.
+ * Does not acknowledge unforwarded bytes or initiate a network connection.
+ */
+internal fun buildTcpDeliveryAck(
+    source: java.net.InetAddress, destination: java.net.InetAddress,
+    sourcePort: Int, destinationPort: Int,
+    sequence: Long, acknowledgement: Long,
+): ByteArray? {
+    val src = source.address
+    val dst = destination.address
+    if (src.size !in listOf(4, 16) || dst.size != src.size ||
+        sourcePort !in 1..65535 || destinationPort !in 1..65535 ||
+        sequence !in 0..0xffff_ffffL || acknowledgement !in 0..0xffff_ffffL) return null
+    val ipBytes = if (src.size == 4) 20 else 40
+    val packet = ByteArray(ipBytes + 20)
+    fun put16(at: Int, v: Int) {
+        packet[at] = (v ushr 8).toByte()
+        packet[at + 1] = v.toByte()
+    }
+    fun put32(at: Int, v: Long) {
+        put16(at, (v ushr 16).toInt())
+        put16(at + 2, v.toInt())
+    }
+    if (src.size == 4) {
+        packet[0] = 0x45
+        put16(2, packet.size)
+        put16(6, 0x4000)
+        packet[8] = 64
+        packet[9] = 6
+        src.copyInto(packet, 12)
+        dst.copyInto(packet, 16)
+    } else {
+        packet[0] = 0x60
+        put16(4, 20)
+        packet[6] = 6
+        packet[7] = 64
+        src.copyInto(packet, 8)
+        dst.copyInto(packet, 24)
+    }
+    put16(ipBytes, sourcePort)
+    put16(ipBytes + 2, destinationPort)
+    put32(ipBytes + 4, sequence)
+    put32(ipBytes + 8, acknowledgement)
+    packet[ipBytes + 12] = 0x50
+    packet[ipBytes + 13] = 0x10
+    // Window stays closed until an independently reviewed window-update path exists.
+    put16(ipBytes + 14, 0)
+    val pseudo = wordSumTcp(src, 0, src.size) + wordSumTcp(dst, 0, dst.size) + 20 + 6
+    put16(ipBytes + 16, checksumTcp(pseudo + wordSumTcp(packet, ipBytes, 20)))
+    if (src.size == 4) put16(10, checksumTcp(wordSumTcp(packet, 0, 20)))
+    return packet
 }

@@ -3,8 +3,9 @@ package io.betternet.next
 /**
  * Bounded, offline handshake bookkeeping for exactly one TCP/443 TUN flow.
  * This does not open a socket, establish a VPN, or forward application bytes.
- * The SYN-ACK deliberately advertises a zero receive window: a later flow
- * controller must be reviewed before accepting payload or advertising space.
+ * The SYN-ACK defaults to a zero receive window. A caller may explicitly opt
+ * into a maximum 1024-byte, one-segment offline staging window; no payload is
+ * acknowledged before the caller confirms delivery over an authenticated path.
  * Caller supplies a fresh unpredictable server ISN and monotonic time.
  */
 internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
@@ -23,13 +24,17 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     private var flow: Flow? = null
     private var acked = false
     private var pendingResponseBytes = 0
+    private var pendingClientPayload: ByteArray? = null
+    private var receiveWindow = 0
     private var lastSeenAt = -1L
 
-    fun begin(syn: TunIngressResult.Packet, serverIsn: Long, mtu: Int, nowMillis: Long): ByteArray? {
+    fun begin(syn: TunIngressResult.Packet, serverIsn: Long, mtu: Int, nowMillis: Long,
+              clientWindow: Int = 0): ByteArray? {
         if (nowMillis < 0) return null
         expire(nowMillis)
         if (flow != null) return null // One flow, no duplicate SYN-ACK or replacement.
-        val synAck = buildTcpSynAck(syn, serverIsn, mtu) ?: return null
+        if (clientWindow !in 0..1024) return null
+        val synAck = buildTcpSynAck(syn, serverIsn, mtu, clientWindow) ?: return null
         // Never trust the caller-supplied header; the builder already validated
         // the complete packet and its checksum, so parse the same bytes again.
         val header = parseTunPacketHeader(syn.bytes, syn.bytes.size) ?: return null
@@ -41,6 +46,8 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         )
         acked = false
         pendingResponseBytes = 0
+        pendingClientPayload = null
+        receiveWindow = clientWindow
         lastSeenAt = nowMillis
         return synAck
     }
@@ -69,6 +76,52 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     }
 
     /**
+     * Stage exactly one in-order client payload without acknowledging it. A future
+     * gateway controller must call confirmClientDelivered ONLY after a successful
+     * authenticated tunnel write. No data is sent by this offline state machine.
+     */
+    fun stageClientPayload(packet: TunIngressResult.Packet, nowMillis: Long): ByteArray? {
+        expire(nowMillis)
+        val current = flow ?: return null
+        if (!acked || receiveWindow == 0 || pendingClientPayload != null) return null
+        val bytes = packet.bytes
+        val header = parseTunPacketHeader(bytes, bytes.size) ?: return null
+        if (header.protocol != 6 || header.source != current.source ||
+            header.destination != current.destination ||
+            header.sourcePort != current.sourcePort ||
+            header.destinationPort != current.destinationPort ||
+            header.transportHeaderBytes != 20) return null
+        val offset = header.transportOffset
+        val count = bytes.size - offset - 20
+        val flags = bytes[offset + 13].toInt() and 255
+        if (count !in 1..receiveWindow ||
+            (bytes[offset + 12].toInt() and 15) != 0 ||
+            (flags != 0x10 && flags != 0x18) ||
+            read16(bytes, offset + 18) != 0 ||
+            read32(bytes, offset + 4) != current.clientNext ||
+            read32(bytes, offset + 8) != current.serverNext ||
+            pendingResponseBytes != 0) return null
+        return bytes.copyOfRange(offset + 20, bytes.size).also { pendingClientPayload = it }
+    }
+
+    /** ACK only after confirmed delivery; keep receive window zero thereafter. */
+    fun confirmClientDelivered(nowMillis: Long): ByteArray? {
+        expire(nowMillis)
+        val current = flow ?: return null
+        val payload = pendingClientPayload ?: return null
+        val next = (current.clientNext + payload.size) and 0xffff_ffffL
+        val ack = buildTcpDeliveryAck(
+            current.destination, current.source,
+            current.destinationPort, current.sourcePort,
+            current.serverNext, next,
+        ) ?: return null
+        flow = current.copy(clientNext = next)
+        pendingClientPayload = null
+        receiveWindow = 0
+        return ack
+    }
+
+    /**
      * Prepare at most one bounded outbound TCP data segment after the handshake.
      * A future gateway controller must own delivery/retransmission before use.
      * The receive window remains zero; client application bytes are NOT accepted.
@@ -76,7 +129,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     fun offerResponse(payload: ByteArray, mtu: Int, nowMillis: Long): ByteArray? {
         expire(nowMillis)
         val current = flow ?: return null
-        if (!acked || pendingResponseBytes != 0) return null
+        if (!acked || pendingResponseBytes != 0 || pendingClientPayload != null) return null
         val reply = buildTcpDataReply(
             current.destination, current.source,
             current.destinationPort, current.sourcePort,
@@ -120,6 +173,8 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         flow = null
         acked = false
         pendingResponseBytes = 0
+        pendingClientPayload = null
+        receiveWindow = 0
         lastSeenAt = -1L
     }
 
