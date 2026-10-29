@@ -27,6 +27,17 @@ class TunPacketHeaderTest {
         this[16] = 198.toByte(); this[17] = 51; this[18] = 100; this[19] = 2
         set16(this, 20, 43210); set16(this, 22, 443)
         this[32] = 0x50 // TCP data offset = 20 bytes
+        // Construct a valid TCP checksum; the parser now rejects the old
+        // header-only fixture with an absent/incorrect checksum.
+        var tcpSum = 6 + 20
+        for (range in listOf(12 until 20, 20 until 40)) {
+            for (at in range step 2) {
+                tcpSum += ((this[at].toInt() and 0xff) shl 8) or
+                    (this[at + 1].toInt() and 0xff)
+            }
+        }
+        while (tcpSum > 0xffff) tcpSum = (tcpSum and 0xffff) + (tcpSum ushr 16)
+        set16(this, 36, tcpSum.inv() and 0xffff)
         sealIpv4Header(this)
     }
 
