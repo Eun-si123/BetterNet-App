@@ -53,6 +53,23 @@ class DnsQueryValidationTest {
         }
     }
 
+    @Test fun ednsPrivacyBoundaryAllowsOnlyZeroPadding() {
+        val base = withOpt()
+        val padded = base.clone().apply { this[29] = 6 } +
+            byteArrayOf(0, 12, 0, 2, 0, 0)
+        assertTrue(isSupportedDnsQueryMessage(padded))
+
+        // ECS (8), DNS COOKIE (10), NSID (3), and unknown options can
+        // expose client or resolver-specific identifiers to an upstream.
+        for (code in listOf(3, 8, 10, 65001)) {
+            val option = base.clone().apply { this[29] = 4 } +
+                byteArrayOf((code ushr 8).toByte(), code.toByte(), 0, 0)
+            assertFalse("EDNS option $code must not be forwarded", isSupportedDnsQueryMessage(option))
+        }
+        val nonzeroPadding = padded.clone().apply { this[lastIndex] = 1 }
+        assertFalse(isSupportedDnsQueryMessage(nonzeroPadding))
+    }
+
     @Test fun rejectsMalformedQuestionAndUnsupportedFlags() {
         val base = query()
         val invalid = listOf(

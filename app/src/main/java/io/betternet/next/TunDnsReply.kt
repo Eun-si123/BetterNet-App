@@ -80,8 +80,10 @@ internal fun isSupportedDnsTunQuery(request: TunIngressResult.Packet): Boolean {
 /**
  * Only forward one well-formed question, optionally with a single EDNS(0) OPT
  * record. Reject undeclared trailing bytes, arbitrary additional records and
- * malformed EDNS options before any upstream I/O. EDNS options are opaque here:
- * this validates framing, not the semantics or privacy of individual options.
+ * malformed EDNS options before any upstream I/O. Only zero-filled EDNS
+ * padding (option 12) is permitted for now. In particular, do not silently
+ * forward client-subnet, cookie or other identifying/unknown EDNS options
+ * to a new resolver without a separate privacy and compatibility review.
  */
 internal fun isSupportedDnsQueryMessage(query: ByteArray): Boolean {
     if (query.size !in 17..1232) return false
@@ -105,9 +107,15 @@ internal fun isSupportedDnsQueryMessage(query: ByteArray): Boolean {
             var at = optionsStart
             while (at < query.size) {
                 if (query.size - at < 4) return false
+                val optionCode = u16(query, at)
                 val optionLength = u16(query, at + 2)
                 at += 4
                 if (optionLength > query.size - at) return false
+                // RFC 7830 padding must be all zero. No opaque options
+                // cross the future DNS trust boundary by default.
+                if (optionCode != 12 || (at until at + optionLength).any {
+                    query[it] != 0.toByte()
+                }) return false
                 at += optionLength
             }
             true
