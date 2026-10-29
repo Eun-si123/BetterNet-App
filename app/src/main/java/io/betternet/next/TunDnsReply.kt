@@ -68,17 +68,52 @@ internal fun isSupportedDnsTunQuery(request: TunIngressResult.Packet): Boolean {
     val header = parseTunPacketHeader(packet, packet.size) ?: return false
     if (header.protocol != 17 || header.destinationPort != 53 || header.sourcePort == 0) return false
     val start = header.transportOffset + 8
-    if (packet.size - start !in 17..1232) return false
-    if ((packet[start + 2].toInt() and 0xfe) != 0 ||
-        (packet[start + 3].toInt() and 0x4f) != 0 ||
-        u16(packet, start + 4) != 1 ||
-        dnsQuestionEnd(packet, start, packet.size) == null) return false
+    if (!isSupportedDnsQueryMessage(packet.copyOfRange(start, packet.size))) return false
     val udpLength = packet.size - header.transportOffset
     val checksum = u16(packet, header.transportOffset + 6)
     return checksum == 0 || validUdpChecksum(
         packet, header.transportOffset, udpLength,
         header.source.address, header.destination.address
     )
+}
+
+/**
+ * Only forward one well-formed question, optionally with a single EDNS(0) OPT
+ * record. Reject undeclared trailing bytes, arbitrary additional records and
+ * malformed EDNS options before any upstream I/O. EDNS options are opaque here:
+ * this validates framing, not the semantics or privacy of individual options.
+ */
+internal fun isSupportedDnsQueryMessage(query: ByteArray): Boolean {
+    if (query.size !in 17..1232) return false
+    if ((query[2].toInt() and 0xfe) != 0 ||
+        (query[3].toInt() and 0x4f) != 0 ||
+        u16(query, 4) != 1 || u16(query, 6) != 0 || u16(query, 8) != 0) return false
+    val questionEnd = dnsQuestionEnd(query, 0, query.size) ?: return false
+    return when (u16(query, 10)) {
+        0 -> questionEnd == query.size
+        1 -> {
+            // OPT: root NAME, TYPE=41, UDP payload size, extended RCODE,
+            // EDNS version, flags, and RDLEN followed by bounded TLV options.
+            if (questionEnd + 11 > query.size ||
+                query[questionEnd] != 0.toByte() ||
+                u16(query, questionEnd + 1) != 41 ||
+                u16(query, questionEnd + 3) !in 512..4096 ||
+                u16(query, questionEnd + 5) != 0 ||
+                (u16(query, questionEnd + 7) and 0x7fff) != 0) return false
+            val optionsStart = questionEnd + 11
+            if (u16(query, questionEnd + 9) != query.size - optionsStart) return false
+            var at = optionsStart
+            while (at < query.size) {
+                if (query.size - at < 4) return false
+                val optionLength = u16(query, at + 2)
+                at += 4
+                if (optionLength > query.size - at) return false
+                at += optionLength
+            }
+            true
+        }
+        else -> false
+    }
 }
 
 /**

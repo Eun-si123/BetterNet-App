@@ -25,6 +25,8 @@ class DnsTlsExchangeTest {
             Triple("timeout", valid, 0),
             Triple("query length", ByteArray(16), 1_000),
             Triple("query flags", valid.clone().apply { this[2] = 0x81.toByte() }, 1_000),
+            Triple("undeclared trailing data", valid + byteArrayOf(1), 1_000),
+            Triple("unparsed additional record", valid.clone().apply { this[11] = 1 }, 1_000),
         )
         for ((reason, bytes, timeout) in cases) {
             val tls = socket(verifyHostname = true)

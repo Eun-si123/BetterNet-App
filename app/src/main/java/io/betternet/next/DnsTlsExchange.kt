@@ -21,11 +21,8 @@ internal fun exchangeOneDnsMessageOverTls(
 ): ByteArray {
     try {
         require(timeoutMs in 1..10_000) { "DNS exchange timeout must be bounded" }
-        require(query.size in 17..1232) { "DNS query size outside test budget" }
-        require((query[2].toInt() and 0xfe) == 0 &&
-            (query[3].toInt() and 0x4f) == 0 &&
-            query[4] == 0.toByte() && query[5] == 1.toByte()) {
-            "Only a standard single-question DNS query is supported"
+        require(isSupportedDnsQueryMessage(query)) {
+            "Only a bounded, well-formed single-question DNS query is supported"
         }
         require(tls.useClientMode && tls.sslParameters.endpointIdentificationAlgorithm == "HTTPS") {
             "DNS transport must use verified TLS endpoint identity"
