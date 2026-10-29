@@ -1,5 +1,8 @@
 package io.betternet.next
 
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.io.OutputStream
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -265,21 +268,25 @@ class TunTcpSynAckTest {
             val ip = if (version == 4) 20 else 40
             assertEquals(1024, u16(synAck, ip + 14))
             assertTrue(state.acceptFinalAck(finalAck(syn, serverIsn), 101))
-            assertNull(state.confirmClientDelivered(102))
+            assertNull(state.forwardStagedClientPayload(ByteArrayOutputStream(), 102))
             val data = byteArrayOf(71, 69, 84)
             val incoming = finalAck(syn, serverIsn, flags = 0x10,
                 acknowledgement = 0xffff_ffffL, payload = data)
-            assertArrayEquals(data, state.stageClientPayload(incoming, 103))
+            val staged = state.stageClientPayload(incoming, 103)!!
+            assertArrayEquals(data, staged)
+            staged[0] = 0 // Caller must not mutate the internal staged bytes.
             assertNull(state.stageClientPayload(incoming, 104)) // no second buffered segment
             assertNull(state.offerResponse(byteArrayOf(1), 1280, 105)) // no response before delivery
-            val ack = state.confirmClientDelivered(106)!!
+            val tunnelOutput = ByteArrayOutputStream()
+            val ack = state.forwardStagedClientPayload(tunnelOutput, 106)!!
+            assertArrayEquals(data, tunnelOutput.toByteArray())
             assertEquals(0, tcpChecksum(ack, version))
             if (version == 4) assertEquals(0, checksum(sum(ack, 0, 20)))
             assertEquals(0x10, ack[ip + 13].toInt() and 255)
             assertEquals(0, u16(ack, ip + 14)) // no further client window promised
             assertEquals(3L, u32(ack, ip + 8)) // wrapped client sequence + 3
             assertEquals(0xffff_ffffL, u32(ack, ip + 4))
-            assertNull(state.confirmClientDelivered(107))
+            assertNull(state.forwardStagedClientPayload(ByteArrayOutputStream(), 107))
             assertNull(state.stageClientPayload(incoming, 108)) // zero-window after delivery
         }
     }
@@ -306,10 +313,44 @@ class TunTcpSynAckTest {
                 valid.copy(bytes = corrupted),
             )) assertNull(state.stageClientPayload(bad, 202))
             assertArrayEquals(byteArrayOf(1, 2, 3, 4), state.stageClientPayload(valid, 203))
-            assertNull(state.confirmClientDelivered(1200)) // expired, no stale ACK
+            assertNull(state.forwardStagedClientPayload(ByteArrayOutputStream(), 1200)) // expired, no stale ACK
             assertFalse(state.isEstablished(1201))
         }
         assertNull(OfflineTcpHandshake().begin(request(4), 1L, 1280, 1, clientWindow = 1025))
+    }
+
+    @Test fun failedTunnelWriteOrFlushNeverAcknowledgesAndClosesFlow() {
+        for (version in listOf(4, 6)) {
+            for (failOnFlush in listOf(false, true)) {
+                val syn = request(version)
+                val state = OfflineTcpHandshake(1000)
+                assertNotNull(state.begin(syn, 7, 1280, 100, clientWindow = 16))
+                assertTrue(state.acceptFinalAck(finalAck(syn, 7), 101))
+                val data = finalAck(syn, 7, flags = 0x18,
+                    acknowledgement = 8, payload = byteArrayOf(1, 2, 3))
+                assertNotNull(state.stageClientPayload(data, 102))
+                var closed = false
+                val broken = object : OutputStream() {
+                    override fun write(b: Int) { throw IOException("partial write") }
+                    override fun write(b: ByteArray, off: Int, len: Int) {
+                        if (!failOnFlush) throw IOException("partial write")
+                    }
+                    override fun flush() {
+                        if (failOnFlush) throw IOException("flush failed")
+                    }
+                    override fun close() { closed = true }
+                }
+                try {
+                    state.forwardStagedClientPayload(broken, 103)
+                    fail("Expected tunnel failure")
+                } catch (_: IOException) { }
+                assertTrue(closed)
+                assertFalse(state.isEstablished(104))
+                assertNull(state.forwardStagedClientPayload(ByteArrayOutputStream(), 105))
+                // A new flow may begin, but no stale ACK can be issued.
+                assertNotNull(state.begin(syn, 8, 1280, 106, clientWindow = 16))
+            }
+        }
     }
 
     @Test(expected = IllegalArgumentException::class)

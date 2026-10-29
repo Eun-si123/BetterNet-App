@@ -1,11 +1,15 @@
 package io.betternet.next
 
+import java.io.OutputStream
+
 /**
  * Bounded, offline handshake bookkeeping for exactly one TCP/443 TUN flow.
- * This does not open a socket, establish a VPN, or forward application bytes.
+ * This does not open a socket or establish a VPN. The caller must supply a
+ * previously authenticated, protected CONNECT stream before forwarding bytes.
  * The SYN-ACK defaults to a zero receive window. A caller may explicitly opt
  * into a maximum 1024-byte, one-segment offline staging window; no payload is
- * acknowledged before the caller confirms delivery over an authenticated path.
+ * acknowledged until an explicitly supplied authenticated CONNECT stream
+ * accepts the payload write and flush. That is NOT proof of remote delivery.
  * Caller supplies a fresh unpredictable server ISN and monotonic time.
  */
 internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
@@ -76,9 +80,9 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     }
 
     /**
-     * Stage exactly one in-order client payload without acknowledging it. A future
-     * gateway controller must call confirmClientDelivered ONLY after a successful
-     * authenticated tunnel write. No data is sent by this offline state machine.
+     * Stage exactly one in-order client payload without acknowledging it.
+     * The returned bytes are a defensive copy; only forwardStagedClientPayload
+     * can advance the ACK after a successful write to a caller-owned stream.
      */
     fun stageClientPayload(packet: TunIngressResult.Packet, nowMillis: Long): ByteArray? {
         expire(nowMillis)
@@ -101,11 +105,22 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             read32(bytes, offset + 4) != current.clientNext ||
             read32(bytes, offset + 8) != current.serverNext ||
             pendingResponseBytes != 0) return null
-        return bytes.copyOfRange(offset + 20, bytes.size).also { pendingClientPayload = it }
+        val staged = bytes.copyOfRange(offset + 20, bytes.size)
+        pendingClientPayload = staged
+        return staged.copyOf()
     }
 
-    /** ACK only after confirmed delivery; keep receive window zero thereafter. */
-    fun confirmClientDelivered(nowMillis: Long): ByteArray? {
+    /**
+     * Forward one staged segment to a caller-provided authenticated CONNECT
+     * tunnel's raw output stream (NOT a separately terminated destination TLS
+     * socket). Only then emit an ACK. A successful write/flush is local transport
+     * acceptance, not proof that the destination received the bytes.
+     *
+     * If the write or flush fails, the segment may have been partly transmitted:
+     * close the stream and discard the flow instead of risking a duplicate write.
+     * The caller still owns closing the associated tunnel on normal completion.
+     */
+    fun forwardStagedClientPayload(tunnelOutput: OutputStream, nowMillis: Long): ByteArray? {
         expire(nowMillis)
         val current = flow ?: return null
         val payload = pendingClientPayload ?: return null
@@ -115,6 +130,16 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             current.destinationPort, current.sourcePort,
             current.serverNext, next,
         ) ?: return null
+        try {
+            tunnelOutput.write(payload)
+            tunnelOutput.flush()
+        } catch (failure: Exception) {
+            close()
+            try { tunnelOutput.close() } catch (closeFailure: Exception) {
+                failure.addSuppressed(closeFailure)
+            }
+            throw failure
+        }
         flow = current.copy(clientNext = next)
         pendingClientPayload = null
         receiveWindow = 0
