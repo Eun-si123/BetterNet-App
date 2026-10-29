@@ -4,6 +4,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.fail
 import org.junit.Assert.assertTrue
 import java.io.IOException
+import java.net.ConnectException
+import java.net.NoRouteToHostException
+import java.net.SocketTimeoutException
+import javax.net.ssl.SSLHandshakeException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -182,6 +186,142 @@ class SelectedAppVpnServiceTest {
                 assertTrue(!created)
             }
         }
+    }
+
+    @Test fun ipv6ReachabilityFailureFallsBackToIpv4OnSameResolvedList() {
+        val ipv6 = InetAddress.getByAddress(ByteArray(16).apply { this[15] = 1 })
+        val ipv4 = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
+        val attempted = mutableListOf<String>()
+        var lookups = 0
+        var clock = 0L
+        val chosen = connectWithGatewayAddressFallback(
+            "gateway.example", 443, 1_000,
+            { name ->
+                assertEquals("gateway.example", name)
+                lookups++
+                arrayOf(ipv6, ipv4)
+            },
+            { address, timeout ->
+                attempted.add("${address.address.hostAddress}:$timeout")
+                if (address.address == ipv6) {
+                    clock += 300_000_000L
+                    throw NoRouteToHostException("IPv6 path unavailable")
+                }
+                address
+            },
+            { clock },
+        )
+        assertEquals(ipv4, chosen.address)
+        assertEquals(1, lookups)
+        assertEquals(listOf("${ipv6.hostAddress}:1000", "${ipv4.hostAddress}:700"), attempted)
+    }
+
+    @Test fun eachFallbackAttemptProtectsAndBindsItsOwnSocketBeforeDial() {
+        val first = InetAddress.getByAddress(ByteArray(16).apply { this[15] = 1 })
+        val second = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
+        val events = mutableListOf<String>()
+        var created = 0
+        connectWithGatewayAddressFallback(
+            "gateway.example", 443, 1_000,
+            { arrayOf(first, second) },
+            { address, timeout ->
+                connectProtectedSocket(address, timeout,
+                    { events.add("protect"); true },
+                    {
+                        created++
+                        object : Socket() {
+                            override fun connect(endpoint: SocketAddress?, timeout: Int) {
+                                events.add("connect")
+                                if (created == 1) throw NoRouteToHostException("IPv6 unavailable")
+                            }
+                            override fun close() { events.add("close") }
+                        }
+                    },
+                    { events.add("bind") },
+                )
+            },
+        )
+        assertEquals(2, created)
+        assertEquals(listOf("protect", "bind", "connect", "close",
+            "protect", "bind", "connect"), events)
+    }
+
+    @Test fun noRetryOnTlsIdentityOrProtectionFailure() {
+        val ipv6 = InetAddress.getByAddress(ByteArray(16).apply { this[15] = 1 })
+        val ipv4 = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
+        for (failure in listOf(
+            SSLHandshakeException("Untrusted gateway"),
+            IllegalStateException("VPN protection refused"),
+            IOException("Underlying network binding failed"),
+        )) {
+            var attempts = 0
+            try {
+                connectWithGatewayAddressFallback(
+                    "gateway.example", 443, 500,
+                    { arrayOf(ipv6, ipv4) },
+                    { _, _ -> attempts++; throw failure },
+                )
+                fail("Unsafe retry or accepted failure")
+            } catch (caught: Exception) {
+                assertTrue(caught === failure)
+                assertEquals(1, attempts)
+            }
+        }
+    }
+
+    @Test fun retriesAreCappedAndShareOneDeadline() {
+        val addresses = (1..6).map { InetAddress.getByAddress(byteArrayOf(127, 0, 0, it.toByte())) }
+        var attempts = 0
+        var clock = 0L
+        try {
+            connectWithGatewayAddressFallback(
+                "gateway.example", 443, 900,
+                { addresses.toTypedArray() },
+                { _, timeout ->
+                    attempts++
+                    assertEquals(900, timeout)
+                    throw ConnectException("unreachable")
+                },
+                { clock },
+            )
+            fail("All addresses failed")
+        } catch (_: ConnectException) {
+            assertEquals(4, attempts)
+        }
+        attempts = 0
+        try {
+            connectWithGatewayAddressFallback(
+                "gateway.example", 443, 900,
+                { addresses.toTypedArray() },
+                { _, timeout ->
+                    attempts++
+                    assertEquals(900, timeout)
+                    clock += 900_000_000L
+                    throw SocketTimeoutException("deadline consumed")
+                },
+                { clock },
+            )
+            fail("Must not dial after deadline")
+        } catch (_: SocketTimeoutException) {
+            assertEquals(1, attempts)
+        }
+    }
+
+    @Test fun invalidOrEmptyDnsCannotDialAnyGateway() {
+        var lookups = 0
+        var attempts = 0
+        for (name in listOf("bad_name", "gateway.example")) {
+            try {
+                connectWithGatewayAddressFallback(
+                    name, 443, 1_000,
+                    { lookups++; emptyArray() },
+                    { _, _ -> attempts++; "unexpected" },
+                )
+                fail("Unsafe DNS result accepted")
+            } catch (_: IllegalArgumentException) { }
+        }
+        assertEquals(1, lookups)
+        assertEquals(0, attempts)
     }
 
     private fun assertRejected(packageName: String?) {

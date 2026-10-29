@@ -6,6 +6,10 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import java.net.InetAddress
+import java.net.ConnectException
+import java.net.NoRouteToHostException
+import java.net.SocketTimeoutException
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
 import javax.net.ssl.SSLSocket
@@ -42,11 +46,12 @@ class SelectedAppVpnService : VpnService() {
         manager: ConnectivityManager, network: Network, hostname: String,
         port: Int, timeoutMs: Int,
     ): SSLSocket {
-        val address = requireUnderlyingGatewayAddress(manager, network, hostname, port, timeoutMs)
-        return connectVerifiedGatewayTls(
-            address, hostname, timeoutMs, { socket -> protect(socket) },
-            bind = { socket -> network.bindSocket(socket) },
-        )
+        return onUnderlyingNetworkGateway(manager, network, hostname, port, timeoutMs) { address, remaining ->
+            connectVerifiedGatewayTls(
+                address, hostname, remaining, { socket -> protect(socket) },
+                bind = { socket -> network.bindSocket(socket) },
+            )
+        }
     }
 
     /** Same-network DNS, protection and binding for the authenticated test tunnel.
@@ -57,29 +62,32 @@ class SelectedAppVpnService : VpnService() {
         gatewayPort: Int, timeoutMs: Int, destinationHost: String,
         destinationPort: Int, bearerToken: String,
     ): SSLSocket {
-        val address = requireUnderlyingGatewayAddress(
+        return onUnderlyingNetworkGateway(
             manager, network, gatewayName, gatewayPort, timeoutMs
-        )
-        return connectAuthenticatedTestTunnel(
-            address, gatewayName, timeoutMs, { socket -> protect(socket) },
-            destinationHost, destinationPort, bearerToken,
-            bind = { socket -> network.bindSocket(socket) },
-        )
+        ) { address, remaining ->
+            connectAuthenticatedTestTunnel(
+                address, gatewayName, remaining, { socket -> protect(socket) },
+                destinationHost, destinationPort, bearerToken,
+                bind = { socket -> network.bindSocket(socket) },
+            )
+        }
     }
 
-    private fun requireUnderlyingGatewayAddress(
+    private fun <T> onUnderlyingNetworkGateway(
         manager: ConnectivityManager, network: Network, hostname: String,
-        port: Int, timeoutMs: Int,
-    ): InetSocketAddress {
+        port: Int, timeoutMs: Int, dial: (InetSocketAddress, Int) -> T,
+    ): T {
         val capabilities = manager.getNetworkCapabilities(network)
         require(capabilities != null &&
             capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
             !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
             "A non-VPN underlying Internet network is required"
         }
-        require(timeoutMs in 1..10_000) { "Gateway timeout must be bounded" }
-        val address = resolveGatewayAddress(hostname, port) { network.getAllByName(it) }
-        return address
+        // All attempts resolve and bind on this exact non-VPN network; each
+        // fresh socket is protected before connecting, even on IPv6/IPv4 fallback.
+        return connectWithGatewayAddressFallback(
+            hostname, port, timeoutMs, { network.getAllByName(it) }, dial
+        )
     }
 
     // Explicit starts are not an activation mechanism. A future authenticated
@@ -140,10 +148,47 @@ internal fun connectProtectedSocket(
 /** DNS must be performed by the chosen underlying Network, never system DNS. */
 internal fun resolveGatewayAddress(
     hostname: String, port: Int, lookup: (String) -> Array<InetAddress>,
-): InetSocketAddress {
+): InetSocketAddress = resolveGatewayAddresses(hostname, port, lookup).first()
+
+private fun resolveGatewayAddresses(
+    hostname: String, port: Int, lookup: (String) -> Array<InetAddress>,
+): List<InetSocketAddress> {
     require(isValidGatewayName(hostname)) { "Invalid gateway DNS name" }
     require(port in 1..65535) { "Invalid gateway port" }
-    val addresses = lookup(hostname)
+    // Cap retries even when a resolver supplies a very long address list.
+    val addresses = lookup(hostname).distinct().take(4)
     require(addresses.isNotEmpty()) { "Underlying network returned no gateway addresses" }
-    return InetSocketAddress(addresses.first(), port)
+    return addresses.map { InetSocketAddress(it, port) }
+}
+
+/**
+ * One shared timeout across a bounded IPv6/IPv4 address list. Retry only
+ * transport reachability failures; never retry a TLS identity failure, failed
+ * VPN protection, or failed network binding on an unintended default route.
+ * The dial callback must close each failed socket before throwing.
+ */
+internal fun <T> connectWithGatewayAddressFallback(
+    hostname: String, port: Int, timeoutMs: Int,
+    lookup: (String) -> Array<InetAddress>,
+    dial: (InetSocketAddress, Int) -> T,
+    nowNanos: () -> Long = System::nanoTime,
+): T {
+    require(timeoutMs in 1..10_000) { "Gateway timeout must be bounded" }
+    val deadline = nowNanos() + timeoutMs * 1_000_000L
+    val addresses = resolveGatewayAddresses(hostname, port, lookup)
+    var lastFailure: IOException? = null
+    for (address in addresses) {
+        val remaining = deadline - nowNanos()
+        if (remaining <= 0L) break
+        val attemptTimeout = ((remaining / 1_000_000L) +
+            if (remaining % 1_000_000L == 0L) 0L else 1L).coerceIn(1L, 10_000L).toInt()
+        try {
+            return dial(address, attemptTimeout)
+        } catch (failure: IOException) {
+            if (failure !is ConnectException && failure !is NoRouteToHostException &&
+                failure !is SocketTimeoutException) throw failure
+            lastFailure = failure
+        }
+    }
+    throw lastFailure ?: SocketTimeoutException("Gateway address attempts exceeded deadline")
 }
