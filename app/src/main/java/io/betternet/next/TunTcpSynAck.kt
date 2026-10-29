@@ -134,8 +134,10 @@ internal fun buildTcpDataReply(
     acknowledgement: Long,
     payload: ByteArray,
     mtu: Int,
+    receiveWindow: Int = 0,
 ): ByteArray? {
     require(mtu in 1280..9000) { "TUN MTU must support IPv6 and be bounded" }
+    require(receiveWindow in 0..1024) { "TCP receive window must be bounded" }
     val src = source.address
     val dst = destination.address
     if (src.size !in listOf(4, 16) || dst.size != src.size ||
@@ -175,7 +177,7 @@ internal fun buildTcpDataReply(
     put32(ipBytes + 8, acknowledgement)
     reply[ipBytes + 12] = 0x50
     reply[ipBytes + 13] = 0x18 // PSH | ACK
-    put16(ipBytes + 14, 0) // No client payload accepted.
+    put16(ipBytes + 14, receiveWindow) // Match the validated flow's advertised capacity.
     payload.copyInto(reply, ipBytes + 20)
     val pseudo = wordSumTcp(src, 0, src.size) +
         wordSumTcp(dst, 0, dst.size) + tcpBytes + 6

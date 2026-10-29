@@ -709,4 +709,65 @@ class TunTcpSynAckTest {
         assertNull(flow.retryPendingResponse(104))
     }
 
+    @Test fun dormantBridgePumpsFullOfflineRequestReplyForIpv4AndIpv6() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val serverIsn = 100L
+            val tunnelWritten = ByteArrayOutputStream()
+            val gatewayReply = "HTTP/1.1 200 OK\r\n\r\n".toByteArray()
+            val bridge = OfflineTcpTunBridge(
+                ByteArrayInputStream(gatewayReply), tunnelWritten, 1280, serverIsn
+            )
+            val tunWritten = ByteArrayOutputStream()
+            fun deliver(packet: TunIngressResult.Packet, time: Long): ByteArray {
+                tunWritten.reset()
+                assertTrue(bridge.pumpOneTunPacket(
+                    ByteArrayInputStream(packet.bytes), tunWritten, time))
+                return tunWritten.toByteArray()
+            }
+            val synAck = deliver(syn, 100)
+            assertEquals(0x12, synAck[if (version == 4) 33 else 53].toInt() and 255)
+            assertEquals(1024, u16(synAck, if (version == 4) 34 else 54))
+            assertTrue(deliver(finalAck(syn, serverIsn), 101).isEmpty())
+            val requestBytes = "GET / HTTP/1.1\r\n\r\n".toByteArray()
+            val ack = deliver(finalAck(syn, serverIsn, flags = 0x18,
+                payload = requestBytes), 102)
+            assertArrayEquals(requestBytes, tunnelWritten.toByteArray())
+            val ip = if (version == 4) 20 else 40
+            assertEquals(requestBytes.size.toLong(), u32(ack, ip + 8))
+            assertEquals(1024, u16(ack, ip + 14))
+            // Replay must not write a second request to the gateway.
+            assertTrue(deliver(finalAck(syn, serverIsn, flags = 0x18,
+                payload = requestBytes), 103).isEmpty())
+            assertArrayEquals(requestBytes, tunnelWritten.toByteArray())
+            tunWritten.reset()
+            assertTrue(bridge.pumpOneGatewayReply(tunWritten, 104))
+            val response = tunWritten.toByteArray()
+            assertArrayEquals(gatewayReply, response.copyOfRange(ip + 20, response.size))
+            assertEquals(0, tcpChecksum(response, version))
+            assertEquals(1024, u16(response, ip + 14)) // data reply must not close the reopened window
+            assertFalse(bridge.pumpOneGatewayReply(tunWritten, 105)) // wait for ACK
+            assertTrue(deliver(finalAck(syn, serverIsn, sequence = requestBytes.size.toLong(),
+                acknowledgement = serverIsn + 1 + gatewayReply.size), 106).isEmpty())
+            bridge.close()
+            assertTrue(deliver(syn, 107).isEmpty()) // no ISN reuse after close
+        }
+    }
+
+    @Test fun dormantBridgeRejectsCorruptAndUnestablishedPacketsWithoutTunnelWrites() {
+        val syn = request(4)
+        val gatewayWritten = ByteArrayOutputStream()
+        val bridge = OfflineTcpTunBridge(ByteArrayInputStream(byteArrayOf(1)),
+            gatewayWritten, 1280, 321)
+        val tunWritten = ByteArrayOutputStream()
+        val invalid = syn.bytes.clone().apply { this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte() }
+        assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(invalid), tunWritten, 1))
+        assertTrue(tunWritten.toByteArray().isEmpty())
+        assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(finalAck(syn, 321,
+            flags = 0x18, payload = byteArrayOf(5)).bytes), tunWritten, 2))
+        assertTrue(gatewayWritten.toByteArray().isEmpty())
+        assertFalse(bridge.pumpOneGatewayReply(tunWritten, 3))
+        assertFalse(bridge.pumpOneTunPacket(ByteArrayInputStream(byteArrayOf()), tunWritten, 4))
+    }
+
 }

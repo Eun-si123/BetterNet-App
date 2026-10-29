@@ -180,7 +180,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         val reply = buildTcpDataReply(
             current.destination, current.source,
             current.destinationPort, current.sourcePort,
-            current.serverNext, current.clientNext, payload, mtu,
+            current.serverNext, current.clientNext, payload, mtu, receiveWindow,
         ) ?: return null
         pendingResponseBytes = payload.size
         pendingResponsePacket = reply.copyOf()
