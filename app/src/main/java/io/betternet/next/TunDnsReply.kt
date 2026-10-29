@@ -71,7 +71,9 @@ internal fun isSupportedDnsTunQuery(request: TunIngressResult.Packet): Boolean {
     if (!isSupportedDnsQueryMessage(packet.copyOfRange(start, packet.size))) return false
     val udpLength = packet.size - header.transportOffset
     val checksum = u16(packet, header.transportOffset + 6)
-    return checksum == 0 || validUdpChecksum(
+    // IPv6 UDP checksums are mandatory; only IPv4 may omit them.
+    if (checksum == 0) return header.ipVersion == 4
+    return validUdpChecksum(
         packet, header.transportOffset, udpLength,
         header.source.address, header.destination.address
     )

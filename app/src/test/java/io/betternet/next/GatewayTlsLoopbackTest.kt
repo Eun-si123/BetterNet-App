@@ -144,6 +144,70 @@ class GatewayTlsLoopbackTest {
         }
     }
 
+    @Test fun authenticatedNestedDnsReturnsOneIpv4AndIpv6TunDatagram() {
+        for (ipv6 in listOf(false, true)) {
+            val tls = contexts()
+            val token = "TestOnlyOpaqueToken0123456789"
+            val query = dnsQuery()
+            val response = query.clone().apply { this[2] = 0x81.toByte(); this[3] = 0x80.toByte() }
+            val request = tunDnsRequest(ipv6)
+            withServer(tls.server, { gateway ->
+                gateway.startHandshake()
+                val lines = gateway.inputStream.bufferedReader()
+                assertEquals("CONNECT dns.example:853 HTTP/1.1", lines.readLine())
+                assertEquals("Host: dns.example:853", lines.readLine())
+                assertEquals("Proxy-Authorization: Bearer $token", lines.readLine())
+                assertEquals("", lines.readLine())
+                gateway.outputStream.write("HTTP/1.1 200 OK\r\n\r\n".toByteArray())
+                gateway.outputStream.flush()
+                (tls.server.socketFactory.createSocket(gateway, "dns.example", 853, false) as SSLSocket).use { dns ->
+                    dns.useClientMode = false
+                    dns.soTimeout = 3_000
+                    dns.startHandshake()
+                    val prefix = dns.inputStream.readNBytes(2)
+                    assertEquals(query.size, ((prefix[0].toInt() and 255) shl 8) or
+                        (prefix[1].toInt() and 255))
+                    assertArrayEquals(query, dns.inputStream.readNBytes(query.size))
+                    dns.outputStream.write(byteArrayOf(0, response.size.toByte()) + response)
+                    dns.outputStream.flush()
+                }
+            }) { address ->
+                val pending = PendingDnsReplies(maxPending = 1)
+                val output = java.io.ByteArrayOutputStream()
+                val events = mutableListOf<String>()
+                assertTrue(exchangeOneTunDnsQueryThroughGateway(
+                    address, "gateway.example", "dns.example", token, 3_000,
+                    { events.add("protected"); true }, request, pending, output, 1280,
+                    tls.trustedClient.socketFactory, tls.trustedClient.socketFactory,
+                    bind = { events.add("bound") }
+                ))
+                assertEquals(listOf("protected", "bound"), events)
+                assertArrayEquals(buildDnsUdpReply(request, response, 1280), output.toByteArray())
+                assertNotNull("Pending slot must be released", pending.register(request))
+            }
+        }
+    }
+
+    @Test fun invalidIpv6UdpZeroChecksumCannotOpenGateway() {
+        val request = tunDnsRequest(true)
+        val invalidBytes = request.bytes.clone().apply {
+            this[46] = 0
+            this[47] = 0
+        }
+        val invalid = request.copy(bytes = invalidBytes)
+        assertFalse(isSupportedDnsTunQuery(invalid))
+        var dialAttempted = false
+        val output = java.io.ByteArrayOutputStream()
+        assertFalse(exchangeOneTunDnsQueryThroughGateway(
+            InetSocketAddress.createUnresolved("gateway.example", 443),
+            "gateway.example", "dns.example", "TestOnlyOpaqueToken0123456789",
+            3_000, { dialAttempted = true; true }, invalid,
+            PendingDnsReplies(), output, 1280,
+        ))
+        assertFalse(dialAttempted)
+        assertEquals(0, output.size())
+    }
+
     @Test fun nestedHttpsOverAuthenticatedConnectReturnsRealResponseBytes() {
         val tls = contexts()
         val token = "TestOnlyOpaqueToken0123456789"

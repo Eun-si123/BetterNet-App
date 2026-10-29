@@ -1,7 +1,10 @@
 package io.betternet.next
 
 import java.io.OutputStream
+import java.net.InetSocketAddress
+import java.net.Socket
 import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
 
 /**
  * Dormant single-query A1 composition: a validated TUN DNS/UDP request,
@@ -39,4 +42,36 @@ internal fun exchangeOneTunDnsQueryOverTls(
         // Release capacity even on TLS failure, rejection or output I/O error.
         pending.cancel(handle)
     }
+}
+
+/**
+ * Dormant end-to-end DNS slice: one selected-app TUN DNS datagram through a
+ * protected, credential-bearing CONNECT test tunnel and independently verified
+ * DNS-over-TLS peer, back to one correlated IP datagram. The gateway is only a
+ * test peer; this does not start a VPN or prove public Internet connectivity.
+ */
+internal fun exchangeOneTunDnsQueryThroughGateway(
+    gatewayAddress: InetSocketAddress,
+    gatewayName: String,
+    dnsServerName: String,
+    bearerToken: String,
+    timeoutMs: Int,
+    protect: (Socket) -> Boolean,
+    request: TunIngressResult.Packet,
+    pending: PendingDnsReplies,
+    output: OutputStream,
+    mtu: Int,
+    gatewayTlsFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
+    destinationTlsFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
+    bind: (Socket) -> Unit = {},
+): Boolean {
+    require(mtu in 1280..9000) { "TUN MTU must be bounded" }
+    require(timeoutMs in 1..10_000) { "DNS timeout must be bounded" }
+    // Do not dial or disclose credentials for malformed TUN packets.
+    if (!isSupportedDnsTunQuery(request)) return false
+    val tls = connectVerifiedDestinationTlsThroughGateway(
+        gatewayAddress, gatewayName, dnsServerName, 853, bearerToken,
+        timeoutMs, protect, gatewayTlsFactory, destinationTlsFactory, bind
+    )
+    return exchangeOneTunDnsQueryOverTls(tls, request, pending, output, mtu, timeoutMs)
 }
