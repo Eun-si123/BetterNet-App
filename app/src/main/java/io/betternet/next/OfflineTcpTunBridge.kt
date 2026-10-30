@@ -42,7 +42,10 @@ internal class OfflineTcpTunBridge(
         try {
             when (val ingress = readOneTunDatagram(tunInput, mtu)) {
                 TunIngressResult.EndOfStream -> { close(); return false }
-                TunIngressResult.Rejected -> return true
+                TunIngressResult.Rejected -> {
+                    retireIfFlowEnded(nowMillis)
+                    return true
+                }
                 is TunIngressResult.Packet -> {
                     val packet = ingress.bytes
                     val offset = ingress.header.transportOffset
@@ -72,6 +75,7 @@ internal class OfflineTcpTunBridge(
                     if (reply != null) writeTun(tunOutput, reply)
                 }
             }
+            retireIfFlowEnded(nowMillis)
             return true
         } catch (failure: Exception) {
             try { close() } catch (closeFailure: Exception) { failure.addSuppressed(closeFailure) }
@@ -80,12 +84,25 @@ internal class OfflineTcpTunBridge(
     }
 
     /** May block; caller must provide a bounded tunnel read timeout and a ready flow. */
-    fun pumpOneGatewayReply(tunOutput: OutputStream, nowMillis: Long): Boolean =
-        !closed && emit(tunOutput) { tcp.readTunnelResponse(tunnelInput, mtu, nowMillis) }
+    fun pumpOneGatewayReply(tunOutput: OutputStream, nowMillis: Long): Boolean {
+        if (closed) return false
+        val emitted = emit(tunOutput) { tcp.readTunnelResponse(tunnelInput, mtu, nowMillis) }
+        retireIfFlowEnded(nowMillis)
+        return emitted
+    }
 
     /** Retransmit only the exact previously emitted packet after its deadline. */
-    fun pumpPendingRetry(tunOutput: OutputStream, nowMillis: Long): Boolean =
-        !closed && emit(tunOutput) { tcp.retryPendingResponse(nowMillis) }
+    fun pumpPendingRetry(tunOutput: OutputStream, nowMillis: Long): Boolean {
+        if (closed) return false
+        val emitted = emit(tunOutput) { tcp.retryPendingResponse(nowMillis) }
+        retireIfFlowEnded(nowMillis)
+        return emitted
+    }
+
+    /** Release the socket on a normal two-sided FIN or an expired flow lease. */
+    private fun retireIfFlowEnded(nowMillis: Long) {
+        if (started && !tcp.hasLiveFlow(nowMillis)) close()
+    }
 
     private fun emit(tunOutput: OutputStream, packet: () -> ByteArray?): Boolean {
         try {

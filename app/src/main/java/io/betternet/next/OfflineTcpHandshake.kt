@@ -437,6 +437,12 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         return acked
     }
 
+    /** A completed or expired flow must release its caller-owned gateway socket. */
+    fun hasLiveFlow(nowMillis: Long): Boolean {
+        expire(nowMillis)
+        return flow != null
+    }
+
     fun close() {
         flow = null
         acked = false

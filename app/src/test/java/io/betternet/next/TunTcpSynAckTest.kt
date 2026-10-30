@@ -997,4 +997,73 @@ class TunTcpSynAckTest {
             ByteArrayInputStream(syn.bytes), ByteArrayOutputStream(), 101))
     }
 
+
+    @Test fun dormantBridgeReleasesGatewayOnNaturalFinInEitherOrder() {
+        for (version in listOf(4, 6)) for (clientFirst in listOf(true, false)) {
+            val syn = request(version)
+            val serverIsn = 321L
+            var releases = 0
+            var halfCloses = 0
+            val bridge = OfflineTcpTunBridge(
+                ByteArrayInputStream(byteArrayOf()), ByteArrayOutputStream(), 1280, serverIsn,
+                upstreamHalfClose = { halfCloses++ }, onClose = { releases++ },
+            )
+            val tunOutput = ByteArrayOutputStream()
+            fun deliver(packet: TunIngressResult.Packet, time: Long): ByteArray {
+                tunOutput.reset()
+                assertTrue(bridge.pumpOneTunPacket(
+                    ByteArrayInputStream(packet.bytes), tunOutput, time))
+                return tunOutput.toByteArray()
+            }
+            assertTrue(deliver(syn, 100).isNotEmpty())
+            assertTrue(deliver(finalAck(syn, serverIsn), 101).isEmpty())
+            if (clientFirst) {
+                assertTrue(deliver(finalAck(syn, serverIsn, flags = 0x11), 102).isNotEmpty())
+                assertEquals(1, halfCloses)
+            }
+            tunOutput.reset()
+            assertTrue(bridge.pumpOneGatewayReply(tunOutput, 103))
+            val fin = tunOutput.toByteArray()
+            val ip = if (version == 4) 20 else 40
+            assertEquals(0x11, fin[ip + 13].toInt() and 255)
+            assertEquals(0, tcpChecksum(fin, version))
+            assertEquals(0, releases) // FIN emission alone must not close the flow.
+            val clientSequence = if (clientFirst) 1L else 0L
+            assertTrue(deliver(finalAck(syn, serverIsn, sequence = clientSequence,
+                acknowledgement = serverIsn + 2), 104).isEmpty())
+            if (!clientFirst) {
+                assertEquals(0, releases) // The client may still send its FIN.
+                assertTrue(deliver(finalAck(syn, serverIsn, flags = 0x11,
+                    acknowledgement = serverIsn + 2), 105).isNotEmpty())
+                assertEquals(1, halfCloses)
+            }
+            assertEquals(1, releases)
+            assertFalse(bridge.pumpOneTunPacket(
+                ByteArrayInputStream(syn.bytes), tunOutput, 106))
+            assertFalse(bridge.pumpOneGatewayReply(tunOutput, 107))
+            bridge.close()
+            assertEquals(1, releases)
+        }
+    }
+
+    @Test fun dormantBridgeReleasesGatewayOnExpiredFlowWithoutRetry() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            var releases = 0
+            val bridge = OfflineTcpTunBridge(
+                ByteArrayInputStream(byteArrayOf(1)), ByteArrayOutputStream(), 1280, 321,
+                onClose = { releases++ },
+            )
+            assertTrue(bridge.pumpOneTunPacket(
+                ByteArrayInputStream(syn.bytes), ByteArrayOutputStream(), 100))
+            assertTrue(bridge.pumpOneTunPacket(
+                ByteArrayInputStream(finalAck(syn, 321).bytes), ByteArrayOutputStream(), 101))
+            assertFalse(bridge.pumpPendingRetry(ByteArrayOutputStream(), 15_100))
+            assertEquals(1, releases)
+            assertFalse(bridge.pumpOneTunPacket(
+                ByteArrayInputStream(syn.bytes), ByteArrayOutputStream(), 15_101))
+            bridge.close()
+            assertEquals(1, releases)
+        }
+    }
 }
