@@ -10,9 +10,9 @@ import org.junit.Test
 
 /** Offline TCP handshake fixtures: no VPN, gateway, listener, or Internet I/O. */
 class TunTcpSynAckTest {
-    private fun u16(b: ByteArray, at: Int): Int =
+    internal fun u16(b: ByteArray, at: Int): Int =
         ((b[at].toInt() and 255) shl 8) or (b[at + 1].toInt() and 255)
-    private fun u32(b: ByteArray, at: Int): Long =
+    internal fun u32(b: ByteArray, at: Int): Long =
         (u16(b, at).toLong() shl 16) or u16(b, at + 2).toLong()
     private fun put16(b: ByteArray, at: Int, value: Int) {
         b[at] = (value ushr 8).toByte()
@@ -35,7 +35,7 @@ class TunTcpSynAckTest {
         while (s > 65535) s = (s and 65535) + (s ushr 16)
         return s.inv() and 65535
     }
-    private fun tcpChecksum(b: ByteArray, version: Int): Int {
+    internal fun tcpChecksum(b: ByteArray, version: Int): Int {
         val ip = if (version == 4) 20 else 40
         val addrSize = if (version == 4) 4 else 16
         val src = if (version == 4) 12 else 8
@@ -44,7 +44,7 @@ class TunTcpSynAckTest {
         return checksum(sum(b, src, addrSize) + sum(b, dst, addrSize) +
             length + 6 + sum(b, ip, length))
     }
-    private fun request(
+    internal fun request(
         version: Int, flags: Int = 2, options: ByteArray = byteArrayOf(),
         payload: ByteArray = byteArrayOf(), ack: Long = 0,
         destinationPort: Int = 443,
@@ -131,7 +131,7 @@ class TunTcpSynAckTest {
     }
 
 
-    private fun finalAck(syn: TunIngressResult.Packet, serverIsn: Long, flags: Int = 0x10,
+    internal fun finalAck(syn: TunIngressResult.Packet, serverIsn: Long, flags: Int = 0x10,
                          sequence: Long = 0L, acknowledgement: Long = (serverIsn + 1) and 0xffff_ffffL,
                          payload: ByteArray = byteArrayOf(), sourcePort: Int = 49152): TunIngressResult.Packet {
         val version = syn.header.ipVersion

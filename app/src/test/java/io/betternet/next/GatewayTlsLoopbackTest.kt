@@ -100,6 +100,81 @@ class GatewayTlsLoopbackTest {
         serverFailure.get()?.let { throw AssertionError("Loopback TLS server failed", it) }
     }
 
+    @Test fun authenticatedLoopbackConnectCarriesIpv4AndIpv6TunTcpBytes() {
+        // Real TLS and CONNECT framing, but only a local test peer: no Android
+        // VPN, real gateway deployment, or destination HTTPS is exercised.
+        val packets = TunTcpSynAckTest()
+        val token = "TestOnlyOpaqueToken0123456789"
+        val requestBytes = "GET /probe HTTP/1.1\r\nHost: dns.example\r\n\r\n".toByteArray()
+        val responseBytes = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".toByteArray()
+        for (version in listOf(4, 6)) {
+            val tls = contexts()
+            withServer(tls.server, { gateway ->
+                gateway.startHandshake()
+                val reader = gateway.inputStream.bufferedReader()
+                assertEquals("CONNECT dns.example:443 HTTP/1.1", reader.readLine())
+                assertEquals("Host: dns.example:443", reader.readLine())
+                assertEquals("Proxy-Authorization: Bearer $token", reader.readLine())
+                assertEquals("", reader.readLine())
+                gateway.outputStream.write("HTTP/1.1 200 OK\r\n\r\n".toByteArray())
+                gateway.outputStream.flush()
+                // A byte-for-byte echo of the destination-facing stream, not
+                // a simulated HTTP response in the TUN controller.
+                assertArrayEquals(requestBytes, gateway.inputStream.readNBytes(requestBytes.size))
+                gateway.outputStream.write(responseBytes)
+                gateway.outputStream.flush()
+            }) { address ->
+                val order = mutableListOf<String>()
+                connectAuthenticatedTestTunnel(
+                    address, "gateway.example", 3_000, { order.add("protect"); true },
+                    "dns.example", 443, token,
+                    tlsFactory = tls.trustedClient.socketFactory,
+                    bind = { order.add("bind") },
+                ).use { tunnel ->
+                    assertEquals(listOf("protect", "bind"), order)
+                    val bridge = OfflineTcpTunBridge(
+                        tunnel.inputStream, tunnel.outputStream, 1280, 100L
+                    )
+                    val syn = packets.request(version)
+                    val tunOut = java.io.ByteArrayOutputStream()
+                    fun deliver(packet: TunIngressResult.Packet, time: Long): ByteArray {
+                        tunOut.reset()
+                        assertTrue(bridge.pumpOneTunPacket(
+                            java.io.ByteArrayInputStream(packet.bytes), tunOut, time))
+                        return tunOut.toByteArray()
+                    }
+                    val synAck = deliver(syn, 100)
+                    assertEquals(0x12, synAck[if (version == 4) 33 else 53].toInt() and 255)
+                    assertTrue(deliver(packets.finalAck(syn, 100L), 101).isEmpty())
+                    val ack = deliver(packets.finalAck(syn, 100L,
+                        flags = 0x18, payload = requestBytes), 102)
+                    val ip = if (version == 4) 20 else 40
+                    assertEquals(requestBytes.size.toLong(), packets.u32(ack, ip + 8))
+                    assertEquals(0, packets.tcpChecksum(ack, version))
+                    val received = java.io.ByteArrayOutputStream()
+                    var time = 102L
+                    // A real TLS stream may split a response across reads;
+                    // acknowledge each emitted TCP segment before reading more.
+                    while (received.size() < responseBytes.size) {
+                        tunOut.reset()
+                        assertTrue(bridge.pumpOneGatewayReply(tunOut, ++time))
+                        val response = tunOut.toByteArray()
+                        assertEquals(0, packets.tcpChecksum(response, version))
+                        val payload = response.copyOfRange(ip + 20, response.size)
+                        assertTrue(payload.isNotEmpty())
+                        received.write(payload)
+                        assertTrue(deliver(packets.finalAck(syn, 100L,
+                            sequence = requestBytes.size.toLong(),
+                            acknowledgement = 101L + received.size()),
+                            ++time).isEmpty())
+                    }
+                    assertArrayEquals(responseBytes, received.toByteArray())
+                    bridge.close()
+                }
+            }
+        }
+    }
+
     @Test fun nestedDnsTlsOverAuthenticatedConnectExchangesDnsBytes() {
         val tls = contexts()
         val query = dnsQuery()
