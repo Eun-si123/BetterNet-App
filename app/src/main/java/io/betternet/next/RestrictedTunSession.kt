@@ -12,7 +12,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * run on one serialized owner thread; a future worker must arrange cancellation
  * by requesting descriptor cancellation and joining that thread before reusing the session.
  * Closing an fd from another thread is NOT guaranteed to interrupt a blocked
- * Linux read; a live worker also needs a platform-tested wakeup strategy.
+ * Linux read; a live worker must use bounded readiness polling and verify
+ * cancellation on a real Android device before activation.
  *
  * Gateway reads may block. The caller must use a bounded socket read timeout
  * and schedule them only when appropriate; this is not an event loop.
@@ -22,6 +23,7 @@ internal class RestrictedTunSession(
     private val input: InputStream,
     private val output: OutputStream,
     private val closeDescriptor: () -> Unit,
+    private val waitForReadable: (() -> Boolean)? = null,
 ) : Closeable {
     private var closed = false
     private val stopRequested = AtomicBoolean(false)
@@ -44,6 +46,13 @@ internal class RestrictedTunSession(
     }
 
     fun pumpOneTunPacket(nowMillis: Long): Boolean = guarded {
+        // Android supplies a bounded poll: an idle TUN must not monopolize
+        // the owner thread or prevent cancellation and gateway scheduling.
+        if (waitForReadable != null) {
+            val readable = waitForReadable()
+            if (stopRequested.get()) return@guarded false
+            if (!readable) return@guarded true
+        }
         if (!dispatcher.pumpOneTunPacket(input, output, nowMillis)) {
             close()
             false

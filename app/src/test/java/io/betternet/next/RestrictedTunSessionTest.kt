@@ -104,6 +104,66 @@ class RestrictedTunSessionTest {
         assertEquals(1, releases)
     }
 
+    @Test fun boundedReadinessWaitDoesNotReadOrCloseAnIdleTun() {
+        val syn = TunTcpSynAckTest().request(4)
+        var polls = 0
+        var reads = 0
+        var releases = 0
+        val input = object : InputStream() {
+            private val bytes = ByteArrayInputStream(syn.bytes)
+            override fun read(): Int = bytes.read()
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                reads++
+                return bytes.read(b, off, len)
+            }
+        }
+        val session = RestrictedTunSession(
+            dispatcher(4), input, ByteArrayOutputStream(), { releases++ },
+            waitForReadable = { ++polls >= 3 },
+        )
+        assertTrue(session.pumpOneTunPacket(100))
+        assertTrue(session.pumpOneTunPacket(101))
+        assertEquals(0, reads)
+        assertEquals(0, releases)
+        assertTrue(session.pumpOneTunPacket(102))
+        assertEquals(1, reads)
+        assertFalse(session.pumpOneTunPacket(103)) // EOF
+        assertEquals(2, reads)
+        assertEquals(1, releases)
+        assertEquals(4, polls)
+    }
+
+    @Test fun stopDuringReadinessWaitNeverReadsTun() {
+        val entered = CountDownLatch(1)
+        val wake = CountDownLatch(1)
+        val releases = AtomicInteger()
+        val input = object : InputStream() {
+            override fun read(): Int = throw AssertionError("Cancelled TUN must not be read")
+            override fun read(b: ByteArray, off: Int, len: Int): Int = read()
+        }
+        val session = RestrictedTunSession(
+            dispatcher(6), input, ByteArrayOutputStream(),
+            { releases.incrementAndGet(); wake.countDown() },
+            waitForReadable = {
+                entered.countDown()
+                assertTrue(wake.await(3, TimeUnit.SECONDS))
+                true // Even if poll reports ready, cancellation takes priority.
+            },
+        )
+        val worker = Executors.newSingleThreadExecutor()
+        try {
+            val result = worker.submit<Boolean> { session.pumpOneTunPacket(100) }
+            assertTrue(entered.await(3, TimeUnit.SECONDS))
+            session.requestStop()
+            assertFalse(result.get(3, TimeUnit.SECONDS))
+            assertEquals(1, releases.get())
+            assertFalse(session.pumpOneTunPacket(101))
+        } finally {
+            wake.countDown()
+            worker.shutdownNow()
+        }
+    }
+
     @Test fun crossThreadStopHandlesInterruptibleTunReadAndReleasesDescriptorOnce() {
         val entered = CountDownLatch(1)
         val interrupted = CountDownLatch(1)

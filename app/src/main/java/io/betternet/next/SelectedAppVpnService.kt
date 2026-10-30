@@ -3,6 +3,10 @@ package io.betternet.next
 import android.content.Intent
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
+import android.system.StructPollfd
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import android.net.ConnectivityManager
@@ -65,6 +69,7 @@ class SelectedAppVpnService : VpnService() {
         FileInputStream(descriptor.fileDescriptor),
         FileOutputStream(descriptor.fileDescriptor),
         closeDescriptor = { descriptor.close() },
+        waitForReadable = { pollRestrictedTunReadable(descriptor) },
     )
 
     /** A future TLS gateway dial must protect its socket before connecting. */
@@ -133,6 +138,29 @@ class SelectedAppVpnService : VpnService() {
         stopSelf(startId)
         return START_NOT_STICKY
     }
+}
+
+/**
+ * Bound each idle TUN wait so the single owner can service gateway work and
+ * observe lifecycle cancellation. Poll is not VPN activation. A real device
+ * still needs cancellation/read races verified before enabling this adapter.
+ */
+private fun pollRestrictedTunReadable(descriptor: ParcelFileDescriptor): Boolean {
+    val entry = StructPollfd().apply {
+        fd = descriptor.fileDescriptor
+        events = OsConstants.POLLIN.toShort()
+    }
+    val count = try {
+        Os.poll(arrayOf(entry), 100)
+    } catch (error: ErrnoException) {
+        throw IOException("TUN readiness poll failed", error)
+    }
+    if (count == 0) return false
+    val events = entry.revents.toInt()
+    if (events and (OsConstants.POLLERR or OsConstants.POLLHUP or OsConstants.POLLNVAL) != 0) {
+        throw IOException("TUN descriptor is no longer readable")
+    }
+    return events and OsConstants.POLLIN != 0
 }
 
 /** Reject missing, self, and malformed selections before touching a VPN builder. */
