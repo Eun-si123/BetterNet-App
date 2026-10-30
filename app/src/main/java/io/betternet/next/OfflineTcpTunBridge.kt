@@ -45,6 +45,10 @@ internal class OfflineTcpTunBridge(
     fun pumpOneTunPacket(tunInput: InputStream, tunOutput: OutputStream, nowMillis: Long): Boolean {
         if (closed) return false
         try {
+            // Expire before reading: non-TCP packets take an early return below
+            // and must not keep an authenticated gateway socket alive forever.
+            retireIfFlowEnded(nowMillis)
+            if (closed) return false
             when (val ingress = readOneTunDatagram(tunInput, mtu)) {
                 TunIngressResult.EndOfStream -> { close(); return false }
                 TunIngressResult.Rejected -> {

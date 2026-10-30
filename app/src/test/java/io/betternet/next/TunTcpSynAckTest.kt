@@ -1136,6 +1136,57 @@ class TunTcpSynAckTest {
         }
     }
 
+    @Test fun nonTcpDatagramsCannotKeepExpiredGatewayFlowAlive() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val ip = if (version == 4) 20 else 40
+            val udp = ByteArray(ip + 8)
+            syn.bytes.copyInto(udp, endIndex = ip)
+            if (version == 4) {
+                put16(udp, 2, udp.size)
+                udp[9] = 17 // UDP
+                udp[10] = 0; udp[11] = 0
+            } else {
+                put16(udp, 4, 8)
+                udp[6] = 17 // UDP
+            }
+            put16(udp, ip, 49152)
+            put16(udp, ip + 2, 53)
+            put16(udp, ip + 4, 8)
+            if (version == 4) {
+                put16(udp, 10, checksum(sum(udp, 0, 20)))
+            } else {
+                put16(udp, ip + 6, checksum(
+                    sum(udp, 8, 16) + sum(udp, 24, 16) + 8 + 17 + sum(udp, ip, 8)
+                ))
+            }
+            assertEquals(17, parseTunPacketHeader(udp, udp.size)!!.protocol)
+            var releases = 0
+            val bridge = OfflineTcpTunBridge(
+                ByteArrayInputStream(byteArrayOf(1)), ByteArrayOutputStream(), 1280, 321,
+                onClose = { releases++ }, allowedDestination = syn.header.destination,
+            )
+            val tunOutput = ByteArrayOutputStream()
+            assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes), tunOutput, 100))
+            assertTrue(bridge.pumpOneTunPacket(
+                ByteArrayInputStream(finalAck(syn, 321).bytes), tunOutput, 101))
+            // An unrelated UDP datagram is ignored while the flow is live.
+            assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(udp), tunOutput, 102))
+            assertEquals(0, releases)
+            // At expiry, retire before even consuming another unrelated frame.
+            val mustNotRead = object : InputStream() {
+                override fun read(): Int = throw AssertionError("Expired flow read TUN")
+                override fun read(b: ByteArray, off: Int, len: Int): Int =
+                    throw AssertionError("Expired flow read TUN")
+            }
+            assertFalse(bridge.pumpOneTunPacket(mustNotRead, tunOutput, 15_100))
+            assertEquals(1, releases)
+            assertFalse(bridge.pumpOneTunPacket(ByteArrayInputStream(udp), tunOutput, 15_101))
+            bridge.close()
+            assertEquals(1, releases)
+        }
+    }
+
     @Test fun dormantBridgeReleasesGatewayOnExpiredFlowWithoutRetry() {
         for (version in listOf(4, 6)) {
             val syn = request(version)
