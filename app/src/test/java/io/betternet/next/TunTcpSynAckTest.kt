@@ -802,6 +802,64 @@ class TunTcpSynAckTest {
         }
     }
 
+    @Test fun dormantBridgeTunEofAndExplicitCloseAreTerminal() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val gatewayWritten = ByteArrayOutputStream()
+            val bridge = OfflineTcpTunBridge(ByteArrayInputStream(byteArrayOf(1)),
+                gatewayWritten, 1280, 321)
+            val tunWritten = ByteArrayOutputStream()
+            assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes), tunWritten, 100))
+            assertTrue(tunWritten.size() > 0)
+            tunWritten.reset()
+            // An exhausted TUN descriptor is a shutdown, not a reusable read slot.
+            assertFalse(bridge.pumpOneTunPacket(ByteArrayInputStream(byteArrayOf()), tunWritten, 101))
+            assertFalse(bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes), tunWritten, 102))
+            assertFalse(bridge.pumpOneGatewayReply(tunWritten, 103))
+            assertFalse(bridge.pumpPendingRetry(tunWritten, 104))
+            assertEquals(0, tunWritten.size())
+            assertEquals(0, gatewayWritten.size())
+            bridge.close() // Idempotent.
+
+            val resetBridge = OfflineTcpTunBridge(ByteArrayInputStream(byteArrayOf(1)),
+                ByteArrayOutputStream(), 1280, 321)
+            assertTrue(resetBridge.pumpOneTunPacket(
+                ByteArrayInputStream(syn.bytes), ByteArrayOutputStream(), 110))
+            assertTrue(resetBridge.pumpOneTunPacket(
+                ByteArrayInputStream(finalAck(syn, 321).bytes), ByteArrayOutputStream(), 111))
+            assertTrue(resetBridge.pumpOneTunPacket(
+                ByteArrayInputStream(finalAck(syn, 321, flags = 0x14).bytes),
+                ByteArrayOutputStream(), 112))
+            assertFalse(resetBridge.pumpOneTunPacket(
+                ByteArrayInputStream(syn.bytes), tunWritten, 113))
+
+            val neverStarted = OfflineTcpTunBridge(ByteArrayInputStream(byteArrayOf(1)),
+                ByteArrayOutputStream(), 1280, 321)
+            neverStarted.close()
+            assertFalse(neverStarted.pumpOneTunPacket(
+                ByteArrayInputStream(syn.bytes), tunWritten, 105))
+        }
+    }
+
+    @Test fun dormantBridgeTunWriteFailureRetiresBeforeAnotherPacket() {
+        val syn = request(4)
+        val bridge = OfflineTcpTunBridge(ByteArrayInputStream(byteArrayOf(1)),
+            ByteArrayOutputStream(), 1280, 321)
+        val brokenTun = object : OutputStream() {
+            override fun write(b: Int) { throw IOException("TUN output failed") }
+            override fun write(b: ByteArray) { throw IOException("TUN output failed") }
+        }
+        try {
+            bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes), brokenTun, 100)
+            fail("Expected TUN output failure")
+        } catch (expected: IOException) {
+            assertEquals("TUN output failed", expected.message)
+        }
+        assertFalse(bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes),
+            ByteArrayOutputStream(), 101))
+        assertFalse(bridge.pumpOneGatewayReply(ByteArrayOutputStream(), 102))
+    }
+
     @Test fun dormantBridgeRejectsCorruptAndUnestablishedPacketsWithoutTunnelWrites() {
         val syn = request(4)
         val gatewayWritten = ByteArrayOutputStream()

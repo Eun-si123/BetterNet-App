@@ -24,6 +24,9 @@ internal class OfflineTcpTunBridge(
     // The supplied ISN is single-use. A replacement flow needs a new bridge
     // with a fresh unpredictable ISN, never a replayable SYN-ACK sequence.
     private var started = false
+    // Once the caller closes the bridge, TUN EOFs or a packet-pump failure
+    // must never restart this single-use authenticated stream.
+    private var closed = false
 
     init {
         require(mtu in 1280..9000)
@@ -31,11 +34,12 @@ internal class OfflineTcpTunBridge(
         require(clientWindow in 1..1024)
     }
 
-    /** Returns false only on TUN EOF. Rejected frames never reach the gateway. */
+    /** Returns false when TUN ends or the bridge is retired. Rejected frames never reach the gateway. */
     fun pumpOneTunPacket(tunInput: InputStream, tunOutput: OutputStream, nowMillis: Long): Boolean {
+        if (closed) return false
         try {
             when (val ingress = readOneTunDatagram(tunInput, mtu)) {
-                TunIngressResult.EndOfStream -> return false
+                TunIngressResult.EndOfStream -> { close(); return false }
                 TunIngressResult.Rejected -> return true
                 is TunIngressResult.Packet -> {
                     val packet = ingress.bytes
@@ -48,7 +52,10 @@ internal class OfflineTcpTunBridge(
                                 clientWindow)?.also { started = true }
                         }
                         flags == 0x10 && tcp.acceptFinalAck(ingress, nowMillis) -> null
-                        flags == 0x14 -> { tcp.acceptClientReset(ingress, nowMillis); null }
+                        flags == 0x14 -> {
+                            if (tcp.acceptClientReset(ingress, nowMillis)) close()
+                            null
+                        }
                         flags == 0x11 && upstreamHalfClose != null ->
                             tcp.acceptClientFin(ingress, nowMillis, upstreamHalfClose)
                         else -> {
@@ -65,18 +72,18 @@ internal class OfflineTcpTunBridge(
             }
             return true
         } catch (failure: Exception) {
-            tcp.close() // No stale ACK/retry state after an uncertain write.
+            close() // No stale ACK/retry state or reuse after an uncertain write.
             throw failure
         }
     }
 
     /** May block; caller must provide a bounded tunnel read timeout and a ready flow. */
     fun pumpOneGatewayReply(tunOutput: OutputStream, nowMillis: Long): Boolean =
-        emit(tunOutput) { tcp.readTunnelResponse(tunnelInput, mtu, nowMillis) }
+        !closed && emit(tunOutput) { tcp.readTunnelResponse(tunnelInput, mtu, nowMillis) }
 
     /** Retransmit only the exact previously emitted packet after its deadline. */
     fun pumpPendingRetry(tunOutput: OutputStream, nowMillis: Long): Boolean =
-        emit(tunOutput) { tcp.retryPendingResponse(nowMillis) }
+        !closed && emit(tunOutput) { tcp.retryPendingResponse(nowMillis) }
 
     private fun emit(tunOutput: OutputStream, packet: () -> ByteArray?): Boolean {
         try {
@@ -84,7 +91,7 @@ internal class OfflineTcpTunBridge(
             writeTun(tunOutput, bytes)
             return true
         } catch (failure: Exception) {
-            tcp.close()
+            close()
             throw failure
         }
     }
@@ -94,5 +101,9 @@ internal class OfflineTcpTunBridge(
         output.flush()
     }
 
-    fun close() = tcp.close()
+    /** Terminal for this bridge. Caller still owns closing the tunnel streams. */
+    fun close() {
+        closed = true
+        tcp.close()
+    }
 }
