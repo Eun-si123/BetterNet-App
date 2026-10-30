@@ -7,7 +7,8 @@ import java.io.OutputStream
  * Dormant single-flow integration seam: one TUN datagram at a time, through an
  * already authenticated CONNECT byte stream, and back to the TUN packet sink.
  * The caller must own gateway authentication, VPN consent, socket protection,
- * packet-pump serialization, read timeouts and closing both streams.
+ * packet-pump serialization and read timeouts. Supply onClose to release the
+ * caller-owned gateway socket on terminal TUN/flow failure.
  *
  * This class NEVER opens a VPN, connects to a network, or selects an app.
  * Do not activate it until those boundaries and safe FIN handling are wired.
@@ -19,6 +20,7 @@ internal class OfflineTcpTunBridge(
     private val serverIsn: Long,
     private val clientWindow: Int = 1024,
     private val upstreamHalfClose: (() -> Unit)? = null,
+    private val onClose: (() -> Unit)? = null,
 ) {
     private val tcp = OfflineTcpHandshake()
     // The supplied ISN is single-use. A replacement flow needs a new bridge
@@ -72,7 +74,7 @@ internal class OfflineTcpTunBridge(
             }
             return true
         } catch (failure: Exception) {
-            close() // No stale ACK/retry state or reuse after an uncertain write.
+            try { close() } catch (closeFailure: Exception) { failure.addSuppressed(closeFailure) }
             throw failure
         }
     }
@@ -91,7 +93,7 @@ internal class OfflineTcpTunBridge(
             writeTun(tunOutput, bytes)
             return true
         } catch (failure: Exception) {
-            close()
+            try { close() } catch (closeFailure: Exception) { failure.addSuppressed(closeFailure) }
             throw failure
         }
     }
@@ -101,9 +103,11 @@ internal class OfflineTcpTunBridge(
         output.flush()
     }
 
-    /** Terminal for this bridge. Caller still owns closing the tunnel streams. */
+    /** Terminal, idempotent cleanup. The caller supplies stream/socket closure. */
     fun close() {
+        if (closed) return
         closed = true
         tcp.close()
+        onClose?.invoke()
     }
 }

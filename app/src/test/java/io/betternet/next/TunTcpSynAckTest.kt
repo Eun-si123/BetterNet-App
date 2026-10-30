@@ -943,4 +943,58 @@ class TunTcpSynAckTest {
         assertFalse(bridge.pumpOneTunPacket(ByteArrayInputStream(byteArrayOf()), tunWritten, 4))
     }
 
+    @Test fun dormantBridgeClosesGatewayOnceOnTunEofAndReset() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            var releases = 0
+            val bridge = OfflineTcpTunBridge(
+                ByteArrayInputStream(byteArrayOf(1)), ByteArrayOutputStream(), 1280, 321,
+                onClose = { releases++ },
+            )
+            assertTrue(bridge.pumpOneTunPacket(
+                ByteArrayInputStream(syn.bytes), ByteArrayOutputStream(), 100))
+            assertTrue(bridge.pumpOneTunPacket(
+                ByteArrayInputStream(finalAck(syn, 321).bytes), ByteArrayOutputStream(), 101))
+            assertTrue(bridge.pumpOneTunPacket(
+                ByteArrayInputStream(finalAck(syn, 321, flags = 0x14).bytes),
+                ByteArrayOutputStream(), 102))
+            bridge.close()
+            assertEquals(1, releases)
+            assertFalse(bridge.pumpOneGatewayReply(ByteArrayOutputStream(), 103))
+
+            val eof = OfflineTcpTunBridge(
+                ByteArrayInputStream(byteArrayOf(1)), ByteArrayOutputStream(), 1280, 321,
+                onClose = { releases++ },
+            )
+            assertFalse(eof.pumpOneTunPacket(
+                ByteArrayInputStream(byteArrayOf()), ByteArrayOutputStream(), 104))
+            eof.close()
+            assertEquals(2, releases)
+        }
+    }
+
+    @Test fun dormantBridgePreservesTunWriteFailureWhenCleanupAlsoFails() {
+        val syn = request(4)
+        var releases = 0
+        val bridge = OfflineTcpTunBridge(
+            ByteArrayInputStream(byteArrayOf(1)), ByteArrayOutputStream(), 1280, 321,
+            onClose = { releases++; throw IOException("gateway close failed") },
+        )
+        val broken = object : OutputStream() {
+            override fun write(b: Int) { throw IOException("TUN write failed") }
+            override fun write(b: ByteArray) { throw IOException("TUN write failed") }
+        }
+        try {
+            bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes), broken, 100)
+            fail("Expected TUN failure")
+        } catch (expected: IOException) {
+            assertEquals("TUN write failed", expected.message)
+            assertEquals(1, expected.suppressed.size)
+            assertEquals("gateway close failed", expected.suppressed[0].message)
+        }
+        assertEquals(1, releases)
+        assertFalse(bridge.pumpOneTunPacket(
+            ByteArrayInputStream(syn.bytes), ByteArrayOutputStream(), 101))
+    }
+
 }
