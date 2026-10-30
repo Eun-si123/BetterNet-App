@@ -47,7 +47,7 @@ class TunTcpSynAckTest {
     internal fun request(
         version: Int, flags: Int = 2, options: ByteArray = byteArrayOf(),
         payload: ByteArray = byteArrayOf(), ack: Long = 0,
-        destinationPort: Int = 443,
+        destinationPort: Int = 443, destinationSeed: Int = 33,
     ): TunIngressResult.Packet {
         require(options.size % 4 == 0)
         val ip = if (version == 4) 20 else 40
@@ -65,7 +65,7 @@ class TunTcpSynAckTest {
         val addrSize = if (version == 4) 4 else 16
         for (i in 0 until addrSize) {
             b[src + i] = (i + 1).toByte()
-            b[dst + i] = (i + 33).toByte()
+            b[dst + i] = (i + destinationSeed).toByte()
         }
         put16(b, ip, 49152)
         put16(b, ip + 2, destinationPort)
@@ -714,7 +714,7 @@ class TunTcpSynAckTest {
                 override fun read(b: ByteArray, off: Int, len: Int): Int = 0
                 override fun close() { streamClosed = true }
             }
-            val bridge = OfflineTcpTunBridge(zeroRead, ByteArrayOutputStream(), 1280, 99)
+            val bridge = OfflineTcpTunBridge(zeroRead, ByteArrayOutputStream(), 1280, 99, allowedDestination = syn.header.destination)
             val tunOutput = ByteArrayOutputStream()
             assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes), tunOutput, 100))
             assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(finalAck(syn, 99).bytes),
@@ -826,7 +826,7 @@ class TunTcpSynAckTest {
             val tunnelWritten = ByteArrayOutputStream()
             val gatewayReply = "HTTP/1.1 200 OK\r\n\r\n".toByteArray()
             val bridge = OfflineTcpTunBridge(
-                ByteArrayInputStream(gatewayReply), tunnelWritten, 1280, serverIsn
+                ByteArrayInputStream(gatewayReply), tunnelWritten, 1280, serverIsn, allowedDestination = syn.header.destination
             )
             val tunWritten = ByteArrayOutputStream()
             fun deliver(packet: TunIngressResult.Packet, time: Long): ByteArray {
@@ -869,12 +869,50 @@ class TunTcpSynAckTest {
         }
     }
 
+    @Test fun dormantBridgeRequiresAuthorizedDestinationBeforeAnyTcpForwarding() {
+        for (version in listOf(4, 6)) {
+            val allowed = request(version)
+            val other = request(version, destinationSeed = 71)
+            val gatewayWritten = ByteArrayOutputStream()
+            val tunWritten = ByteArrayOutputStream()
+            val bridge = OfflineTcpTunBridge(
+                ByteArrayInputStream(byteArrayOf(1)), gatewayWritten, 1280, 123L,
+                allowedDestination = allowed.header.destination,
+            )
+            // A different but well-formed destination cannot claim this CONNECT
+            // tunnel, even if its port, TCP sequence and handshake match.
+            assertTrue(bridge.pumpOneTunPacket(
+                ByteArrayInputStream(other.bytes), tunWritten, 100))
+            assertEquals(0, tunWritten.size())
+            assertEquals(0, gatewayWritten.size())
+            // Rejecting the wrong SYN must not consume the single-use bridge.
+            assertTrue(bridge.pumpOneTunPacket(
+                ByteArrayInputStream(allowed.bytes), tunWritten, 101))
+            assertTrue(tunWritten.size() > 0)
+            tunWritten.reset()
+            assertTrue(bridge.pumpOneTunPacket(
+                ByteArrayInputStream(finalAck(allowed, 123L).bytes), tunWritten, 102))
+            val payload = "restricted HTTPS".toByteArray()
+            assertTrue(bridge.pumpOneTunPacket(
+                ByteArrayInputStream(finalAck(other, 123L, flags = 0x18,
+                    payload = payload).bytes), tunWritten, 103))
+            assertEquals(0, gatewayWritten.size())
+            assertEquals(0, tunWritten.size())
+            assertTrue(bridge.pumpOneTunPacket(
+                ByteArrayInputStream(finalAck(allowed, 123L, flags = 0x18,
+                    payload = payload).bytes), tunWritten, 104))
+            assertArrayEquals(payload, gatewayWritten.toByteArray())
+            assertTrue(tunWritten.size() > 0)
+            bridge.close()
+        }
+    }
+
     @Test fun dormantBridgeTunEofAndExplicitCloseAreTerminal() {
         for (version in listOf(4, 6)) {
             val syn = request(version)
             val gatewayWritten = ByteArrayOutputStream()
             val bridge = OfflineTcpTunBridge(ByteArrayInputStream(byteArrayOf(1)),
-                gatewayWritten, 1280, 321)
+                gatewayWritten, 1280, 321, allowedDestination = syn.header.destination)
             val tunWritten = ByteArrayOutputStream()
             assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes), tunWritten, 100))
             assertTrue(tunWritten.size() > 0)
@@ -889,7 +927,7 @@ class TunTcpSynAckTest {
             bridge.close() // Idempotent.
 
             val resetBridge = OfflineTcpTunBridge(ByteArrayInputStream(byteArrayOf(1)),
-                ByteArrayOutputStream(), 1280, 321)
+                ByteArrayOutputStream(), 1280, 321, allowedDestination = syn.header.destination)
             assertTrue(resetBridge.pumpOneTunPacket(
                 ByteArrayInputStream(syn.bytes), ByteArrayOutputStream(), 110))
             assertTrue(resetBridge.pumpOneTunPacket(
@@ -901,7 +939,7 @@ class TunTcpSynAckTest {
                 ByteArrayInputStream(syn.bytes), tunWritten, 113))
 
             val neverStarted = OfflineTcpTunBridge(ByteArrayInputStream(byteArrayOf(1)),
-                ByteArrayOutputStream(), 1280, 321)
+                ByteArrayOutputStream(), 1280, 321, allowedDestination = syn.header.destination)
             neverStarted.close()
             assertFalse(neverStarted.pumpOneTunPacket(
                 ByteArrayInputStream(syn.bytes), tunWritten, 105))
@@ -911,7 +949,7 @@ class TunTcpSynAckTest {
     @Test fun dormantBridgeTunWriteFailureRetiresBeforeAnotherPacket() {
         val syn = request(4)
         val bridge = OfflineTcpTunBridge(ByteArrayInputStream(byteArrayOf(1)),
-            ByteArrayOutputStream(), 1280, 321)
+            ByteArrayOutputStream(), 1280, 321, allowedDestination = syn.header.destination)
         val brokenTun = object : OutputStream() {
             override fun write(b: Int) { throw IOException("TUN output failed") }
             override fun write(b: ByteArray) { throw IOException("TUN output failed") }
@@ -931,7 +969,7 @@ class TunTcpSynAckTest {
         val syn = request(4)
         val gatewayWritten = ByteArrayOutputStream()
         val bridge = OfflineTcpTunBridge(ByteArrayInputStream(byteArrayOf(1)),
-            gatewayWritten, 1280, 321)
+            gatewayWritten, 1280, 321, allowedDestination = syn.header.destination)
         val tunWritten = ByteArrayOutputStream()
         val invalid = syn.bytes.clone().apply { this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte() }
         assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(invalid), tunWritten, 1))
@@ -950,6 +988,7 @@ class TunTcpSynAckTest {
             val bridge = OfflineTcpTunBridge(
                 ByteArrayInputStream(byteArrayOf(1)), ByteArrayOutputStream(), 1280, 321,
                 onClose = { releases++ },
+                allowedDestination = syn.header.destination,
             )
             assertTrue(bridge.pumpOneTunPacket(
                 ByteArrayInputStream(syn.bytes), ByteArrayOutputStream(), 100))
@@ -965,6 +1004,7 @@ class TunTcpSynAckTest {
             val eof = OfflineTcpTunBridge(
                 ByteArrayInputStream(byteArrayOf(1)), ByteArrayOutputStream(), 1280, 321,
                 onClose = { releases++ },
+                allowedDestination = syn.header.destination,
             )
             assertFalse(eof.pumpOneTunPacket(
                 ByteArrayInputStream(byteArrayOf()), ByteArrayOutputStream(), 104))
@@ -979,6 +1019,7 @@ class TunTcpSynAckTest {
         val bridge = OfflineTcpTunBridge(
             ByteArrayInputStream(byteArrayOf(1)), ByteArrayOutputStream(), 1280, 321,
             onClose = { releases++; throw IOException("gateway close failed") },
+            allowedDestination = syn.header.destination,
         )
         val broken = object : OutputStream() {
             override fun write(b: Int) { throw IOException("TUN write failed") }
@@ -1007,6 +1048,7 @@ class TunTcpSynAckTest {
             val bridge = OfflineTcpTunBridge(
                 ByteArrayInputStream(byteArrayOf()), ByteArrayOutputStream(), 1280, serverIsn,
                 upstreamHalfClose = { halfCloses++ }, onClose = { releases++ },
+                allowedDestination = syn.header.destination,
             )
             val tunOutput = ByteArrayOutputStream()
             fun deliver(packet: TunIngressResult.Packet, time: Long): ByteArray {
@@ -1053,6 +1095,7 @@ class TunTcpSynAckTest {
             val bridge = OfflineTcpTunBridge(
                 ByteArrayInputStream(byteArrayOf(1)), ByteArrayOutputStream(), 1280, 321,
                 onClose = { releases++ },
+                allowedDestination = syn.header.destination,
             )
             assertTrue(bridge.pumpOneTunPacket(
                 ByteArrayInputStream(syn.bytes), ByteArrayOutputStream(), 100))

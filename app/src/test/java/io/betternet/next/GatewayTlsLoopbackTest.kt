@@ -132,10 +132,11 @@ class GatewayTlsLoopbackTest {
                     bind = { order.add("bind") },
                 ).use { tunnel ->
                     assertEquals(listOf("protect", "bind"), order)
-                    val bridge = OfflineTcpTunBridge(
-                        tunnel.inputStream, tunnel.outputStream, 1280, 100L
-                    )
                     val syn = packets.request(version)
+                    val bridge = OfflineTcpTunBridge(
+                        tunnel.inputStream, tunnel.outputStream, 1280, 100L,
+                        allowedDestination = syn.header.destination,
+                    )
                     val tunOut = java.io.ByteArrayOutputStream()
                     fun deliver(packet: TunIngressResult.Packet, time: Long): ByteArray {
                         tunOut.reset()

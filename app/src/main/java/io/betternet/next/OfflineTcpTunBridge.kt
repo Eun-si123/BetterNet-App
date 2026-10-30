@@ -2,6 +2,7 @@ package io.betternet.next
 
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.InetAddress
 
 /**
  * Dormant single-flow integration seam: one TUN datagram at a time, through an
@@ -9,6 +10,8 @@ import java.io.OutputStream
  * The caller must own gateway authentication, VPN consent, socket protection,
  * packet-pump serialization and read timeouts. Supply onClose to release the
  * caller-owned gateway socket on terminal TUN/flow failure.
+ * The allowed destination IP must be resolved and authorized independently
+ * before creating the CONNECT tunnel; only its TCP/443 flow can use it.
  *
  * This class NEVER opens a VPN, connects to a network, or selects an app.
  * Do not activate it until those boundaries and safe FIN handling are wired.
@@ -21,6 +24,7 @@ internal class OfflineTcpTunBridge(
     private val clientWindow: Int = 1024,
     private val upstreamHalfClose: (() -> Unit)? = null,
     private val onClose: (() -> Unit)? = null,
+    private val allowedDestination: InetAddress,
 ) {
     private val tcp = OfflineTcpHandshake()
     // The supplied ISN is single-use. A replacement flow needs a new bridge
@@ -53,7 +57,8 @@ internal class OfflineTcpTunBridge(
                     val flags = packet[offset + 13].toInt() and 0xff
                     val reply = when {
                         flags == 0x02 -> {
-                            if (started) null else tcp.begin(ingress, serverIsn, mtu, nowMillis,
+                            if (started || ingress.header.destination != allowedDestination) null
+                            else tcp.begin(ingress, serverIsn, mtu, nowMillis,
                                 clientWindow)?.also { started = true }
                         }
                         flags == 0x10 && tcp.acceptFinalAck(ingress, nowMillis) -> null
