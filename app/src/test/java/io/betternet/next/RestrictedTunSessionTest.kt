@@ -104,10 +104,12 @@ class RestrictedTunSessionTest {
         assertEquals(1, releases)
     }
 
-    @Test fun crossThreadStopUnblocksTunReadAndReleasesDescriptorOnce() {
+    @Test fun crossThreadStopHandlesInterruptibleTunReadAndReleasesDescriptorOnce() {
         val entered = CountDownLatch(1)
         val interrupted = CountDownLatch(1)
         val releases = AtomicInteger()
+        // Simulates a descriptor whose blocked read wakes on close. Actual
+        // Android TUN fd wakeup must be tested separately before activation.
         val blocked = object : InputStream() {
             override fun read(): Int = throw IOException("Use packet read")
             override fun read(b: ByteArray, off: Int, len: Int): Int {

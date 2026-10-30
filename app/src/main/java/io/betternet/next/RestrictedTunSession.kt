@@ -11,6 +11,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * No code constructs or starts a VPN here. All pump methods and close() must
  * run on one serialized owner thread; a future worker must arrange cancellation
  * by requesting descriptor cancellation and joining that thread before reusing the session.
+ * Closing an fd from another thread is NOT guaranteed to interrupt a blocked
+ * Linux read; a live worker also needs a platform-tested wakeup strategy.
  *
  * Gateway reads may block. The caller must use a bounded socket read timeout
  * and schedule them only when appropriate; this is not an event loop.
@@ -26,8 +28,10 @@ internal class RestrictedTunSession(
     private val descriptorReleased = AtomicBoolean(false)
 
     /** May be called by Android onRevoke/onDestroy from another thread.
-     * Unblocks a pending TUN read without touching the single-owner dispatcher.
-     * The owner must finish its pump, close the bridge and join before reuse.
+     * Signals cancellation and closes the descriptor without touching the
+     * single-owner dispatcher. An already blocked read might NOT wake merely
+     * because another thread closed its fd (Linux semantics); live activation
+     * must separately provide a verified wakeup/poll strategy and join owner.
      * Gateway reads still require their own bounded socket timeout.
      */
     fun requestStop() {
@@ -75,8 +79,8 @@ internal class RestrictedTunSession(
 
     /**
      * Normal owner close releases the bridge before the TUN descriptor.
-     * Cross-thread cancellation releases the descriptor first to interrupt
-     * read(), then the owner closes the bridge on its way out.
+     * Cross-thread cancellation releases the descriptor first to request
+     * read() interruption; when the owner returns it closes the bridge.
      * Streams share the Android fd; never close their wrappers independently.
      */
     override fun close() {
