@@ -249,7 +249,7 @@ class TunTcpSynAckTest {
     }
 
     @Test fun responseReplyRejectsInvalidMtuPayloadAndAddressFamily() {
-        val syn = request(4)
+        val syn = request(4, options = byteArrayOf(2, 4, 5, 0xB4.toByte()))
         val handshake = OfflineTcpHandshake(100)
         assertNotNull(handshake.begin(syn, 123L, 1280, 10))
         assertTrue(handshake.acceptFinalAck(finalAck(syn, 123L), 11))
@@ -560,7 +560,7 @@ class TunTcpSynAckTest {
 
     @Test fun readsOnlyOneMtuBoundedGatewaySegmentUntilClientAckForBothFamilies() {
         for (version in listOf(4, 6)) {
-            val syn = request(version)
+            val syn = request(version, options = byteArrayOf(2, 4, 5, 0xB4.toByte()))
             val flow = OfflineTcpHandshake()
             val isn = 0x1234L
             assertNotNull(flow.begin(syn, isn, 1280, 100))
@@ -598,6 +598,41 @@ class TunTcpSynAckTest {
                 acknowledgement = (isn + 2 + sourceBytes.size) and 0xffff_ffffL), 112))
             assertNull(flow.readTunnelResponse(stream, 1280, 113))
             assertTrue(flow.isEstablished(114))
+        }
+    }
+
+    @Test fun respectsPeerMssAndConservativeDefaultsOnBothIpFamilies() {
+        for (version in listOf(4, 6)) {
+            val ip = if (version == 4) 20 else 40
+            val peerLimit = 256
+            // A duplicate MSS must never enlarge the peer's smaller limit.
+            val syn = request(version, options = byteArrayOf(
+                2, 4, 5, 0xB4.toByte(), 2, 4, 1, 0
+            ))
+            val flow = OfflineTcpHandshake()
+            assertNotNull(flow.begin(syn, 99, 1280, 100))
+            assertTrue(flow.acceptFinalAck(finalAck(syn, 99), 101))
+            assertNull(flow.offerResponse(ByteArray(peerLimit + 1), 1280, 102))
+            val stream = ByteArrayInputStream(ByteArray(600) { 42 })
+            val first = flow.readTunnelResponse(stream, 1280, 103)!!
+            assertEquals(peerLimit, first.size - ip - 20)
+            assertEquals(0, tcpChecksum(first, version))
+            assertEquals(600 - peerLimit, stream.available())
+            assertNull(flow.readTunnelResponse(stream, 1280, 104))
+            assertTrue(flow.acceptResponseAck(finalAck(syn, 99,
+                acknowledgement = 100L + peerLimit), 105))
+            val second = flow.readTunnelResponse(stream, 1280, 106)!!
+            assertEquals(peerLimit, second.size - ip - 20)
+            assertEquals(0, tcpChecksum(second, version))
+
+            // No MSS option: the TCP default is 536 (IPv4) or 1220 (IPv6).
+            val noMss = request(version)
+            val defaultFlow = OfflineTcpHandshake()
+            assertNotNull(defaultFlow.begin(noMss, 99, 1280, 100))
+            assertTrue(defaultFlow.acceptFinalAck(finalAck(noMss, 99), 101))
+            val expectedDefault = if (version == 4) 536 else 1220
+            assertNull(defaultFlow.offerResponse(ByteArray(expectedDefault + 1), 1280, 102))
+            assertNotNull(defaultFlow.offerResponse(ByteArray(expectedDefault), 1280, 103))
         }
     }
 

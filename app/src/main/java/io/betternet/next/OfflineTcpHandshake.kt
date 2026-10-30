@@ -24,6 +24,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         val destinationPort: Int,
         val clientNext: Long,
         val serverNext: Long,
+        val maxServerPayloadBytes: Int,
         val startedAt: Long,
     )
 
@@ -55,10 +56,14 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         // the complete packet and its checksum, so parse the same bytes again.
         val header = parseTunPacketHeader(syn.bytes, syn.bytes.size) ?: return null
         val offset = header.transportOffset
+        val ipBytes = if (header.ipVersion == 4) 20 else 40
+        val peerMss = peerMssFromValidatedSyn(syn.bytes, offset + 20,
+            offset + header.transportHeaderBytes, if (header.ipVersion == 4) 536 else 1220)
         flow = Flow(
             header.source, header.destination, header.sourcePort, header.destinationPort,
             (read32(syn.bytes, offset + 4) + 1) and 0xffff_ffffL,
-            (serverIsn + 1) and 0xffff_ffffL, nowMillis,
+            (serverIsn + 1) and 0xffff_ffffL,
+            minOf(peerMss, 1460, mtu - ipBytes - 20), nowMillis,
         )
         acked = false
         pendingResponseBytes = 0
@@ -218,7 +223,8 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         expire(nowMillis)
         val current = flow ?: return null
         if (!acked || serverFinPending || serverHalfClosed ||
-            pendingResponseBytes != 0 || pendingClientPayload != null) return null
+            pendingResponseBytes != 0 || pendingClientPayload != null ||
+            payload.size > current.maxServerPayloadBytes) return null
         val reply = buildTcpDataReply(
             current.destination, current.source,
             current.destinationPort, current.sourcePort,
@@ -267,7 +273,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         if (!acked || serverFinPending || serverHalfClosed ||
             pendingResponseBytes != 0 || pendingClientPayload != null) return null
         val ipBytes = if (current.source.address.size == 4) 20 else 40
-        val buffer = ByteArray(minOf(1460, mtu - ipBytes - 20))
+        val buffer = ByteArray(minOf(current.maxServerPayloadBytes, mtu - ipBytes - 20))
         val read = try {
             tunnelInput.read(buffer, 0, buffer.size)
         } catch (failure: IOException) {
@@ -456,6 +462,32 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         } else {
             lastSeenAt = nowMillis
         }
+    }
+
+    /** The SYN-ACK builder already checked the option TLVs. Use the smallest
+     * advertised MSS if duplicated; RFC defaults apply when no MSS was sent.
+     * Never emit a segment larger than the peer promised to receive.
+     */
+    private fun peerMssFromValidatedSyn(
+        bytes: ByteArray, start: Int, end: Int, defaultMss: Int,
+    ): Int {
+        var at = start
+        var advertised: Int? = null
+        while (at < end) {
+            when (val kind = bytes[at].toInt() and 255) {
+                0 -> break
+                1 -> at++
+                else -> {
+                    val length = bytes[at + 1].toInt() and 255
+                    if (kind == 2) {
+                        val value = read16(bytes, at + 2)
+                        advertised = minOf(advertised ?: value, value)
+                    }
+                    at += length
+                }
+            }
+        }
+        return advertised ?: defaultMss
     }
 
     private fun read16(bytes: ByteArray, at: Int): Int =
