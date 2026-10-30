@@ -21,6 +21,21 @@ internal class PendingDnsReplies(
     private data class Entry(val request: TunIngressResult.Packet, val createdNanos: Long)
     private val pending = LinkedHashMap<Long, Entry>()
     private var nextHandle = 1L
+    private var activeGatewayDials = 0
+
+    /** A separate lease for sockets still dialing after a DNS reply TTL expires. */
+    @Synchronized
+    fun reserveGatewayDial(): Boolean {
+        if (activeGatewayDials >= maxPending) return false
+        activeGatewayDials++
+        return true
+    }
+
+    @Synchronized
+    fun releaseGatewayDial() {
+        check(activeGatewayDials > 0) { "No gateway dial to release" }
+        activeGatewayDials--
+    }
 
     /** Refuse malformed DNS, full queues and handle exhaustion without eviction. */
     @Synchronized

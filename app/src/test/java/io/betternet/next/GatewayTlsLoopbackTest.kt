@@ -308,6 +308,47 @@ class GatewayTlsLoopbackTest {
         }
     }
 
+    @Test fun concurrentDnsGatewayDialIsRejectedBeforeSocketProtection() {
+        val request = tunDnsRequest(false)
+        val pending = PendingDnsReplies(maxPending = 1)
+        val address = InetSocketAddress(InetAddress.getLoopbackAddress(), 9)
+        val token = "TestOnlyOpaqueToken0123456789"
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val failure = AtomicReference<Throwable?>()
+        val first = Thread {
+            try {
+                exchangeOneTunDnsQueryThroughGateway(
+                    address, "gateway.example", "dns.example", token, 1_000,
+                    { entered.countDown(); release.await(3, TimeUnit.SECONDS); false },
+                    request, pending, java.io.ByteArrayOutputStream(), 1280,
+                )
+                failure.set(AssertionError("Rejected socket protection should throw"))
+            } catch (_: IllegalStateException) {
+                // Expected refusal, with both reservations released.
+            } catch (unexpected: Throwable) {
+                failure.set(unexpected)
+            }
+        }
+        first.start()
+        try {
+            assertTrue("First dial did not enter socket protection", entered.await(3, TimeUnit.SECONDS))
+            var secondProtectionCalls = 0
+            assertFalse(exchangeOneTunDnsQueryThroughGateway(
+                address, "gateway.example", "dns.example", token, 1_000,
+                { secondProtectionCalls++; true }, request, pending,
+                java.io.ByteArrayOutputStream(), 1280,
+            ))
+            assertEquals("No second socket may be protected", 0, secondProtectionCalls)
+        } finally {
+            release.countDown()
+            first.join(4_000)
+        }
+        assertFalse("Dial worker must finish", first.isAlive)
+        assertNull(failure.get())
+        assertNotNull("Failure must release the pending slot", pending.register(request))
+    }
+
     @Test fun invalidIpv6UdpZeroChecksumCannotOpenGateway() {
         val request = tunDnsRequest(true)
         val invalidBytes = request.bytes.clone().apply {

@@ -25,23 +25,32 @@ internal fun exchangeOneTunDnsQueryOverTls(
 ): Boolean = tls.use {
     require(mtu in 1280..9000) { "TUN MTU must be bounded" }
     require(timeoutMs in 1..10_000) { "DNS exchange timeout must be bounded" }
-    // Own the query bytes before registering or sending: the TUN read buffer
-    // can be reused or mutated by its caller on another thread.
     val snapshot = request.copy(bytes = request.bytes.clone())
     val handle = pending.register(snapshot) ?: return@use false
     try {
-        val header = parseTunPacketHeader(snapshot.bytes, snapshot.bytes.size)
-            ?: return@use false
-        val query = snapshot.bytes.copyOfRange(header.transportOffset + 8, snapshot.bytes.size)
-        val response = exchangeOneDnsMessageOverTls(tls, query, timeoutMs)
-        val reply = pending.consume(handle, response, mtu) ?: return@use false
-        // One datagram, one write; do not retry an uncertain partial write.
-        output.write(reply)
-        true
+        exchangeRegisteredTunDnsQuery(tls, snapshot, handle, pending, output, mtu, timeoutMs)
     } finally {
-        // Release capacity even on TLS failure, rejection or output I/O error.
         pending.cancel(handle)
     }
+}
+
+/** Shared exchange path; registration must already be complete before network I/O. */
+private fun exchangeRegisteredTunDnsQuery(
+    tls: SSLSocket,
+    snapshot: TunIngressResult.Packet,
+    handle: Long,
+    pending: PendingDnsReplies,
+    output: OutputStream,
+    mtu: Int,
+    timeoutMs: Int,
+): Boolean {
+    val header = parseTunPacketHeader(snapshot.bytes, snapshot.bytes.size) ?: return false
+    val query = snapshot.bytes.copyOfRange(header.transportOffset + 8, snapshot.bytes.size)
+    val response = exchangeOneDnsMessageOverTls(tls, query, timeoutMs)
+    val reply = pending.consume(handle, response, mtu) ?: return false
+    // Never retry an uncertain partial TUN write.
+    output.write(reply)
+    return true
 }
 
 /**
@@ -67,11 +76,24 @@ internal fun exchangeOneTunDnsQueryThroughGateway(
 ): Boolean {
     require(mtu in 1280..9000) { "TUN MTU must be bounded" }
     require(timeoutMs in 1..10_000) { "DNS timeout must be bounded" }
-    // Do not dial or disclose credentials for malformed TUN packets.
-    if (!isSupportedDnsTunQuery(request)) return false
-    val tls = connectVerifiedDestinationTlsThroughGateway(
-        gatewayAddress, gatewayName, dnsServerName, 853, bearerToken,
-        timeoutMs, protect, gatewayTlsFactory, destinationTlsFactory, bind
-    )
-    return exchangeOneTunDnsQueryOverTls(tls, request, pending, output, mtu, timeoutMs)
+    // Reserve both a pending reply and a live-dial lease BEFORE any socket or
+    // credential use. A reply TTL cannot free an in-progress dial lease.
+    if (!pending.reserveGatewayDial()) return false
+    try {
+        val snapshot = request.copy(bytes = request.bytes.clone())
+        val handle = pending.register(snapshot) ?: return false
+        try {
+            val tls = connectVerifiedDestinationTlsThroughGateway(
+                gatewayAddress, gatewayName, dnsServerName, 853, bearerToken,
+                timeoutMs, protect, gatewayTlsFactory, destinationTlsFactory, bind
+            )
+            return tls.use {
+                exchangeRegisteredTunDnsQuery(it, snapshot, handle, pending, output, mtu, timeoutMs)
+            }
+        } finally {
+            pending.cancel(handle)
+        }
+    } finally {
+        pending.releaseGatewayDial()
+    }
 }

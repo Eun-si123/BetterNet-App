@@ -118,6 +118,22 @@ class PendingDnsRepliesTest {
         assertNull(pending.consume(next, response(), 1280))
     }
 
+    @Test fun gatewayDialLeaseSurvivesReplyExpiryUntilExplicitRelease() {
+        var now = 100L
+        val pending = PendingDnsReplies(clockNanos = { now }, maxPending = 1, ttlNanos = 10)
+        assertTrue(pending.reserveGatewayDial())
+        val handle = pending.register(request())!!
+        now = 110
+        assertNull(pending.consume(handle, response(), 1280))
+        assertFalse("Expired DNS reply cannot free a live socket lease", pending.reserveGatewayDial())
+        pending.clear()
+        assertFalse(pending.reserveGatewayDial())
+        pending.cancel(handle)
+        pending.releaseGatewayDial()
+        assertTrue(pending.reserveGatewayDial())
+        pending.releaseGatewayDial()
+    }
+
     @Test fun cancelledExchangeReleasesCapacityAndCannotBeReplayed() {
         val pending = PendingDnsReplies(maxPending = 1)
         val handle = pending.register(request())!!
