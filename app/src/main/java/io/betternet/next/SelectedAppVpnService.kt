@@ -2,6 +2,9 @@ package io.betternet.next
 
 import android.content.Intent
 import android.net.VpnService
+import android.os.ParcelFileDescriptor
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -47,6 +50,22 @@ class SelectedAppVpnService : VpnService() {
         )
         return builder
     }
+
+    /**
+     * Dormant adapter for a future explicitly consented, established TUN.
+     * Does NOT call Builder.establish(), request consent or start the service.
+     * The session exclusively owns the supplied descriptor and its shared fd.
+     * A caller must serialize packet/gateway pumps and enforce cancellation.
+     */
+    internal fun ownEstablishedRestrictedTestTun(
+        descriptor: ParcelFileDescriptor,
+        dispatcher: RestrictedTestTunDispatcher,
+    ): RestrictedTunSession = RestrictedTunSession(
+        dispatcher,
+        FileInputStream(descriptor.fileDescriptor),
+        FileOutputStream(descriptor.fileDescriptor),
+        closeDescriptor = { descriptor.close() },
+    )
 
     /** A future TLS gateway dial must protect its socket before connecting. */
     internal fun newProtectedGatewaySocket(address: InetSocketAddress, timeoutMs: Int): Socket =
