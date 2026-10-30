@@ -110,8 +110,9 @@ internal class OfflineTcpTunBridge(
     }
 
     /** Release the socket on a normal two-sided FIN or an expired flow lease. */
-    private fun retireIfFlowEnded(nowMillis: Long) {
+    internal fun retireIfFlowEnded(nowMillis: Long): Boolean {
         if (started && !tcp.hasLiveFlow(nowMillis)) close()
+        return closed
     }
 
     private fun emit(tunOutput: OutputStream, packet: () -> ByteArray?): Boolean {
