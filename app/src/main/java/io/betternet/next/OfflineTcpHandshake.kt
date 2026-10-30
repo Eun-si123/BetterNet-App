@@ -36,6 +36,10 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     private var responseSentAt = -1L
     private var responseRetries = 0
     private var pendingClientPayload: ByteArray? = null
+    // Keep only the last successfully flushed segment (<= 1024 bytes).
+    // A lost TUN ACK can be retransmitted without duplicating gateway writes.
+    private data class ForwardedSegment(val sequence: Long, val payload: ByteArray)
+    private var lastForwardedSegment: ForwardedSegment? = null
     private var receiveWindow = 0
     private var clientHalfClosed = false
     private var lastSeenAt = -1L
@@ -64,6 +68,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         responseSentAt = -1L
         responseRetries = 0
         pendingClientPayload = null
+        lastForwardedSegment = null
         receiveWindow = clientWindow
         clientHalfClosed = false
         lastSeenAt = nowMillis
@@ -161,9 +166,46 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             throw failure
         }
         flow = current.copy(clientNext = next)
+        lastForwardedSegment = ForwardedSegment(current.clientNext, payload.copyOf())
         pendingClientPayload = null
         receiveWindow = nextReceiveWindow
         return ack
+    }
+
+    /**
+     * Re-ACK only an exact replay of the most recently flushed client segment.
+     * The first ACK might have been lost on the virtual link. Never write the
+     * payload upstream again; require the original tuple, checksum, sequence,
+     * acknowledgement and bytes to match. This does not accept overlaps,
+     * out-of-order data or a new client payload.
+     */
+    fun acknowledgeForwardedReplay(packet: TunIngressResult.Packet, nowMillis: Long): ByteArray? {
+        expire(nowMillis)
+        val current = flow ?: return null
+        val previous = lastForwardedSegment ?: return null
+        if (!acked || clientHalfClosed || serverFinPending ||
+            pendingClientPayload != null) return null
+        val bytes = packet.bytes
+        val header = parseTunPacketHeader(bytes, bytes.size) ?: return null
+        if (header.protocol != 6 || header.source != current.source ||
+            header.destination != current.destination ||
+            header.sourcePort != current.sourcePort ||
+            header.destinationPort != current.destinationPort ||
+            header.transportHeaderBytes != 20) return null
+        val offset = header.transportOffset
+        val flags = bytes[offset + 13].toInt() and 255
+        if ((bytes[offset + 12].toInt() and 15) != 0 ||
+            (flags != 0x10 && flags != 0x18) ||
+            read16(bytes, offset + 18) != 0 ||
+            read32(bytes, offset + 4) != previous.sequence ||
+            read32(bytes, offset + 8) != current.serverNext ||
+            ((previous.sequence + previous.payload.size) and 0xffff_ffffL) != current.clientNext ||
+            !bytes.copyOfRange(offset + 20, bytes.size).contentEquals(previous.payload)) return null
+        return buildTcpDeliveryAck(
+            current.destination, current.source,
+            current.destinationPort, current.sourcePort,
+            current.serverNext, current.clientNext, receiveWindow,
+        )
     }
 
     /**
@@ -390,6 +432,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         responseSentAt = -1L
         responseRetries = 0
         pendingClientPayload = null
+        lastForwardedSegment = null
         receiveWindow = 0
         clientHalfClosed = false
         lastSeenAt = -1L

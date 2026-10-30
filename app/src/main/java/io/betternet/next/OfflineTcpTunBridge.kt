@@ -55,8 +55,8 @@ internal class OfflineTcpTunBridge(
                             if (tcp.stageClientPayload(ingress, nowMillis) != null) {
                                 tcp.forwardStagedClientPayload(tunnelOutput, nowMillis, clientWindow)
                             } else {
-                                tcp.acceptResponseAck(ingress, nowMillis)
-                                null
+                                tcp.acknowledgeForwardedReplay(ingress, nowMillis)
+                                    ?: run { tcp.acceptResponseAck(ingress, nowMillis); null }
                             }
                         }
                     }

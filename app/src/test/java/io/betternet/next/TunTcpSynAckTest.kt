@@ -336,6 +336,52 @@ class TunTcpSynAckTest {
         }
     }
 
+    @Test fun lostClientAckReplaysOnlyExactPreviouslyFlushedSegment() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val state = OfflineTcpHandshake(1000)
+            val isn = 0xffff_fffeL
+            val ip = if (version == 4) 20 else 40
+            assertNotNull(state.begin(syn, isn, 1280, 100, clientWindow = 4))
+            assertTrue(state.acceptFinalAck(finalAck(syn, isn), 101))
+            val first = finalAck(syn, isn, flags = 0x18,
+                acknowledgement = 0xffff_ffffL, payload = byteArrayOf(1, 2, 3))
+            assertNull(state.acknowledgeForwardedReplay(first, 102)) // not flushed
+            assertNotNull(state.stageClientPayload(first, 103))
+            assertNull(state.acknowledgeForwardedReplay(first, 104)) // still staged
+            val output = ByteArrayOutputStream()
+            val originalAck = state.forwardStagedClientPayload(output, 105,
+                nextReceiveWindow = 4)!!
+            assertEquals(0, tcpChecksum(originalAck, version))
+            assertArrayEquals(originalAck, state.acknowledgeForwardedReplay(first, 106))
+            assertArrayEquals(byteArrayOf(1, 2, 3), output.toByteArray())
+            assertNull(state.acknowledgeForwardedReplay(finalAck(syn, isn,
+                flags = 0x18, acknowledgement = 0xffff_ffffL,
+                payload = byteArrayOf(1, 2, 4)), 107)) // different bytes
+            assertNull(state.acknowledgeForwardedReplay(finalAck(syn, isn,
+                flags = 0x18, acknowledgement = 0xffff_ffffL,
+                sourcePort = 49153, payload = byteArrayOf(1, 2, 3)), 108))
+            assertNull(state.acknowledgeForwardedReplay(finalAck(syn, isn,
+                flags = 0x18, sequence = 1, acknowledgement = 0xffff_ffffL,
+                payload = byteArrayOf(1, 2, 3)), 109))
+            val corrupt = first.bytes.clone().apply {
+                this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte()
+            }
+            assertNull(state.acknowledgeForwardedReplay(first.copy(bytes = corrupt), 110))
+            val next = finalAck(syn, isn, flags = 0x18, sequence = 3,
+                acknowledgement = 0xffff_ffffL, payload = byteArrayOf(4))
+            assertNotNull(state.stageClientPayload(next, 111))
+            assertNotNull(state.forwardStagedClientPayload(output, 112))
+            assertNull(state.acknowledgeForwardedReplay(first, 113)) // only last segment
+            val lastAck = state.acknowledgeForwardedReplay(next, 114)!!
+            assertEquals(4L, u32(lastAck, ip + 8))
+            assertEquals(0, u16(lastAck, ip + 14)) // no accidental window reopening
+            assertArrayEquals(byteArrayOf(1, 2, 3, 4), output.toByteArray())
+            state.close()
+            assertNull(state.acknowledgeForwardedReplay(next, 115))
+        }
+    }
+
     @Test fun clientIngressRejectsWrongSequenceAckTupleChecksumAndOversize() {
         for (version in listOf(4, 6)) {
             val syn = request(version)
@@ -736,9 +782,11 @@ class TunTcpSynAckTest {
             val ip = if (version == 4) 20 else 40
             assertEquals(requestBytes.size.toLong(), u32(ack, ip + 8))
             assertEquals(1024, u16(ack, ip + 14))
-            // Replay must not write a second request to the gateway.
-            assertTrue(deliver(finalAck(syn, serverIsn, flags = 0x18,
-                payload = requestBytes), 103).isEmpty())
+            // If the first ACK is lost, retransmit that ACK but never the
+            // upstream bytes. A replay is not another HTTP request.
+            val replayAck = deliver(finalAck(syn, serverIsn, flags = 0x18,
+                payload = requestBytes), 103)
+            assertArrayEquals(ack, replayAck)
             assertArrayEquals(requestBytes, tunnelWritten.toByteArray())
             tunWritten.reset()
             assertTrue(bridge.pumpOneGatewayReply(tunWritten, 104))
