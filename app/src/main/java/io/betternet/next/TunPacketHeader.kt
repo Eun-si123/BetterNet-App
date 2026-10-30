@@ -75,14 +75,19 @@ internal fun parseTunPacketHeader(packet: ByteArray, readBytes: Int): TunPacketH
         if (length < 20 || length > remaining) return null
         // TCP checksums are mandatory for both IP families. Never admit a
         // corrupt segment to a future state machine or gateway forwarding path.
-        if (!hasValidTcpChecksum(
-                packet, ipHeaderBytes, remaining, sourceOffset, destinationOffset, addressBytes
+        if (!hasValidTransportChecksum(
+                packet, ipHeaderBytes, remaining, sourceOffset, destinationOffset, addressBytes, 6
             )) return null
         length
     } else {
         if (u16(ipHeaderBytes + 4) != remaining) return null
-        // A zero UDP checksum is prohibited in IPv6 (RFC 8200).
-        if (version == 6 && u16(ipHeaderBytes + 6) == 0) return null
+        // IPv4 permits a zero UDP checksum; IPv6 requires one. If present,
+        // verify it against the IP addresses and the entire UDP datagram.
+        val checksum = u16(ipHeaderBytes + 6)
+        if (checksum == 0 && version == 6) return null
+        if (checksum != 0 && !hasValidTransportChecksum(
+                packet, ipHeaderBytes, remaining, sourceOffset, destinationOffset, addressBytes, 17
+            )) return null
         8
     }
     return TunPacketHeader(
@@ -94,14 +99,14 @@ internal fun parseTunPacketHeader(packet: ByteArray, readBytes: Int): TunPacketH
 }
 
 /**
- * Verify the complete TCP segment (header, options and payload) with the
- * IPv4/IPv6 pseudo-header. In particular, this binds the segment to the IP
- * source/destination addresses, not merely to its own TCP header bytes.
+ * Verify the complete TCP/UDP segment (header and payload) with the
+ * IPv4/IPv6 pseudo-header. This binds transport bytes to IP addresses;
+ * IPv4 UDP zero-checksum datagrams are handled separately by the caller.
  * Fragmented packets and IPv6 extension headers are rejected by the caller.
  */
-private fun hasValidTcpChecksum(
+private fun hasValidTransportChecksum(
     packet: ByteArray, offset: Int, length: Int,
-    sourceOffset: Int, destinationOffset: Int, addressBytes: Int,
+    sourceOffset: Int, destinationOffset: Int, addressBytes: Int, protocol: Int,
 ): Boolean {
     fun sumWords(start: Int, count: Int): Int {
         var sum = 0
@@ -114,10 +119,10 @@ private fun hasValidTcpChecksum(
         if (at < end) sum += (packet[at].toInt() and 0xff) shl 8
         return sum
     }
-    // Both pseudo-header formats contribute the segment length and protocol 6.
+    // Both pseudo-header formats contribute the segment length and protocol.
     // The IPv6 32-bit length's high half is zero (jumbograms unsupported).
     var sum = sumWords(sourceOffset, addressBytes) +
-        sumWords(destinationOffset, addressBytes) + length + 6 +
+        sumWords(destinationOffset, addressBytes) + length + protocol +
         sumWords(offset, length)
     while (sum > 0xffff) sum = (sum and 0xffff) + (sum ushr 16)
     return sum == 0xffff

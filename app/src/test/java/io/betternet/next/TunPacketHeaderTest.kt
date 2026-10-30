@@ -19,6 +19,39 @@ class TunPacketHeaderTest {
         set16(bytes, 10, sum.inv() and 0xffff)
     }
 
+    private fun sealUdpChecksum(bytes: ByteArray, ipv6: Boolean) {
+        val offset = if (ipv6) 40 else 20
+        val addressBytes = if (ipv6) 16 else 4
+        val source = if (ipv6) 8 else 12
+        val destination = if (ipv6) 24 else 16
+        fun sumWords(start: Int, length: Int): Int {
+            var sum = 0
+            for (at in start until start + length step 2) {
+                sum += (bytes[at].toInt() and 255) * 256 +
+                    (bytes[at + 1].toInt() and 255)
+            }
+            return sum
+        }
+        set16(bytes, offset + 6, 0)
+        var sum = sumWords(source, addressBytes) + sumWords(destination, addressBytes) +
+            (bytes.size - offset) + 17 + sumWords(offset, bytes.size - offset)
+        while (sum > 65535) sum = (sum and 65535) + (sum ushr 16)
+        val result = sum.inv() and 65535
+        set16(bytes, offset + 6, if (result == 0) 65535 else result)
+    }
+
+    private fun ipv4Udp(): ByteArray = ByteArray(30).apply {
+        this[0] = 0x45
+        set16(this, 2, size)
+        this[8] = 64; this[9] = 17
+        this[12] = 192.toByte(); this[13] = 0; this[14] = 2; this[15] = 10
+        this[16] = 198.toByte(); this[17] = 51; this[18] = 100; this[19] = 2
+        set16(this, 20, 12345); set16(this, 22, 53); set16(this, 24, 10)
+        this[28] = 0x12; this[29] = 0x34
+        sealIpv4Header(this)
+        sealUdpChecksum(this, false)
+    }
+
     private fun ipv4Tcp(): ByteArray = ByteArray(40).apply {
         this[0] = 0x45
         set16(this, 2, size)
@@ -48,7 +81,7 @@ class TunPacketHeaderTest {
         this[8] = 0x20; this[9] = 0x01; this[10] = 0x0d; this[11] = 0x0b; this[23] = 1
         this[24] = 0x20; this[25] = 0x01; this[26] = 0x0d; this[27] = 0x0b; this[39] = 2
         set16(this, 40, 12345); set16(this, 42, 53); set16(this, 44, 8)
-        set16(this, 46, 0x1234) // Nonzero UDP checksum (presence, not yet validation)
+        sealUdpChecksum(this, true)
     }
 
     @Test fun recognizesIpv4TcpWithoutSendingAnything() {
@@ -70,6 +103,33 @@ class TunPacketHeaderTest {
         assertEquals(53, result.destinationPort)
         assertEquals(40, result.transportOffset)
         assertEquals(8, result.transportHeaderBytes)
+    }
+
+    @Test fun acceptsValidUdpChecksumsAndIpv4OptionalZeroChecksum() {
+        for (ipv6 in listOf(false, true)) {
+            val packet = if (ipv6) ipv6Udp() else ipv4Udp()
+            assertEquals(17, parseTunPacketHeader(packet, packet.size)!!.protocol)
+        }
+        val optional = ipv4Udp().apply { set16(this, 26, 0) }
+        assertNotNull(parseTunPacketHeader(optional, optional.size))
+    }
+
+    @Test fun rejectsUdpChecksumCorruptionAndPseudoHeaderMismatch() {
+        for (ipv6 in listOf(false, true)) {
+            val packet = if (ipv6) ipv6Udp() else ipv4Udp()
+            val checksumOffset = if (ipv6) 46 else 26
+            val damagedChecksum = packet.clone().apply {
+                this[checksumOffset] = (this[checksumOffset].toInt() xor 1).toByte()
+            }
+            assertNull(parseTunPacketHeader(damagedChecksum, damagedChecksum.size))
+            val damagedAddress = packet.clone().apply {
+                this[if (ipv6) 8 else 12] = (this[if (ipv6) 8 else 12].toInt() xor 1).toByte()
+                if (!ipv6) sealIpv4Header(this)
+            }
+            assertNull(parseTunPacketHeader(damagedAddress, damagedAddress.size))
+        }
+        val payload = ipv4Udp().apply { this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte() }
+        assertNull(parseTunPacketHeader(payload, payload.size))
     }
 
     @Test fun refusesTruncatedAndForgedLengths() {
