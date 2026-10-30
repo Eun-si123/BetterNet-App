@@ -405,6 +405,91 @@ class GatewayTlsLoopbackTest {
         }
     }
 
+    @Test fun authenticatedDnsReplyBindsOnlyApprovedTcpDestinationAfterTunWrite() {
+        // A real nested loopback TLS/CONNECT exchange; no Android VPN or
+        // external DNS. A same-question answer alone must NOT grant a TCP IP.
+        val token = "TestOnlyOpaqueToken0123456789"
+        val approvedIp = InetAddress.getByAddress(byteArrayOf(203.toByte(), 0, 113, 9))
+        val wrongIp = InetAddress.getByAddress(byteArrayOf(203.toByte(), 0, 113, 10))
+        for (ipv6Tun in listOf(false, true)) {
+            for (mode in listOf("approved", "wrong-ip", "tun-write-fails")) {
+                val tls = contexts()
+                val query = dnsQuery()
+                val response = query.clone().apply {
+                    this[2] = 0x81.toByte()
+                    this[3] = 0x80.toByte()
+                    this[7] = 1
+                } + byteArrayOf(
+                    0xc0.toByte(), 0x0c, 0, 1, 0, 1,
+                    0, 0, 0, 30, 0, 4,
+                ) + approvedIp.address
+                val request = tunDnsRequest(ipv6Tun)
+                withServer(tls.server, { gateway ->
+                    gateway.startHandshake()
+                    val reader = gateway.inputStream.bufferedReader()
+                    assertEquals("CONNECT dns.example:853 HTTP/1.1", reader.readLine())
+                    assertEquals("Host: dns.example:853", reader.readLine())
+                    assertEquals("Proxy-Authorization: Bearer $token", reader.readLine())
+                    assertEquals("", reader.readLine())
+                    gateway.outputStream.write("HTTP/1.1 200 OK\r\n\r\n".toByteArray())
+                    gateway.outputStream.flush()
+                    (tls.server.socketFactory.createSocket(
+                        gateway, "dns.example", 853, false
+                    ) as SSLSocket).use { dns ->
+                        dns.useClientMode = false
+                        dns.soTimeout = 3_000
+                        dns.startHandshake()
+                        val prefix = dns.inputStream.readNBytes(2)
+                        assertEquals(query.size, ((prefix[0].toInt() and 255) shl 8) or
+                            (prefix[1].toInt() and 255))
+                        assertArrayEquals(query, dns.inputStream.readNBytes(query.size))
+                        dns.outputStream.write(byteArrayOf(0, response.size.toByte()) + response)
+                        dns.outputStream.flush()
+                    }
+                }) { address ->
+                    val pending = PendingDnsReplies(maxPending = 1)
+                    val output = java.io.ByteArrayOutputStream()
+                    val sink = if (mode == "tun-write-fails") object : java.io.OutputStream() {
+                        override fun write(b: Int) { throw java.io.IOException("TUN closed") }
+                        override fun write(b: ByteArray) { throw java.io.IOException("TUN closed") }
+                    } else output
+                    val run = {
+                        exchangeOneTunDnsQueryThroughGatewayAndBindTestDestination(
+                            address, "gateway.example", "dns.example", token, 3_000,
+                            { true }, request, pending, sink, 1280, "a.test",
+                            if (mode == "wrong-ip") wrongIp else approvedIp,
+                            tls.trustedClient.socketFactory, tls.trustedClient.socketFactory,
+                            clockMillis = { 100L },
+                        )
+                    }
+                    if (mode == "tun-write-fails") {
+                        try {
+                            run()
+                            fail("A failed TUN write must never return a TCP binding")
+                        } catch (expected: java.io.IOException) {
+                            assertEquals("TUN closed", expected.message)
+                        }
+                    } else {
+                        val binding = run()
+                        if (mode == "approved") {
+                            assertNotNull(binding)
+                            assertEquals("a.test", binding!!.hostname)
+                            assertEquals(approvedIp, binding.address)
+                            assertArrayEquals(buildDnsUdpReply(request, response, 1280),
+                                output.toByteArray())
+                        } else {
+                            assertNull("An unapproved DNS answer must not be delivered", binding)
+                            assertEquals(0, output.size())
+                        }
+                    }
+                    assertNotNull("All paths release the pending DNS slot", pending.register(request))
+                    assertTrue("All paths release the dial lease", pending.reserveGatewayDial())
+                    pending.releaseGatewayDial()
+                }
+            }
+        }
+    }
+
     @Test fun concurrentDnsGatewayDialIsRejectedBeforeSocketProtection() {
         val request = tunDnsRequest(false)
         val pending = PendingDnsReplies(maxPending = 1)
