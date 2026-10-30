@@ -12,8 +12,7 @@ import org.junit.Test
 class RestrictedTunSessionTest {
     private fun dispatcher(version: Int): RestrictedTestTunDispatcher {
         val syn = TunTcpSynAckTest().request(version)
-        val family = if (version == 4) 4 else 16
-        val dns = InetAddress.getByAddress(ByteArray(family).apply { this[family - 1] = 1 })
+        val dns = InetAddress.getByName(if (version == 4) "198.18.0.1" else "fd00::1")
         return RestrictedTestTunDispatcher(
             RestrictedTestTunPlan(syn.header.source, dns, syn.header.destination, 1280),
             { _, _ -> throw AssertionError("Unexpected DNS request") },
