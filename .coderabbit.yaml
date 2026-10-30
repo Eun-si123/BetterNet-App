@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "ko-KR"
+reviews:
+  profile: "chill"
+  poem: false
+  auto_approvals:
+    enabled: false
+  auto_review:
+    enabled: true
+    drafts: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 0
+  path_instructions:
+    - path: "app/src/**"
+      instructions: |
+        Prioritize explicit user opt-in, Android VPN permission and lifecycle
+        boundaries, selected-app-only routing, network/socket recursion,
+        authenticated encrypted transport, DNS/IPv4/IPv6 correctness, resource
+        limits and safe rollback. Prevent leaks of private repository research.
+        Distinguish simulated/unit checks from genuine device Internet evidence.
