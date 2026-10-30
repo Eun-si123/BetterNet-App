@@ -92,7 +92,7 @@ class DnsDestinationBindingTest {
         )) {
             try {
                 connectDnsBoundTestTcpBridge(
-                    binding, invalid, 100,
+                    binding, invalid, 100, java.io.ByteArrayOutputStream(),
                     InetSocketAddress(InetAddress.getLoopbackAddress(), 9), "gateway.example",
                     "TestOnlyOpaqueToken0123456789", 1000, 1280, 99,
                     { protectionCalls++; true },

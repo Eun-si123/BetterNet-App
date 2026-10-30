@@ -1,5 +1,7 @@
 package io.betternet.next
 
+import java.io.ByteArrayInputStream
+import java.io.OutputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -93,11 +95,15 @@ internal class DnsDestinationBinding private constructor(
  * CONNECT pins the numeric DNS-authorized IP, not a second hostname lookup.
  * This does not prove that a remote gateway enforces its requested target.
  * The caller still owns OS consent, single-app TUN scope and pump scheduling.
+ * The initial SYN is already consumed by the TUN dispatcher; after CONNECT
+ * succeeds, emit its SYN-ACK here so the first packet is never silently lost.
+ * If the TUN write fails, close the authenticated tunnel immediately.
  */
 internal fun connectDnsBoundTestTcpBridge(
     binding: DnsDestinationBinding,
     syn: TunIngressResult.Packet,
     nowMillis: Long,
+    tunOutput: OutputStream,
     gatewayAddress: InetSocketAddress,
     gatewayName: String,
     bearerToken: String,
@@ -117,8 +123,12 @@ internal fun connectDnsBoundTestTcpBridge(
         bearerToken, tlsFactory = tlsFactory, bind = bind
     )
     return try {
-        OfflineTcpTunBridge(tunnel.inputStream, tunnel.outputStream, mtu, serverIsn,
+        val bridge = OfflineTcpTunBridge(tunnel.inputStream, tunnel.outputStream, mtu, serverIsn,
             allowedDestination = binding.address, onClose = { tunnel.close() })
+        check(bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes), tunOutput, nowMillis)) {
+            "Initial authorized SYN could not start the bridge"
+        }
+        bridge
     } catch (failure: Throwable) {
         try { tunnel.close() } catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
         throw failure
