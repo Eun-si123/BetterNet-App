@@ -10,6 +10,8 @@ import javax.net.ssl.SSLSocketFactory
  * NOT a DNS resolver or proof of upstream authenticity: the caller must obtain
  * the reply from the independently verified DNS-over-TLS CONNECT path and
  * correlate it to the original selected-app TUN query before invoking this.
+ * The permitted test IP must come from an independent owner-approved allowlist,
+ * NEVER from the same untrusted DNS answer being checked.
  *
  * Reject CNAMEs, multiple answers, compression beyond a pointer to the
  * question, and extra records for now. Unsupported legitimate DNS answers
@@ -32,7 +34,8 @@ internal class DnsDestinationBinding private constructor(
 
     companion object {
         fun fromCorrelatedResponse(
-            query: ByteArray, response: ByteArray, expectedHost: String, nowMillis: Long,
+            query: ByteArray, response: ByteArray, expectedHost: String,
+            allowedTestAddress: InetAddress, nowMillis: Long,
         ): DnsDestinationBinding? {
             if (!isValidGatewayName(expectedHost) || nowMillis < 0 ||
                 !isSupportedDnsQueryMessage(query) || response.size !in 17..1232 ||
@@ -74,8 +77,11 @@ internal class DnsDestinationBinding private constructor(
                 at + length != response.size) return null
             // The query question was uncompressed and echoed byte-for-byte.
             if (questionNameEnd < 13) return null
-            return DnsDestinationBinding(expectedHost.lowercase(),
-                InetAddress.getByAddress(response.copyOfRange(at, at + length)),
+            val resolvedAddress = InetAddress.getByAddress(response.copyOfRange(at, at + length))
+            // A compromised or misconfigured resolver must not turn the test
+            // gateway into an arbitrary destination or private-network proxy.
+            if (resolvedAddress != allowedTestAddress) return null
+            return DnsDestinationBinding(expectedHost.lowercase(), resolvedAddress,
                 nowMillis, minOf(ttl, 60L) * 1000L)
         }
     }

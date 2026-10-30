@@ -28,7 +28,8 @@ class DnsDestinationBindingTest {
     internal fun bindingFor(syn: TunIngressResult.Packet, now: Long = 100): DnsDestinationBinding {
         val q = query(if (syn.header.ipVersion == 4) 1 else 28)
         return DnsDestinationBinding.fromCorrelatedResponse(
-            q, response(q, syn.header.destination.address), "dns.example", now
+            q, response(q, syn.header.destination.address), "dns.example",
+            syn.header.destination, now
         )!!
     }
 
@@ -54,10 +55,16 @@ class DnsDestinationBindingTest {
             val syn = TunTcpSynAckTest().request(version)
             val q = query(if (version == 4) 1 else 28)
             val good = response(q, syn.header.destination.address)
-            fun parse(query: ByteArray = q, response: ByteArray = good, host: String = "dns.example") =
-                DnsDestinationBinding.fromCorrelatedResponse(query, response, host, 100)
+            fun parse(query: ByteArray = q, response: ByteArray = good,
+                      host: String = "dns.example",
+                      allowed: InetAddress = syn.header.destination) =
+                DnsDestinationBinding.fromCorrelatedResponse(query, response, host, allowed, 100)
             assertNotNull(parse())
             assertNull(parse(host = "other.example"))
+            // Even a valid, correlated DNS reply cannot authorize a different
+            // IP from the independently approved test destination.
+            assertNull(parse(allowed = InetAddress.getByAddress(
+                ByteArray(if (version == 4) 4 else 16) { 1 })))
             assertNull(parse(response = good.clone().apply { this[1] = 0x35 })) // wrong DNS ID
             assertNull(parse(response = good.clone().apply { this[3] = 0x83.toByte() })) // NXDOMAIN
             assertNull(parse(response = good.clone().apply { this[7] = 2 })) // multiple answers
