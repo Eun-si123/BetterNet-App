@@ -798,7 +798,10 @@ class TunTcpSynAckTest {
             assertTrue(deliver(finalAck(syn, serverIsn, sequence = requestBytes.size.toLong(),
                 acknowledgement = serverIsn + 1 + gatewayReply.size), 106).isEmpty())
             bridge.close()
-            assertTrue(deliver(syn, 107).isEmpty()) // no ISN reuse after close
+            tunWritten.reset()
+            assertFalse(bridge.pumpOneTunPacket(
+                ByteArrayInputStream(syn.bytes), tunWritten, 107)) // terminal, no ISN reuse
+            assertEquals(0, tunWritten.size())
         }
     }
 
