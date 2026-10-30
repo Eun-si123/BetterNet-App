@@ -297,7 +297,16 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             responseRetries = 0
             return fin
         }
-        if (read == 0) return null
+        if (read == 0) {
+            // InputStream must make progress for a nonempty buffer. A broken
+            // upstream must not leave the packet pump busy-looping indefinitely.
+            val failure = IOException("Gateway stream returned zero bytes")
+            close()
+            try { tunnelInput.close() } catch (closeFailure: IOException) {
+                failure.addSuppressed(closeFailure)
+            }
+            throw failure
+        }
         return offerResponse(buffer.copyOf(read), mtu, nowMillis)
     }
 

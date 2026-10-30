@@ -670,6 +670,35 @@ class TunTcpSynAckTest {
         assertNull(flow.offerResponse(byteArrayOf(1), 1280, 5))
     }
 
+    @Test fun zeroLengthGatewayReadRetiresBridgeWithoutAckOrRetryForBothIpFamilies() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            var streamClosed = false
+            val zeroRead = object : InputStream() {
+                override fun read(): Int = 0
+                override fun read(b: ByteArray, off: Int, len: Int): Int = 0
+                override fun close() { streamClosed = true }
+            }
+            val bridge = OfflineTcpTunBridge(zeroRead, ByteArrayOutputStream(), 1280, 99)
+            val tunOutput = ByteArrayOutputStream()
+            assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes), tunOutput, 100))
+            assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(finalAck(syn, 99).bytes),
+                tunOutput, 101))
+            tunOutput.reset()
+            try {
+                bridge.pumpOneGatewayReply(tunOutput, 102)
+                fail("A zero-byte gateway read must not be retried or treated as EOF")
+            } catch (expected: IOException) {
+                assertEquals("Gateway stream returned zero bytes", expected.message)
+            }
+            assertTrue(streamClosed)
+            assertEquals(0, tunOutput.size()) // no data or spurious FIN
+            assertFalse(bridge.pumpOneGatewayReply(tunOutput, 103))
+            assertFalse(bridge.pumpPendingRetry(tunOutput, 104))
+            assertFalse(bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes), tunOutput, 105))
+        }
+    }
+
     @Test fun gatewayEofFinRetransmitsAndClosesOnlyAfterBothHalvesForBothFamilies() {
         for (version in listOf(4, 6)) {
             val syn = request(version)
