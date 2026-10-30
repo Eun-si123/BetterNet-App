@@ -170,7 +170,10 @@ class GatewayTlsLoopbackTest {
                             ++time).isEmpty())
                     }
                     assertArrayEquals(responseBytes, received.toByteArray())
+                    // The default bridge owner must release the actual TLS
+                    // socket, not only reset its offline TCP bookkeeping.
                     bridge.close()
+                    assertTrue("Authenticated CONNECT socket leaked", tunnel.isClosed)
                 }
             }
         }

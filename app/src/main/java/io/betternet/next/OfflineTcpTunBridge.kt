@@ -9,7 +9,8 @@ import java.net.InetAddress
  * already authenticated CONNECT byte stream, and back to the TUN packet sink.
  * The caller must own gateway authentication, VPN consent, socket protection,
  * packet-pump serialization and read timeouts. Supply onClose to release the
- * caller-owned gateway socket on terminal TUN/flow failure.
+ * caller-owned gateway socket on terminal TUN/flow failure. Without onClose,
+ * the bridge closes both provided streams rather than leaking them.
  * The allowed destination IP must be resolved and authorized independently
  * before creating the CONNECT tunnel; only its TCP/443 flow can use it.
  *
@@ -125,11 +126,23 @@ internal class OfflineTcpTunBridge(
         output.flush()
     }
 
-    /** Terminal, idempotent cleanup. The caller supplies stream/socket closure. */
+    /** Terminal, idempotent cleanup. A supplied callback owns socket closure;
+     * otherwise both stream handles are closed even if one close fails.
+     */
     fun close() {
         if (closed) return
         closed = true
         tcp.close()
-        onClose?.invoke()
+        if (onClose != null) {
+            onClose.invoke()
+            return
+        }
+        var firstFailure: Exception? = null
+        try { tunnelInput.close() } catch (failure: Exception) { firstFailure = failure }
+        try { tunnelOutput.close() } catch (failure: Exception) {
+            if (firstFailure == null) firstFailure = failure
+            else firstFailure.addSuppressed(failure)
+        }
+        if (firstFailure != null) throw firstFailure
     }
 }

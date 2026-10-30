@@ -981,6 +981,54 @@ class TunTcpSynAckTest {
         assertFalse(bridge.pumpOneTunPacket(ByteArrayInputStream(byteArrayOf()), tunWritten, 4))
     }
 
+    @Test fun dormantBridgeClosesBothGatewayStreamsWithoutCallback() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            var inputCloses = 0
+            var outputCloses = 0
+            val input = object : ByteArrayInputStream(byteArrayOf(1)) {
+                override fun close() { inputCloses++ }
+            }
+            val output = object : ByteArrayOutputStream() {
+                override fun close() { outputCloses++ }
+            }
+            val bridge = OfflineTcpTunBridge(input, output, 1280, 321,
+                allowedDestination = syn.header.destination)
+            assertFalse(bridge.pumpOneTunPacket(
+                ByteArrayInputStream(byteArrayOf()), ByteArrayOutputStream(), 100))
+            bridge.close()
+            assertEquals(1, inputCloses)
+            assertEquals(1, outputCloses)
+            assertFalse(bridge.pumpOneGatewayReply(ByteArrayOutputStream(), 101))
+        }
+    }
+
+    @Test fun dormantBridgeClosesSecondGatewayStreamAfterFirstCloseFailure() {
+        val syn = request(4)
+        var outputCloses = 0
+        val input = object : ByteArrayInputStream(byteArrayOf(1)) {
+            override fun close() { throw IOException("input close failed") }
+        }
+        val output = object : ByteArrayOutputStream() {
+            override fun close() { outputCloses++; throw IOException("output close failed") }
+        }
+        val bridge = OfflineTcpTunBridge(input, output, 1280, 321,
+            allowedDestination = syn.header.destination)
+        try {
+            bridge.close()
+            fail("Expected gateway stream cleanup failure")
+        } catch (expected: IOException) {
+            assertEquals("input close failed", expected.message)
+            assertEquals(1, expected.suppressed.size)
+            assertEquals("output close failed", expected.suppressed[0].message)
+        }
+        assertEquals(1, outputCloses)
+        bridge.close()
+        assertEquals(1, outputCloses)
+        assertFalse(bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes),
+            ByteArrayOutputStream(), 101))
+    }
+
     @Test fun dormantBridgeClosesGatewayOnceOnTunEofAndReset() {
         for (version in listOf(4, 6)) {
             val syn = request(version)
