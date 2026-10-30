@@ -100,6 +100,47 @@ class GatewayTlsLoopbackTest {
         serverFailure.get()?.let { throw AssertionError("Loopback TLS server failed", it) }
     }
 
+    @Test fun dnsBoundIpv4AndIpv6SynUseExactAuthorizedConnectHost() {
+        // Real loopback TLS + bearer CONNECT, but no live VPN or Internet.
+        val packets = TunTcpSynAckTest()
+        for (version in listOf(4, 6)) {
+            val tls = contexts()
+            val token = "TestOnlyOpaqueToken0123456789"
+            withServer(tls.server, { gateway ->
+                gateway.startHandshake()
+                val reader = gateway.inputStream.bufferedReader()
+                val ip = packets.request(version).header.destination
+                val host = if (version == 6) "[${ip.hostAddress}]" else ip.hostAddress
+                assertEquals("CONNECT $host:443 HTTP/1.1", reader.readLine())
+                assertEquals("Host: $host:443", reader.readLine())
+                assertEquals("Proxy-Authorization: Bearer $token", reader.readLine())
+                assertEquals("", reader.readLine())
+                gateway.outputStream.write("HTTP/1.1 200 OK\r\n\r\n".toByteArray())
+                gateway.outputStream.flush()
+                assertEquals("Bridge did not release the authenticated tunnel", -1,
+                    gateway.inputStream.read())
+            }) { address ->
+                val syn = packets.request(version)
+                val binding = DnsDestinationBindingTest().bindingFor(syn)
+                val order = mutableListOf<String>()
+                val bridge = connectDnsBoundTestTcpBridge(
+                    binding, syn, 100, address, "gateway.example", token, 3_000,
+                    1280, 100L, { order.add("protect"); true },
+                    tlsFactory = tls.trustedClient.socketFactory,
+                    bind = { order.add("bind") },
+                )
+                assertEquals(listOf("protect", "bind"), order)
+                val output = java.io.ByteArrayOutputStream()
+                assertTrue(bridge.pumpOneTunPacket(
+                    java.io.ByteArrayInputStream(syn.bytes), output, 100))
+                assertEquals(0x12, output.toByteArray()[if (version == 4) 33 else 53].toInt() and 255)
+                bridge.close()
+                assertFalse(bridge.pumpOneTunPacket(
+                    java.io.ByteArrayInputStream(syn.bytes), output, 101))
+            }
+        }
+    }
+
     @Test fun authenticatedLoopbackConnectCarriesIpv4AndIpv6TunTcpBytes() {
         // Real TLS and CONNECT framing, but only a local test peer: no Android
         // VPN, real gateway deployment, or destination HTTPS is exercised.

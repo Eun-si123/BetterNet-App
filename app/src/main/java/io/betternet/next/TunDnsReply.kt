@@ -152,7 +152,7 @@ internal fun writeOneDnsTunReply(
  * questions rather than returning a same-ID answer for a different name/type.
  * This is correlation, not upstream authentication or full DNS validation.
  */
-private fun hasMatchingDnsQuestion(
+internal fun hasMatchingDnsQuestion(
     queryPacket: ByteArray, queryStart: Int, queryEnd: Int, response: ByteArray,
 ): Boolean {
     val queryLength = queryEnd - queryStart

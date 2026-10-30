@@ -2,6 +2,8 @@ package io.betternet.next
 
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.net.InetAddress
+import java.net.Inet6Address
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketTimeoutException
@@ -26,8 +28,48 @@ internal fun connectAuthenticatedTestTunnel(
     tlsFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
     bind: (Socket) -> Unit = {},
 ): SSLSocket {
-    // Fail before any socket creation on malformed destination or credential.
     require(isValidGatewayName(destinationHost)) { "Invalid test destination" }
+    return connectAuthenticatedTestTunnelAuthority(
+        gatewayAddress, gatewayName, timeoutMs, protect, destinationHost,
+        destinationPort, bearerToken, tlsFactory, bind
+    )
+}
+
+/** Use a DNS-authorized numeric IP as CONNECT authority, not a second gateway DNS lookup. */
+internal fun connectAuthenticatedPinnedIpTestTunnel(
+    gatewayAddress: InetSocketAddress,
+    gatewayName: String,
+    timeoutMs: Int,
+    protect: (Socket) -> Boolean,
+    destinationIp: InetAddress,
+    destinationPort: Int,
+    bearerToken: String,
+    tlsFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
+    bind: (Socket) -> Unit = {},
+): SSLSocket {
+    require(destinationIp !is Inet6Address || destinationIp.scopeId == 0) {
+        "Scoped IPv6 destinations are not supported"
+    }
+    val numericHost = if (destinationIp is Inet6Address) "[${destinationIp.hostAddress}]"
+        else destinationIp.hostAddress
+    return connectAuthenticatedTestTunnelAuthority(
+        gatewayAddress, gatewayName, timeoutMs, protect, numericHost,
+        destinationPort, bearerToken, tlsFactory, bind
+    )
+}
+
+private fun connectAuthenticatedTestTunnelAuthority(
+    gatewayAddress: InetSocketAddress,
+    gatewayName: String,
+    timeoutMs: Int,
+    protect: (Socket) -> Boolean,
+    authorityHost: String,
+    destinationPort: Int,
+    bearerToken: String,
+    tlsFactory: SSLSocketFactory,
+    bind: (Socket) -> Unit,
+): SSLSocket {
+    // Validate all untrusted request fields before opening any socket.
     require(destinationPort in 1..65535) { "Invalid test port" }
     // Base64url opaque tokens only; never interpolate untrusted CR/LF into HTTP.
     require(bearerToken.length in 16..256 &&
@@ -39,7 +81,7 @@ internal fun connectAuthenticatedTestTunnel(
         gatewayAddress, gatewayName, timeoutMs, protect, tlsFactory = tlsFactory, bind = bind
     )
     try {
-        val authority = "$destinationHost:$destinationPort"
+        val authority = "$authorityHost:$destinationPort"
         val request = "CONNECT $authority HTTP/1.1\r\n" +
             "Host: $authority\r\n" +
             "Proxy-Authorization: Bearer $bearerToken\r\n\r\n"
