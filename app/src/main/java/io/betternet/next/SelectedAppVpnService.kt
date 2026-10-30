@@ -30,6 +30,24 @@ class SelectedAppVpnService : VpnService() {
         }
     }
 
+    /**
+     * Dormant test-only TUN configuration: one selected app and only two
+     * single-host routes (approved HTTPS destination + virtual DNS endpoint).
+     * This does not establish a TUN or request Android VPN consent.
+     */
+    internal fun newRestrictedTestTunBuilder(
+        selectedPackage: String?, plan: RestrictedTestTunPlan,
+    ): Builder {
+        val builder = newSelectedAppBuilder(selectedPackage)
+        applyRestrictedTestTunPlan(plan,
+            addAddress = { address, prefix -> builder.addAddress(address, prefix); Unit },
+            addRoute = { address, prefix -> builder.addRoute(address, prefix); Unit },
+            addDnsServer = { address -> builder.addDnsServer(address); Unit },
+            setMtu = { mtu -> builder.setMtu(mtu); Unit },
+        )
+        return builder
+    }
+
     /** A future TLS gateway dial must protect its socket before connecting. */
     internal fun newProtectedGatewaySocket(address: InetSocketAddress, timeoutMs: Int): Socket =
         connectProtectedSocket(address, timeoutMs, { socket -> protect(socket) })
@@ -203,4 +221,51 @@ internal fun <T> connectWithGatewayAddressFallback(
         }
     }
     throw lastFailure ?: SocketTimeoutException("Gateway address attempts exceeded deadline")
+}
+
+/**
+ * A single-family, owner-approved test-only routing plan. This does NOT
+ * authorize a destination by itself: the DNS/TCP gateway path must still
+ * check its independent allowlist and authenticated transport.
+ */
+internal data class RestrictedTestTunPlan(
+    val clientAddress: InetAddress,
+    val virtualDnsAddress: InetAddress,
+    val allowedHttpsAddress: InetAddress,
+    val mtu: Int,
+) {
+    init {
+        require(mtu in 1280..9000) { "Test TUN MTU must be bounded" }
+        val addresses = listOf(clientAddress, virtualDnsAddress, allowedHttpsAddress)
+        require(addresses.all { it.address.size == clientAddress.address.size }) {
+            "Test TUN routes must use one IP family"
+        }
+        require(addresses.distinct().size == addresses.size) {
+            "Test TUN addresses must be distinct"
+        }
+        require(addresses.none {
+            it.isAnyLocalAddress || it.isLoopbackAddress ||
+                it.isMulticastAddress || it.isLinkLocalAddress
+        }) { "Invalid test TUN address" }
+    }
+}
+
+/**
+ * Isolated builder seam for exact-route regression tests. Never add a
+ * default route (0/0), and ensure the DNS endpoint is actually routed into
+ * the selected-app TUN rather than accidentally using underlying DNS.
+ */
+internal fun applyRestrictedTestTunPlan(
+    plan: RestrictedTestTunPlan,
+    addAddress: (InetAddress, Int) -> Unit,
+    addRoute: (InetAddress, Int) -> Unit,
+    addDnsServer: (InetAddress) -> Unit,
+    setMtu: (Int) -> Unit,
+) {
+    val prefix = plan.clientAddress.address.size * 8
+    addAddress(plan.clientAddress, prefix)
+    addRoute(plan.virtualDnsAddress, prefix)
+    addRoute(plan.allowedHttpsAddress, prefix)
+    addDnsServer(plan.virtualDnsAddress)
+    setMtu(plan.mtu)
 }
