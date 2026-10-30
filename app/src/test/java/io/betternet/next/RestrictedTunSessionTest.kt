@@ -5,6 +5,10 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.net.InetAddress
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -99,4 +103,39 @@ class RestrictedTunSessionTest {
         session.close()
         assertEquals(1, releases)
     }
+
+    @Test fun crossThreadStopUnblocksTunReadAndReleasesDescriptorOnce() {
+        val entered = CountDownLatch(1)
+        val interrupted = CountDownLatch(1)
+        val releases = AtomicInteger()
+        val blocked = object : InputStream() {
+            override fun read(): Int = throw IOException("Use packet read")
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                entered.countDown()
+                if (!interrupted.await(3, TimeUnit.SECONDS)) {
+                    throw IOException("TUN read did not unblock")
+                }
+                throw IOException("TUN descriptor closed")
+            }
+        }
+        val session = RestrictedTunSession(
+            dispatcher(4), blocked, ByteArrayOutputStream(),
+            { releases.incrementAndGet(); interrupted.countDown() },
+        )
+        val worker = Executors.newSingleThreadExecutor()
+        try {
+            val result = worker.submit<Boolean> { session.pumpOneTunPacket(100) }
+            assertTrue("Worker never entered TUN read", entered.await(3, TimeUnit.SECONDS))
+            session.requestStop() // Android lifecycle callback, not the pump owner.
+            assertFalse(result.get(3, TimeUnit.SECONDS))
+            assertFalse(session.pumpOneTunPacket(101))
+            session.requestStop()
+            session.close()
+            assertEquals(1, releases.get())
+        } finally {
+            interrupted.countDown()
+            worker.shutdownNow()
+        }
+    }
+
 }
