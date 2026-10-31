@@ -41,13 +41,23 @@ internal class RestrictedTunWorker(private val pump: RestrictedTunPump) {
 
     fun requestStop() = pump.requestStop()
 
-    /** True only after the owner has completed its dispatcher/fd cleanup. */
+    /** Request cancellation, then wait for owner-thread cleanup. */
     fun stopAndJoin(timeoutMs: Long): Boolean {
+        validateJoin(timeoutMs)
+        requestStop()
+        return awaitStopped(timeoutMs)
+    }
+
+    /** Observe natural completion/failure without cancelling an active worker. */
+    fun awaitStopped(timeoutMs: Long): Boolean {
+        validateJoin(timeoutMs)
+        owner.join(timeoutMs)
+        return !owner.isAlive
+    }
+
+    private fun validateJoin(timeoutMs: Long) {
         require(timeoutMs in 1..10_000) { "TUN worker join must be bounded" }
         check(started.get()) { "TUN worker has not started" }
         check(Thread.currentThread() !== owner) { "TUN worker cannot join itself" }
-        requestStop()
-        owner.join(timeoutMs)
-        return !owner.isAlive
     }
 }

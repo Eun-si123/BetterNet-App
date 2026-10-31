@@ -92,11 +92,11 @@ class RestrictedTunWorkerTest {
             })
         val worker = RestrictedTunWorker(RestrictedTunPump(session) { 100L })
         worker.start()
-        // Ensure the failing poll ran before stopAndJoin requests cancellation;
-        // otherwise the test could legitimately stop a healthy, idle worker.
+        // Observe the natural failure without racing a cancellation against it.
         assertTrue(enteredPoll.await(3, TimeUnit.SECONDS))
-        assertTrue(worker.stopAndJoin(3000))
+        assertTrue(worker.awaitStopped(3000))
         assertEquals("poll failed", (worker.failure as IOException).message)
+        assertTrue(worker.stopAndJoin(3000)) // Idempotent after completion.
         assertEquals(1, closes.get())
     }
 
