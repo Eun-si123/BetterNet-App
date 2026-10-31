@@ -203,10 +203,16 @@ class SelectedAppVpnServiceTest {
             },
             { address, timeout ->
                 attempted.add("${address.address.hostAddress}:$timeout")
-                if (address.address == ipv6) {
-                    clock += 300_000_000L
-                    throw NoRouteToHostException("IPv6 path unavailable")
-                }
+                connectProtectedSocket(address, timeout, { true }, {
+                    object : Socket() {
+                        override fun connect(endpoint: SocketAddress?, timeout: Int) {
+                            if (address.address == ipv6) {
+                                clock += 300_000_000L
+                                throw NoRouteToHostException("IPv6 path unavailable")
+                            }
+                        }
+                    }
+                }).close()
                 address
             },
             { clock },
@@ -280,12 +286,21 @@ class SelectedAppVpnServiceTest {
                 { _, timeout ->
                     attempts++
                     assertEquals(900, timeout)
-                    throw ConnectException("unreachable")
+                    connectProtectedSocket(
+                        resolvedGateway, timeout, { true }, {
+                            object : Socket() {
+                                override fun connect(endpoint: SocketAddress?, timeout: Int) {
+                                    throw ConnectException("unreachable")
+                                }
+                            }
+                        },
+                    )
                 },
                 { clock },
             )
             fail("All addresses failed")
-        } catch (_: ConnectException) {
+        } catch (failure: IOException) {
+            assertTrue(failure.cause is ConnectException)
             assertEquals(4, attempts)
         }
         attempts = 0
@@ -342,6 +357,30 @@ class SelectedAppVpnServiceTest {
         } catch (failure: SocketTimeoutException) {
             assertTrue(failure === postConnectTimeout)
             assertEquals(1, attempts)
+        }
+    }
+
+    @Test fun postConnectReachabilityExceptionsNeverReplayGatewayCredentials() {
+        // A TLS/CONNECT layer can also throw these IOException subclasses.
+        // Only failures tagged by connectProtectedSocket's TCP dial may retry.
+        val ipv6 = InetAddress.getByAddress(ByteArray(16).apply { this[15] = 1 })
+        val ipv4 = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
+        for (failure in listOf(
+            ConnectException("Connection failed after authentication"),
+            NoRouteToHostException("Route lost after authentication"),
+        )) {
+            var attempts = 0
+            try {
+                connectWithGatewayAddressFallback(
+                    "gateway.example", 443, 1_000,
+                    { arrayOf(ipv6, ipv4) },
+                    { _, _ -> attempts++; throw failure },
+                )
+                fail("Post-connect failure must not retry credentials")
+            } catch (caught: IOException) {
+                assertTrue(caught === failure)
+                assertEquals(1, attempts)
+            }
         }
     }
 

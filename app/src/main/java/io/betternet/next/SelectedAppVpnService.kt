@@ -201,10 +201,14 @@ internal fun connectProtectedSocket(
         try {
             socket.connect(address, timeoutMs)
         } catch (failure: SocketTimeoutException) {
-            // Only a TCP connect timeout may trigger another resolved-address
-            // attempt. A TLS handshake or authenticated CONNECT timeout must
-            // not replay the credential or start another gateway connection.
+            // Only failures raised by the actual TCP connect are retryable.
+            // The same exception types can occur later, after credentials
+            // have been sent, and must never replay an authenticated CONNECT.
             throw GatewayTcpConnectTimeout(failure)
+        } catch (failure: ConnectException) {
+            throw GatewayTcpConnectFailure(failure)
+        } catch (failure: NoRouteToHostException) {
+            throw GatewayTcpConnectFailure(failure)
         }
         return socket
     } catch (failure: Throwable) {
@@ -221,6 +225,9 @@ private class GatewayTcpConnectTimeout(cause: SocketTimeoutException) :
     SocketTimeoutException("Gateway TCP connect timed out") {
     init { initCause(cause) }
 }
+
+private class GatewayTcpConnectFailure(cause: IOException) :
+    IOException("Gateway TCP connect failed", cause)
 
 /** DNS must be performed by the chosen underlying Network, never system DNS. */
 internal fun resolveGatewayAddress(
@@ -240,8 +247,9 @@ private fun resolveGatewayAddresses(
 
 /**
  * One shared timeout across a bounded IPv6/IPv4 address list. Retry only
- * TCP connect reachability failures; never retry a TLS handshake/CONNECT
- * timeout, TLS identity failure, failed protection or network binding.
+ * failures explicitly tagged at the TCP connect boundary; never retry a
+ * TLS handshake/CONNECT error (even ConnectException), TLS identity failure,
+ * failed protection or network binding.
  * The dial callback must close each failed socket before throwing.
  */
 internal fun <T> connectWithGatewayAddressFallback(
@@ -262,7 +270,7 @@ internal fun <T> connectWithGatewayAddressFallback(
         try {
             return dial(address, attemptTimeout)
         } catch (failure: IOException) {
-            if (failure !is ConnectException && failure !is NoRouteToHostException &&
+            if (failure !is GatewayTcpConnectFailure &&
                 failure !is GatewayTcpConnectTimeout) throw failure
             lastFailure = failure
         }
