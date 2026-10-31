@@ -43,6 +43,9 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     private data class ForwardedSegment(val sequence: Long, val payload: ByteArray)
     private var lastForwardedSegment: ForwardedSegment? = null
     private var receiveWindow = 0
+    // Peer receive capacity is independent of the small window WE advertise.
+    // Our SYN-ACK does not negotiate window scaling, so this is unscaled.
+    private var peerReceiveWindow = 0
     private var clientHalfClosed = false
     private var lastSeenAt = -1L
 
@@ -76,6 +79,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         pendingClientPayload = null
         lastForwardedSegment = null
         receiveWindow = clientWindow
+        peerReceiveWindow = read16(syn.bytes, offset + 14)
         clientHalfClosed = false
         lastSeenAt = nowMillis
         return synAck
@@ -101,6 +105,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             read32(bytes, offset + 4) != expected.clientNext ||
             read32(bytes, offset + 8) != expected.serverNext) return false
         acked = true
+        peerReceiveWindow = read16(bytes, offset + 14)
         return true
     }
 
@@ -143,6 +148,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             responseSentAt = -1L
             responseRetries = 0
         }
+        peerReceiveWindow = read16(bytes, offset + 14)
         pendingClientPayload = staged
         return staged.copyOf()
     }
@@ -218,6 +224,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             read32(bytes, offset + 8) != current.serverNext ||
             ((previous.sequence + previous.payload.size) and 0xffff_ffffL) != current.clientNext ||
             !bytes.copyOfRange(offset + 20, bytes.size).contentEquals(previous.payload)) return null
+        peerReceiveWindow = read16(bytes, offset + 14)
         return buildTcpDeliveryAck(
             current.destination, current.source,
             current.destinationPort, current.sourcePort,
@@ -236,7 +243,8 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         val current = flow ?: return null
         if (!acked || serverFinPending || serverHalfClosed ||
             pendingResponseBytes != 0 || pendingClientPayload != null ||
-            payload.size > current.maxServerPayloadBytes) return null
+            payload.isEmpty() || payload.size > current.maxServerPayloadBytes ||
+            payload.size > peerReceiveWindow) return null
         val reply = buildTcpDataReply(
             current.destination, current.source,
             current.destinationPort, current.sourcePort,
@@ -288,7 +296,12 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         if (!acked || serverFinPending || serverHalfClosed ||
             pendingResponseBytes != 0 || pendingClientPayload != null) return null
         val ipBytes = if (current.source.address.size == 4) 20 else 40
-        val buffer = ByteArray(minOf(current.maxServerPayloadBytes, mtu - ipBytes - 20))
+        // Never consume bytes that cannot fit in the peer's advertised window:
+        // an authenticated gateway stream cannot be un-read after a large read.
+        val permitted = minOf(current.maxServerPayloadBytes, mtu - ipBytes - 20,
+            peerReceiveWindow)
+        if (permitted == 0) return null
+        val buffer = ByteArray(permitted)
         val read = try {
             tunnelInput.read(buffer, 0, buffer.size)
         } catch (_: SocketTimeoutException) {
@@ -357,6 +370,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             read32(bytes, offset + 8) !=
                 ((current.serverNext + consumed) and 0xffff_ffffL)) return false
         flow = current.copy(serverNext = (current.serverNext + consumed) and 0xffff_ffffL)
+        peerReceiveWindow = read16(bytes, offset + 14)
         pendingResponseBytes = 0
         if (serverFinPending) serverHalfClosed = true
         serverFinPending = false
@@ -364,6 +378,34 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         responseSentAt = -1L
         responseRetries = 0
         if (serverHalfClosed && clientHalfClosed) close()
+        return true
+    }
+
+    /**
+     * A zero-window peer may reopen its receive window with a pure ACK even
+     * when no response is pending. Require the exact tuple, sequence and ACK;
+     * malformed or stale packets cannot grant additional send credit.
+     */
+    fun acceptWindowUpdate(packet: TunIngressResult.Packet, nowMillis: Long): Boolean {
+        expire(nowMillis)
+        val current = flow ?: return false
+        if (!acked || serverFinPending || serverHalfClosed ||
+            pendingResponseBytes != 0 || pendingClientPayload != null) return false
+        val bytes = packet.bytes
+        val header = parseTunPacketHeader(bytes, bytes.size) ?: return false
+        if (header.protocol != 6 || header.source != current.source ||
+            header.destination != current.destination ||
+            header.sourcePort != current.sourcePort ||
+            header.destinationPort != current.destinationPort ||
+            header.transportHeaderBytes != 20 ||
+            header.transportOffset + 20 != bytes.size) return false
+        val offset = header.transportOffset
+        if ((bytes[offset + 12].toInt() and 15) != 0 ||
+            (bytes[offset + 13].toInt() and 255) != 0x10 ||
+            read16(bytes, offset + 18) != 0 ||
+            read32(bytes, offset + 4) != current.clientNext ||
+            read32(bytes, offset + 8) != current.serverNext) return false
+        peerReceiveWindow = read16(bytes, offset + 14)
         return true
     }
 
@@ -474,6 +516,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         pendingClientPayload = null
         lastForwardedSegment = null
         receiveWindow = 0
+        peerReceiveWindow = 0
         clientHalfClosed = false
         lastSeenAt = -1L
     }

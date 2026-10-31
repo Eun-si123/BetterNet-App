@@ -1476,4 +1476,83 @@ class TunTcpSynAckTest {
             assertEquals(1, releases)
         }
     }
+
+    /** Recompute both checksums after changing the TCP peer's receive window. */
+    private fun withPeerWindow(packet: TunIngressResult.Packet, window: Int): TunIngressResult.Packet {
+        require(window in 0..65535)
+        val version = packet.header.ipVersion
+        val ip = if (version == 4) 20 else 40
+        val bytes = packet.bytes.clone()
+        put16(bytes, ip + 14, window)
+        put16(bytes, ip + 16, 0)
+        put16(bytes, ip + 16, tcpChecksum(bytes, version))
+        return TunIngressResult.Packet(bytes, parseTunPacketHeader(bytes, bytes.size)!!)
+    }
+
+    @Test fun peerZeroAndSmallReceiveWindowsBoundGatewayReadsAndDirectOffers() {
+        for (version in listOf(4, 6)) for (initialWindow in listOf(0, 1, 16)) {
+            val syn = request(version)
+            val state = OfflineTcpHandshake()
+            assertNotNull(state.begin(syn, 123L, 1280, 100))
+            assertTrue(state.acceptFinalAck(
+                withPeerWindow(finalAck(syn, 123L), initialWindow), 101))
+            val upstream = ByteArrayInputStream(ByteArray(40) { it.toByte() })
+            assertNull(state.offerResponse(ByteArray(initialWindow + 1), 1280, 102))
+            if (initialWindow == 0) {
+                assertNull(state.readTunnelResponse(upstream, 1280, 103))
+                assertEquals(40, upstream.available()) // no premature consumption
+            } else {
+                val reply = state.readTunnelResponse(upstream, 1280, 103)!!
+                val ip = if (version == 4) 20 else 40
+                assertEquals(initialWindow, reply.size - ip - 20)
+                assertEquals(40 - initialWindow, upstream.available())
+                assertEquals(0, tcpChecksum(reply, version))
+                assertTrue(state.acceptResponseAck(withPeerWindow(
+                    finalAck(syn, 123L, acknowledgement = 124L + initialWindow), 0), 104))
+                assertNull(state.readTunnelResponse(upstream, 1280, 105))
+                assertEquals(40 - initialWindow, upstream.available())
+            }
+            val nextAck = 124L + initialWindow
+            val stale = withPeerWindow(finalAck(syn, 123L,
+                acknowledgement = nextAck + 1), 16)
+            assertFalse(state.acceptWindowUpdate(stale, 106))
+            assertNull(state.readTunnelResponse(upstream, 1280, 107))
+            assertTrue(state.acceptWindowUpdate(withPeerWindow(
+                finalAck(syn, 123L, acknowledgement = nextAck), 16), 108))
+            val resumed = state.readTunnelResponse(upstream, 1280, 109)!!
+            val ip = if (version == 4) 20 else 40
+            assertEquals(16, resumed.size - ip - 20)
+            assertEquals(0, tcpChecksum(resumed, version))
+        }
+    }
+
+    @Test fun bridgeProcessesPureWindowUpdateWithoutOpeningAnotherGateway() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val upstream = ByteArrayInputStream(byteArrayOf(1, 2, 3))
+            val output = ByteArrayOutputStream()
+            val bridge = OfflineTcpTunBridge(upstream, ByteArrayOutputStream(),
+                1280, 123L, allowedDestination = syn.header.destination)
+            try {
+                assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes), output, 100))
+                assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(
+                    withPeerWindow(finalAck(syn, 123L), 0).bytes), output, 101))
+                assertFalse(bridge.pumpOneGatewayReply(output, 102))
+                assertEquals(3, upstream.available())
+                val wrong = withPeerWindow(finalAck(syn, 123L,
+                    acknowledgement = 125L), 16)
+                assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(wrong.bytes), output, 103))
+                assertFalse(bridge.pumpOneGatewayReply(output, 104))
+                assertEquals(3, upstream.available())
+                val reopened = withPeerWindow(finalAck(syn, 123L), 1)
+                assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(reopened.bytes), output, 105))
+                assertTrue(bridge.pumpOneGatewayReply(output, 106))
+                assertEquals(2, upstream.available())
+                val reply = output.toByteArray()
+                val ip = if (version == 4) 20 else 40
+                assertEquals(1, reply.last().toInt())
+                assertEquals(0, tcpChecksum(reply.copyOfRange(reply.size - ip - 21, reply.size), version))
+            } finally { bridge.close() }
+        }
+    }
 }
