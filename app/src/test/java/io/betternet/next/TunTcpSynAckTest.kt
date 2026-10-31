@@ -907,6 +907,48 @@ class TunTcpSynAckTest {
         assertNull(flow.offerResponse(byteArrayOf(1), 1280, 5))
     }
 
+    @Test fun gatewayReadCrossingFlowDeadlineCannotEmitStaleDataOrFin() {
+        // Reproduce the old pre-read timestamp bug: a bounded upstream read
+        // completes after the 15-second lease, but before the next TUN cycle.
+        for (version in listOf(4, 6)) {
+            for (outcome in listOf("data", "eof", "timeout")) {
+                val syn = request(version)
+                var clock = 102L
+                var reads = 0
+                var closes = 0
+                val input = object : InputStream() {
+                    override fun read(): Int = throw AssertionError("Use bounded read")
+                    override fun read(b: ByteArray, off: Int, len: Int): Int {
+                        reads++
+                        clock = 15_101L
+                        return when (outcome) {
+                            "data" -> { b[off] = 42; 1 }
+                            "eof" -> -1
+                            else -> throw SocketTimeoutException("read crossed deadline")
+                        }
+                    }
+                }
+                val tun = ByteArrayOutputStream()
+                val bridge = OfflineTcpTunBridge(
+                    input, ByteArrayOutputStream(), 1280, 123L,
+                    allowedDestination = syn.header.destination,
+                    onClose = { closes++ },
+                )
+                assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes), tun, 100))
+                assertTrue(bridge.pumpOneTunPacket(
+                    ByteArrayInputStream(finalAck(syn, 123L).bytes), tun, 101
+                ))
+                tun.reset()
+                assertFalse(bridge.pumpOneGatewayReply(tun) { clock })
+                assertEquals("Expired $outcome must not reach TUN", 0, tun.size())
+                assertEquals(1, reads)
+                assertEquals(1, closes)
+                assertFalse(bridge.pumpOneGatewayReply(tun) { clock })
+                assertEquals(1, closes)
+            }
+        }
+    }
+
     @Test fun gatewayReadTimeoutIsIdleNotFinAndLaterReplyStillWorksForBothIpFamilies() {
         for (version in listOf(4, 6)) {
             val syn = request(version)

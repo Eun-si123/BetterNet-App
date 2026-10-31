@@ -289,9 +289,15 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
      * flow; a zero-byte read does not advance it. Clean EOF produces a FIN packet,
      * which must be acknowledged before the flow can finish; no VPN is created.
      */
-    fun readTunnelResponse(tunnelInput: InputStream, mtu: Int, nowMillis: Long): ByteArray? {
+    fun readTunnelResponse(tunnelInput: InputStream, mtu: Int, nowMillis: Long): ByteArray? =
+        readTunnelResponse(tunnelInput, mtu) { nowMillis }
+
+    /** Sample again after the potentially blocking gateway read. */
+    internal fun readTunnelResponse(
+        tunnelInput: InputStream, mtu: Int, nowMillis: () -> Long,
+    ): ByteArray? {
         require(mtu in 1280..9000) { "TUN MTU must support IPv6 and be bounded" }
-        expire(nowMillis)
+        expire(nowMillis())
         val current = flow ?: return null
         if (!acked || serverFinPending || serverHalfClosed ||
             pendingResponseBytes != 0 || pendingClientPayload != null) return null
@@ -305,8 +311,9 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         val read = try {
             tunnelInput.read(buffer, 0, buffer.size)
         } catch (_: SocketTimeoutException) {
-            // An idle authenticated TLS tunnel is not EOF or a failed stream.
-            // Let the single owner service TUN ACKs and retransmission timers.
+            // A timed-out read can cross the fixed flow lease. Retire it using
+            // the clock AFTER the wait, not the stale pre-read timestamp.
+            expire(nowMillis())
             return null
         } catch (failure: IOException) {
             close()
@@ -315,6 +322,11 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             }
             throw failure
         }
+        // Gateway reads can block for 200ms or longer in offline tests.
+        // Never emit stale response bytes or a FIN after the flow deadline.
+        val completedAt = nowMillis()
+        expire(completedAt)
+        if (flow == null) return null
         if (read < 0) {
             // EOF closes only the gateway-to-client half, not the client's TCP
             // half. Do not send a FIN if cleanup failed or state expired.
@@ -331,7 +343,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             ) ?: run { close(); return null }
             serverFinPending = true
             pendingResponsePacket = fin.copyOf()
-            responseSentAt = nowMillis
+            responseSentAt = completedAt
             responseRetries = 0
             return fin
         }
@@ -345,7 +357,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             }
             throw failure
         }
-        return offerResponse(buffer.copyOf(read), mtu, nowMillis)
+        return offerResponse(buffer.copyOf(read), mtu, completedAt)
     }
 
     /** Advance the server sequence only on an exact, checksummed peer ACK. */

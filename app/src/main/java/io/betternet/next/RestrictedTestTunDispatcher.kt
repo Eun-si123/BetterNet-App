@@ -85,7 +85,10 @@ internal class RestrictedTestTunDispatcher(
     }
 
     /** Caller must schedule bounded gateway reads, not block the TUN reader indefinitely. */
-    fun pumpOneGatewayReply(output: OutputStream, nowMillis: Long): Boolean = try {
+    fun pumpOneGatewayReply(output: OutputStream, nowMillis: Long): Boolean =
+        pumpOneGatewayReply(output) { nowMillis }
+
+    internal fun pumpOneGatewayReply(output: OutputStream, nowMillis: () -> Long): Boolean = try {
         if (!closed) bridge?.pumpOneGatewayReply(output, nowMillis) ?: false else false
     } catch (failure: Exception) {
         try { close() } catch (closeFailure: Exception) { failure.addSuppressed(closeFailure) }

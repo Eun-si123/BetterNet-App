@@ -186,10 +186,18 @@ internal class OfflineTcpTunBridge(
     }
 
     /** May block; caller must provide a bounded tunnel read timeout and a ready flow. */
-    fun pumpOneGatewayReply(tunOutput: OutputStream, nowMillis: Long): Boolean {
+    fun pumpOneGatewayReply(tunOutput: OutputStream, nowMillis: Long): Boolean =
+        pumpOneGatewayReply(tunOutput) { nowMillis }
+
+    internal fun pumpOneGatewayReply(tunOutput: OutputStream, nowMillis: () -> Long): Boolean {
         if (closed) return false
-        val emitted = emit(tunOutput) { tcp.readTunnelResponse(tunnelInput, mtu, nowMillis) }
-        retireIfFlowEnded(nowMillis)
+        val emitted = emit(tunOutput) {
+            val reply = tcp.readTunnelResponse(tunnelInput, mtu, nowMillis)
+            // Recheck immediately before writing to TUN: a blocked upstream
+            // read must not extend an expired authenticated flow.
+            if (reply != null && !tcp.hasLiveFlow(nowMillis())) null else reply
+        }
+        retireIfFlowEnded(nowMillis())
         return emitted
     }
 

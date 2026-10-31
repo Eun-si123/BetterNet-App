@@ -322,6 +322,60 @@ class RestrictedTestTunDispatcherTest {
         }
     }
 
+    @Test fun sessionCycleRefreshesClockAfterGatewayReadAndRetiresExpiredFlow() {
+        // The real session -> dispatcher -> bridge path must pass the clock
+        // callback through. A pre-read snapshot would emit stale gateway bytes.
+        for (version in listOf(4, 6)) {
+            val syn = packets.request(version)
+            val p = plan(syn)
+            val frames = listOf(udp(p), syn.bytes, packets.finalAck(syn, 123L).bytes)
+            var nextFrame = 0
+            var clock = 100L
+            var closes = 0
+            var descriptorCloses = 0
+            val input = object : java.io.InputStream() {
+                override fun read(): Int = throw AssertionError("Use packet read")
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    val frame = frames[nextFrame++]
+                    frame.copyInto(b, off)
+                    return frame.size
+                }
+            }
+            val dispatcher = RestrictedTestTunDispatcher(p,
+                { _, _ -> bindings.bindingFor(syn, 100) },
+                { approved, initial, output, time ->
+                    val upstream = object : java.io.InputStream() {
+                        override fun read(): Int = throw AssertionError("Use bounded read")
+                        override fun read(b: ByteArray, off: Int, len: Int): Int {
+                            clock = 15_101L // Expired while waiting for upstream bytes.
+                            b[off] = 42
+                            return 1
+                        }
+                    }
+                    OfflineTcpTunBridge(upstream, ByteArrayOutputStream(), p.mtu, 123L,
+                        allowedDestination = approved.address, onClose = { closes++ }).also {
+                        assertTrue(it.pumpOneTunPacket(ByteArrayInputStream(initial.bytes), output, time))
+                    }
+                })
+            val output = ByteArrayOutputStream()
+            val session = RestrictedTunSession(dispatcher, input, output,
+                { descriptorCloses++ }, waitForReadable = { nextFrame < frames.size })
+            try {
+                assertTrue(session.pumpOneCycle { clock }) // DNS authorization
+                assertTrue(session.pumpOneCycle { clock }) // SYN and SYN-ACK
+                output.reset()
+                assertTrue(session.pumpOneCycle { clock }) // ACK, then delayed read
+                assertEquals(0, output.size()) // No expired gateway data.
+                assertEquals(1, closes)
+                assertEquals(0, descriptorCloses)
+            } finally {
+                session.close()
+            }
+            assertEquals(1, descriptorCloses)
+            assertEquals(1, closes)
+        }
+    }
+
     @Test fun gatewayReadFailureClosesWholeDispatcher() {
         val syn = packets.request(4)
         val p = plan(syn)

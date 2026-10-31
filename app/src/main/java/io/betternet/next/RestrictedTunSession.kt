@@ -70,6 +70,9 @@ internal class RestrictedTunSession(
     }
 
     fun pumpOneGatewayReply(nowMillis: Long): Boolean =
+        pumpOneGatewayReply { nowMillis }
+
+    internal fun pumpOneGatewayReply(nowMillis: () -> Long): Boolean =
         guarded { dispatcher.pumpOneGatewayReply(output, nowMillis) }
 
     fun pumpPendingRetry(nowMillis: Long): Boolean =
@@ -89,7 +92,7 @@ internal class RestrictedTunSession(
         if (stopRequested.get()) { close(); return false }
         if (!pumpOneTunPacket(nowMillis)) return false
         if (closed || stopRequested.get()) { close(); return false }
-        pumpOneGatewayReply(nowMillis()) // No reply yet is not terminal.
+        pumpOneGatewayReply(nowMillis) // Refresh again after the bounded gateway read.
         if (closed || stopRequested.get()) { close(); return false }
         pumpPendingRetry(nowMillis())
         if (closed || stopRequested.get()) { close(); return false }
