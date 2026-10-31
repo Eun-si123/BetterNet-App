@@ -83,12 +83,18 @@ class RestrictedTunWorkerTest {
 
     @Test fun workerCapturesFailureAndCleansUpWithoutUncaughtCrash() {
         val closes = AtomicInteger()
+        val enteredPoll = CountDownLatch(1)
         val session = RestrictedTunSession(dispatcher(), forbiddenInput,
             ByteArrayOutputStream(), { closes.incrementAndGet() },
-            waitForReadable = { throw IOException("poll failed") })
+            waitForReadable = {
+                enteredPoll.countDown()
+                throw IOException("poll failed")
+            })
         val worker = RestrictedTunWorker(RestrictedTunPump(session) { 100L })
         worker.start()
-        // A finished worker can be joined after cancellation without hiding failure.
+        // Ensure the failing poll ran before stopAndJoin requests cancellation;
+        // otherwise the test could legitimately stop a healthy, idle worker.
+        assertTrue(enteredPoll.await(3, TimeUnit.SECONDS))
         assertTrue(worker.stopAndJoin(3000))
         assertEquals("poll failed", (worker.failure as IOException).message)
         assertEquals(1, closes.get())
