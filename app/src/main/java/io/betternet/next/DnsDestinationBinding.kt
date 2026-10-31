@@ -123,6 +123,10 @@ internal fun connectDnsBoundTestTcpBridge(
         bearerToken, tlsFactory = tlsFactory, bind = bind
     )
     return try {
+        // CONNECT has its own whole-response deadline. Once authenticated,
+        // a long gateway read must not starve TUN ACKs, retries or cancellation.
+        // A read timeout means "no bytes yet", not EOF or a second CONNECT.
+        tunnel.soTimeout = 200
         val bridge = OfflineTcpTunBridge(tunnel.inputStream, tunnel.outputStream, mtu, serverIsn,
             allowedDestination = binding.address, onClose = { tunnel.close() })
         check(bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes), tunOutput, nowMillis)) {

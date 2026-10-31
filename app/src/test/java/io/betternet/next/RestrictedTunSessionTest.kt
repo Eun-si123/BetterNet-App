@@ -164,6 +164,44 @@ class RestrictedTunSessionTest {
         }
     }
 
+    @Test fun oneCycleRefreshesClockAndStopsBeforeGatewayAfterTunEof() {
+        val syn = TunTcpSynAckTest().request(4)
+        var releases = 0
+        var clockReads = 0
+        val session = RestrictedTunSession(
+            dispatcher(4), ByteArrayInputStream(syn.bytes),
+            ByteArrayOutputStream(), { releases++ }, waitForReadable = { true },
+        )
+        val clock = { (++clockReads).toLong() }
+        assertTrue(session.pumpOneCycle(clock))
+        assertEquals(3, clockReads) // TUN, gateway, retry use fresh timestamps.
+        assertFalse(session.pumpOneCycle(clock)) // EOF; no gateway or retry.
+        assertEquals(4, clockReads)
+        assertEquals(1, releases)
+        assertFalse(session.pumpOneCycle(clock)) // Closed: do not even read clock.
+        assertEquals(4, clockReads)
+    }
+
+    @Test fun oneCycleHonorsStopBetweenTunAndGatewayWithoutAnotherPoll() {
+        val syn = TunTcpSynAckTest().request(6)
+        var releases = 0
+        var clockReads = 0
+        lateinit var session: RestrictedTunSession
+        session = RestrictedTunSession(
+            dispatcher(6), ByteArrayInputStream(syn.bytes),
+            ByteArrayOutputStream(), { releases++ }, waitForReadable = { true },
+        )
+        assertFalse(session.pumpOneCycle {
+            clockReads++
+            if (clockReads == 2) session.requestStop()
+            clockReads.toLong()
+        })
+        assertEquals(2, clockReads) // Retry must not run after cancellation.
+        assertEquals(1, releases)
+        session.close()
+        assertEquals(1, releases)
+    }
+
     @Test fun crossThreadStopHandlesInterruptibleTunReadAndReleasesDescriptorOnce() {
         val entered = CountDownLatch(1)
         val interrupted = CountDownLatch(1)

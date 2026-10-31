@@ -183,6 +183,7 @@ class GatewayTlsLoopbackTest {
             val tls = contexts()
             val syn = packets.request(version)
             val binding = DnsDestinationBindingTest().bindingFor(syn)
+            val firstIdleRead = java.util.concurrent.CountDownLatch(1)
             withServer(tls.server, { gateway ->
                 gateway.startHandshake()
                 val reader = gateway.inputStream.bufferedReader()
@@ -195,6 +196,10 @@ class GatewayTlsLoopbackTest {
                 gateway.outputStream.write("HTTP/1.1 200 OK\r\n\r\n".toByteArray())
                 gateway.outputStream.flush()
                 assertArrayEquals(requestBytes, gateway.inputStream.readNBytes(requestBytes.size))
+                // Hold the reply until the client observes a bounded idle read.
+                // An old multi-second timeout would starve this TUN pump.
+                assertTrue("Gateway read did not return within the bounded poll",
+                    firstIdleRead.await(2, TimeUnit.SECONDS))
                 gateway.outputStream.write(responseBytes)
                 gateway.outputStream.flush()
             }) { address ->
@@ -218,9 +223,17 @@ class GatewayTlsLoopbackTest {
                     assertEquals(requestBytes.size.toLong(), packets.u32(ack, ipLength + 8))
                     val received = java.io.ByteArrayOutputStream()
                     var now = 102L
+                    // A quiet TLS tunnel must return to the owner thread, not
+                    // wait for the whole CONNECT timeout or close the flow.
+                    assertFalse(bridge.pumpOneGatewayReply(tunOut, ++now))
+                    firstIdleRead.countDown()
+                    var idlePolls = 0
                     while (received.size() < responseBytes.size) {
                         tunOut.reset()
-                        assertTrue(bridge.pumpOneGatewayReply(tunOut, ++now))
+                        if (!bridge.pumpOneGatewayReply(tunOut, ++now)) {
+                            assertTrue("Gateway reply did not arrive", ++idlePolls < 12)
+                            continue
+                        }
                         val response = tunOut.toByteArray()
                         assertEquals(0, packets.tcpChecksum(response, version))
                         val payload = response.copyOfRange(ipLength + 20, response.size)
@@ -232,6 +245,7 @@ class GatewayTlsLoopbackTest {
                     }
                     assertArrayEquals(responseBytes, received.toByteArray())
                 } finally {
+                    firstIdleRead.countDown()
                     bridge.close()
                 }
             }

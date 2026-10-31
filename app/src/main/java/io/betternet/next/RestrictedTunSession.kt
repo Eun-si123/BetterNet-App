@@ -71,6 +71,27 @@ internal class RestrictedTunSession(
     fun pumpPendingRetry(nowMillis: Long): Boolean =
         guarded { dispatcher.pumpPendingRetry(output, nowMillis) }
 
+    /**
+     * A single serialized scheduling turn for a future consented test VPN.
+     * Refresh Android elapsedRealtime() before each phase: gateway reads can
+     * wait, and stale timestamps must never extend a flow or trigger retries.
+     * The TUN readiness poll and authenticated gateway read MUST both have
+     * short bounded waits (currently 100ms and 200ms respectively). The caller
+     * still owns the worker, cancellation, OS permission and socket binding.
+     * This method never starts a thread, VPN, or network connection.
+     */
+    fun pumpOneCycle(nowMillis: () -> Long): Boolean {
+        if (closed) return false
+        if (stopRequested.get()) { close(); return false }
+        if (!pumpOneTunPacket(nowMillis())) return false
+        if (closed || stopRequested.get()) { close(); return false }
+        pumpOneGatewayReply(nowMillis()) // No reply yet is not terminal.
+        if (closed || stopRequested.get()) { close(); return false }
+        pumpPendingRetry(nowMillis())
+        if (closed || stopRequested.get()) { close(); return false }
+        return true
+    }
+
     private inline fun guarded(action: () -> Boolean): Boolean {
         if (closed) return false
         if (stopRequested.get()) { close(); return false }
