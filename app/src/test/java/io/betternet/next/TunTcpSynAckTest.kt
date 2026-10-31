@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.net.SocketTimeoutException
 import java.io.OutputStream
 import org.junit.Assert.*
 import org.junit.Test
@@ -796,6 +797,72 @@ class TunTcpSynAckTest {
         assertTrue(closed)
         assertFalse(flow.isEstablished(4))
         assertNull(flow.offerResponse(byteArrayOf(1), 1280, 5))
+    }
+
+    @Test fun gatewayReadTimeoutIsIdleNotFinAndLaterReplyStillWorksForBothIpFamilies() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val upstream = ByteArrayOutputStream()
+            val reply = "HTTP/1.1 200 OK\r\n\r\n".toByteArray()
+            var reads = 0
+            var closes = 0
+            val input = object : InputStream() {
+                private val remaining = ByteArrayInputStream(reply)
+                override fun read(): Int = throw AssertionError("Use bounded buffer read")
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    reads++
+                    if (reads <= 2) throw SocketTimeoutException("idle gateway")
+                    return remaining.read(b, off, len)
+                }
+                override fun close() { closes++ }
+            }
+            val bridge = OfflineTcpTunBridge(input, upstream, 1280, 123L,
+                allowedDestination = syn.header.destination)
+            val tun = ByteArrayOutputStream()
+            try {
+                assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes), tun, 100))
+                assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(
+                    finalAck(syn, 123L).bytes), tun, 101))
+                tun.reset()
+                assertFalse(bridge.pumpOneGatewayReply(tun, 102))
+                assertFalse(bridge.pumpOneGatewayReply(tun, 103))
+                assertEquals(0, tun.size()) // no synthetic FIN or data on idle
+                assertEquals(0, closes)
+                assertFalse(bridge.pumpPendingRetry(tun, 104))
+                assertTrue(bridge.pumpOneGatewayReply(tun, 105))
+                val ip = if (version == 4) 20 else 40
+                assertArrayEquals(reply, tun.toByteArray().copyOfRange(ip + 20, tun.size()))
+                assertEquals(0, tcpChecksum(tun.toByteArray(), version))
+                assertEquals(3, reads)
+            } finally { bridge.close() }
+            assertEquals(1, closes)
+
+            // A peer that only times out must not hold the authenticated
+            // gateway past the fixed 15-second flow lease.
+            var expiredReads = 0
+            var expiredCloses = 0
+            val alwaysIdle = object : InputStream() {
+                override fun read(): Int = throw AssertionError("Use buffer read")
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    expiredReads++
+                    throw SocketTimeoutException("idle")
+                }
+                override fun close() { expiredCloses++ }
+            }
+            val stale = OfflineTcpTunBridge(alwaysIdle, ByteArrayOutputStream(),
+                1280, 123L, allowedDestination = syn.header.destination)
+            val staleTun = ByteArrayOutputStream()
+            assertTrue(stale.pumpOneTunPacket(ByteArrayInputStream(syn.bytes), staleTun, 100))
+            assertTrue(stale.pumpOneTunPacket(ByteArrayInputStream(
+                finalAck(syn, 123L).bytes), staleTun, 101))
+            staleTun.reset()
+            assertFalse(stale.pumpOneGatewayReply(staleTun, 102))
+            assertFalse(stale.pumpOneGatewayReply(staleTun, 15_100))
+            assertEquals(1, expiredReads) // lease expires before another read
+            assertEquals(1, expiredCloses)
+            assertEquals(0, staleTun.size())
+            assertFalse(stale.pumpOneGatewayReply(staleTun, 15_101))
+        }
     }
 
     @Test fun zeroLengthGatewayReadRetiresBridgeWithoutAckOrRetryForBothIpFamilies() {

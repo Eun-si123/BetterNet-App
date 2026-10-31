@@ -2,6 +2,7 @@ package io.betternet.next
 
 import java.io.InputStream
 import java.io.IOException
+import java.net.SocketTimeoutException
 import java.io.OutputStream
 
 /**
@@ -272,9 +273,12 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
      * CONNECT tunnel and prepare its TUN reply. Never consume stream bytes if
      * the flow cannot accept another unacknowledged response segment.
      *
-     * The caller must configure a bounded socket read timeout and serialize
-     * access to this offline flow. Read failure retires the flow; a zero-byte
-     * read does not advance it. Clean EOF produces a FIN packet,
+     * The caller must configure a short, bounded socket read timeout and
+     * serialize access to this offline flow. A read timeout means no gateway
+     * bytes are ready yet: retain the flow so the owner can pump TUN packets
+     * and retries before polling the gateway again. The fixed flow lease still
+     * expires even if the peer never responds. Other read failures retire the
+     * flow; a zero-byte read does not advance it. Clean EOF produces a FIN packet,
      * which must be acknowledged before the flow can finish; no VPN is created.
      */
     fun readTunnelResponse(tunnelInput: InputStream, mtu: Int, nowMillis: Long): ByteArray? {
@@ -287,6 +291,10 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         val buffer = ByteArray(minOf(current.maxServerPayloadBytes, mtu - ipBytes - 20))
         val read = try {
             tunnelInput.read(buffer, 0, buffer.size)
+        } catch (_: SocketTimeoutException) {
+            // An idle authenticated TLS tunnel is not EOF or a failed stream.
+            // Let the single owner service TUN ACKs and retransmission timers.
+            return null
         } catch (failure: IOException) {
             close()
             try { tunnelInput.close() } catch (closeFailure: IOException) {
