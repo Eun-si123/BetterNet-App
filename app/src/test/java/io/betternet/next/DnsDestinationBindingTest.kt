@@ -92,6 +92,40 @@ class DnsDestinationBindingTest {
         }
     }
 
+    @Test fun ednsQueryAcceptsOnlyMinimalCorrelatedOptResponse() {
+        // Common EDNS(0) queries carry one OPT; a normal resolver can echo
+        // an OPT after the answer. This must not make A1 DNS binding fail.
+        val opt = byteArrayOf(0, 0, 41, 4, 0xd0.toByte(), 0, 0, 0, 0, 0, 0)
+        for (version in listOf(4, 6)) {
+            val syn = TunTcpSynAckTest().request(version)
+            val base = query(if (version == 4) 1 else 28)
+            val ednsQuery = base.clone().apply { this[11] = 1 } + opt
+            val baseResponse = response(base, syn.header.destination.address)
+            val ednsResponse = baseResponse.clone().apply { this[11] = 1 } + opt
+            fun parse(q: ByteArray, r: ByteArray) = DnsDestinationBinding.fromCorrelatedResponse(
+                q, r, "dns.example", syn.header.destination, 100)
+            assertTrue(isSupportedDnsQueryMessage(ednsQuery))
+            assertNotNull(parse(ednsQuery, ednsResponse))
+            assertNotNull(parse(ednsQuery, baseResponse)) // Resolver omitted OPT.
+            assertNull(parse(base, ednsResponse)) // Unsolicited additional record.
+            assertNull(parse(ednsQuery, ednsResponse.clone().apply { this[11] = 2 }))
+            val at = baseResponse.size
+            val invalid = listOf(
+                ednsResponse.clone().apply { this[at] = 1 }, // non-root NAME
+                ednsResponse.clone().apply { this[at + 2] = 42 }, // non-OPT
+                ednsResponse.clone().apply { this[at + 3] = 0 }, // UDP budget too small
+                ednsResponse.clone().apply { this[at + 5] = 1 }, // extended RCODE
+                ednsResponse.clone().apply { this[at + 6] = 1 }, // EDNS version
+                ednsResponse.clone().apply { this[at + 8] = 1 }, // unknown flags
+                ednsResponse.clone().apply { this[at + 10] = 1 }, // nonzero RDLEN
+                ednsResponse + byteArrayOf(0), // undeclared trailing data
+            )
+            invalid.forEachIndexed { index, bad ->
+                assertNull("Invalid EDNS response $version/$index", parse(ednsQuery, bad))
+            }
+        }
+    }
+
     @Test fun invalidSynCannotOpenOrProtectGatewaySocket() {
         val packets = TunTcpSynAckTest()
         val syn = packets.request(4)

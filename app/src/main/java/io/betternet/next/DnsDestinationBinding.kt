@@ -16,7 +16,8 @@ import javax.net.ssl.SSLSocketFactory
  * NEVER from the same untrusted DNS answer being checked.
  *
  * Reject CNAMEs, multiple answers, compression beyond a pointer to the
- * question, and extra records for now. Unsupported legitimate DNS answers
+ * question, and arbitrary additional records. Permit only a minimal EDNS(0)
+ * OPT response to an EDNS query; unsupported legitimate DNS answers
  * fail closed rather than silently authorizing an unrelated TCP destination.
  */
 internal class DnsDestinationBinding private constructor(
@@ -44,7 +45,9 @@ internal class DnsDestinationBinding private constructor(
                 !hasMatchingDnsQuestion(query, 0, query.size, response)) return null
             fun u16(bytes: ByteArray, offset: Int): Int =
                 ((bytes[offset].toInt() and 255) shl 8) or (bytes[offset + 1].toInt() and 255)
-            if (u16(response, 6) != 1 || u16(response, 8) != 0 || u16(response, 10) != 0 ||
+            val additionalCount = u16(response, 10)
+            if (u16(response, 6) != 1 || u16(response, 8) != 0 ||
+                additionalCount !in 0..1 ||
                 (response[3].toInt() and 0x0f) != 0) return null
             var at = 12
             val labels = mutableListOf<String>()
@@ -76,7 +79,22 @@ internal class DnsDestinationBinding private constructor(
             val length = u16(response, at + 8)
             at += 10
             if (ttl == 0L || length != (if (type == 1) 4 else 16) ||
-                at + length != response.size) return null
+                at + length > response.size) return null
+            val answerEnd = at + length
+            if (additionalCount == 0) {
+                if (answerEnd != response.size) return null
+            } else {
+                // Normal EDNS-aware resolvers append an OPT pseudo-record.
+                // It is not an address grant: reject unrequested OPT, opaque
+                // options, EDNS errors/versions/flags and any trailing bytes.
+                if (u16(query, 10) != 1 || response.size - answerEnd != 11 ||
+                    response[answerEnd] != 0.toByte() ||
+                    u16(response, answerEnd + 1) != 41 ||
+                    u16(response, answerEnd + 3) !in 512..4096 ||
+                    u16(response, answerEnd + 5) != 0 ||
+                    (u16(response, answerEnd + 7) and 0x7fff) != 0 ||
+                    u16(response, answerEnd + 9) != 0) return null
+            }
             // The query question was uncompressed and echoed byte-for-byte.
             if (questionNameEnd < 13) return null
             val resolvedAddress = InetAddress.getByAddress(response.copyOfRange(at, at + length))
