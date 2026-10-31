@@ -152,6 +152,53 @@ class TunTcpSynAckTest {
         return TunIngressResult.Packet(b, parseTunPacketHeader(b, b.size)!!)
     }
 
+    @Test fun duplicateSynRetransmitsOnlyOriginalSynAckWithinBoundedBudget() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val output = ByteArrayOutputStream()
+            var closes = 0
+            val bridge = OfflineTcpTunBridge(
+                ByteArrayInputStream(byteArrayOf()), ByteArrayOutputStream(),
+                1280, 123L, allowedDestination = syn.header.destination,
+                onClose = { closes++ },
+            )
+            fun deliver(packet: TunIngressResult.Packet, time: Long): ByteArray {
+                output.reset()
+                assertTrue(bridge.pumpOneTunPacket(
+                    ByteArrayInputStream(packet.bytes), output, time
+                ))
+                return output.toByteArray()
+            }
+            val first = deliver(syn, 100)
+            assertTrue(first.isNotEmpty())
+            assertTrue(deliver(syn, 599).isEmpty())
+            assertTrue(deliver(request(version, destinationSeed = 34), 600).isEmpty())
+            assertTrue(deliver(request(version, options = byteArrayOf(1, 1, 1, 1)), 600).isEmpty())
+            // A retransmitted IP packet may have a different hop limit/TTL;
+            // only its validated TCP segment needs to match the original.
+            val changedIp = syn.bytes.clone()
+            changedIp[if (version == 4) 8 else 7] = 63
+            if (version == 4) {
+                put16(changedIp, 10, 0)
+                put16(changedIp, 10, checksum(sum(changedIp, 0, 20)))
+            }
+            val changedSyn = TunIngressResult.Packet(
+                changedIp, parseTunPacketHeader(changedIp, changedIp.size)!!
+            )
+            assertArrayEquals(first, deliver(changedSyn, 600))
+            assertTrue(deliver(syn, 1599).isEmpty())
+            assertArrayEquals(first, deliver(syn, 1600))
+            assertTrue(deliver(syn, 3599).isEmpty())
+            assertArrayEquals(first, deliver(syn, 3600))
+            assertTrue(deliver(syn, 8000).isEmpty()) // retry budget exhausted
+            assertEquals(0, closes)
+            assertTrue(deliver(finalAck(syn, 123L), 8001).isEmpty())
+            assertTrue(deliver(syn, 9000).isEmpty()) // established: no SYN-ACK replay
+            bridge.close()
+            assertEquals(1, closes)
+        }
+    }
+
     @Test fun tracksExactlyOneHandshakeAndWraparoundForBothIpFamilies() {
         for (version in listOf(4, 6)) {
             val handshake = OfflineTcpHandshake(1000)

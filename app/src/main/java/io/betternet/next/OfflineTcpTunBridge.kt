@@ -31,6 +31,12 @@ internal class OfflineTcpTunBridge(
     // The supplied ISN is single-use. A replacement flow needs a new bridge
     // with a fresh unpredictable ISN, never a replayable SYN-ACK sequence.
     private var started = false
+    // Keep only the initial SYN transport bytes and checksummed SYN-ACK.
+    // Retransmitted SYNs must never create a second authenticated CONNECT.
+    private var initialSynSegment: ByteArray? = null
+    private var initialSynAck: ByteArray? = null
+    private var lastSynAckAt = -1L
+    private var synAckRetries = 0
     // Once the caller closes the bridge, TUN EOFs or a packet-pump failure
     // must never restart this single-use authenticated stream.
     private var closed = false
@@ -62,11 +68,22 @@ internal class OfflineTcpTunBridge(
                     val flags = packet[offset + 13].toInt() and 0xff
                     val reply = when {
                         flags == 0x02 -> {
-                            if (started || ingress.header.destination != allowedDestination) null
-                            else tcp.begin(ingress, serverIsn, mtu, nowMillis,
-                                clientWindow)?.also { started = true }
+                            if (!started) {
+                                if (ingress.header.destination != allowedDestination) null
+                                else tcp.begin(ingress, serverIsn, mtu, nowMillis,
+                                    clientWindow)?.also {
+                                    started = true
+                                    initialSynSegment = packet.copyOfRange(offset, packet.size)
+                                    initialSynAck = it.copyOf()
+                                    lastSynAckAt = nowMillis
+                                }
+                            } else retryInitialSynAck(ingress, nowMillis)
                         }
-                        flags == 0x10 && tcp.acceptFinalAck(ingress, nowMillis) -> null
+                        flags == 0x10 && tcp.acceptFinalAck(ingress, nowMillis) -> {
+                            initialSynSegment = null
+                            initialSynAck = null
+                            null
+                        }
                         flags == 0x14 -> {
                             if (tcp.acceptClientReset(ingress, nowMillis)) close()
                             null
@@ -91,6 +108,25 @@ internal class OfflineTcpTunBridge(
             try { close() } catch (closeFailure: Exception) { failure.addSuppressed(closeFailure) }
             throw failure
         }
+    }
+
+    /**
+     * Recover from a lost SYN-ACK without another gateway dial. Only an
+     * identical, checksum-validated TCP SYN segment is eligible; IPv4 packet
+     * IDs and hop limits may legitimately differ between retransmissions.
+     * Three exponential-backoff retries fit inside the fixed 15s flow lease.
+     */
+    private fun retryInitialSynAck(packet: TunIngressResult.Packet, nowMillis: Long): ByteArray? {
+        val initial = initialSynSegment ?: return null
+        val response = initialSynAck ?: return null
+        if (tcp.isEstablished(nowMillis) || synAckRetries >= 3) return null
+        if (!packet.bytes.copyOfRange(packet.header.transportOffset, packet.bytes.size)
+                .contentEquals(initial)) return null
+        val delay = 500L shl synAckRetries
+        if (nowMillis < lastSynAckAt || nowMillis - lastSynAckAt < delay) return null
+        synAckRetries++
+        lastSynAckAt = nowMillis
+        return response.copyOf()
     }
 
     /** May block; caller must provide a bounded tunnel read timeout and a ready flow. */
@@ -137,6 +173,8 @@ internal class OfflineTcpTunBridge(
     fun close() {
         if (closed) return
         closed = true
+        initialSynSegment = null
+        initialSynAck = null
         tcp.close()
         if (onClose != null) {
             onClose.invoke()
