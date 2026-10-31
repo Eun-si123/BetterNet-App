@@ -11,6 +11,17 @@
   <application android:allowBackup="false"
     android:label="@string/app_name"
     android:theme="@android:style/Theme.Material.Light.NoActionBar">
+    <!-- Inactive until an explicitly reviewed, authenticated forwarding path exists. -->
+    <service android:name=".SelectedAppVpnService"
+      android:permission="android.permission.BIND_VPN_SERVICE"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.net.VpnService" />
+      </intent-filter>
+      <!-- No forwarding path exists yet: never offer this dormant VPN as always-on. -->
+      <meta-data android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"
+        android:value="false" />
+    </service>
     <activity android:name=".MainActivity" android:exported="true">
       <intent-filter>
         <action android:name="android.intent.action.MAIN" />
