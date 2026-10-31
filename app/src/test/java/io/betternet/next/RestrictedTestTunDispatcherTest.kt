@@ -113,6 +113,45 @@ class RestrictedTestTunDispatcherTest {
         }
     }
 
+    @Test fun readinessWaitCannotUsePrePollTimeToAcceptExpiredDnsGrant() {
+        // Simulate a delayed Android TUN poll crossing the DNS grant deadline.
+        // The old pre-poll clock sample would have allowed a stale SYN to dial.
+        for (version in listOf(4, 6)) {
+            val syn = packets.request(version)
+            val p = plan(syn)
+            val frames = listOf(udp(p), syn.bytes)
+            var frameIndex = 0
+            val input = object : java.io.InputStream() {
+                override fun read(): Int = throw AssertionError("Only datagram reads expected")
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    val frame = frames[frameIndex++]
+                    frame.copyInto(b, off)
+                    return frame.size
+                }
+            }
+            var clock = 100L
+            var polls = 0
+            var dials = 0
+            val dispatcher = RestrictedTestTunDispatcher(p,
+                { _, _ -> bindings.bindingFor(syn, 100) },
+                { _, _, _, _ -> dials++; throw AssertionError("Expired grant reached gateway") })
+            val session = RestrictedTunSession(dispatcher, input, ByteArrayOutputStream(),
+                closeDescriptor = {}, waitForReadable = {
+                    if (++polls == 2) clock = 30_100L
+                    true
+                })
+            try {
+                assertTrue(session.pumpOneCycle { clock }) // DNS grant at 100ms.
+                assertTrue(session.pumpOneCycle { clock }) // SYN arrives after expiry.
+                assertEquals(0, dials)
+                assertEquals(2, polls)
+                assertEquals(2, frameIndex)
+            } finally {
+                session.close()
+            }
+        }
+    }
+
     @Test fun onlyExactSourceAndRoutesReachCallbacksForBothIpFamilies() {
         for (version in listOf(4, 6)) {
             val syn = packets.request(version)

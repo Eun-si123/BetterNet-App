@@ -47,19 +47,23 @@ internal class RestrictedTunSession(
 
     // nowMillis must share Android elapsedRealtime()'s monotonic time base
     // with DNS grants; wall-clock milliseconds invalidate otherwise valid grants.
-    fun pumpOneTunPacket(nowMillis: Long): Boolean = guarded {
+    // Existing offline tests can supply a fixed timestamp. A live pump must
+    // instead sample the monotonic clock AFTER its bounded readiness wait:
+    // using a pre-poll timestamp could admit an already expired DNS grant.
+    fun pumpOneTunPacket(nowMillis: Long): Boolean = pumpOneTunPacket { nowMillis }
+
+    internal fun pumpOneTunPacket(nowMillis: () -> Long): Boolean = guarded {
         // Android supplies a bounded poll: an idle TUN must not monopolize
         // the owner thread or prevent cancellation and gateway scheduling.
-        if (waitForReadable != null) {
-            val readable = waitForReadable()
-            if (stopRequested.get()) return@guarded false
-            if (!readable) {
-                // No TUN traffic must not extend a stale authenticated tunnel.
-                dispatcher.expireIdleFlow(nowMillis)
-                return@guarded true
-            }
+        val readable = waitForReadable?.invoke() ?: true
+        if (stopRequested.get()) return@guarded false
+        val observedAt = nowMillis()
+        if (!readable) {
+            // No TUN traffic must not extend a stale authenticated tunnel.
+            dispatcher.expireIdleFlow(observedAt)
+            return@guarded true
         }
-        if (!dispatcher.pumpOneTunPacket(input, output, nowMillis)) {
+        if (!dispatcher.pumpOneTunPacket(input, output, observedAt)) {
             close()
             false
         } else true
@@ -83,7 +87,7 @@ internal class RestrictedTunSession(
     fun pumpOneCycle(nowMillis: () -> Long): Boolean {
         if (closed) return false
         if (stopRequested.get()) { close(); return false }
-        if (!pumpOneTunPacket(nowMillis())) return false
+        if (!pumpOneTunPacket(nowMillis)) return false
         if (closed || stopRequested.get()) { close(); return false }
         pumpOneGatewayReply(nowMillis()) // No reply yet is not terminal.
         if (closed || stopRequested.get()) { close(); return false }
