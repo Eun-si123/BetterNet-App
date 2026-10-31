@@ -111,7 +111,10 @@ internal fun exchangeOneTunDnsQueryThroughGatewayAndBindTestDestination(
     gatewayTlsFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
     destinationTlsFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
     bind: (Socket) -> Unit = {},
-    clockMillis: () -> Long = System::currentTimeMillis,
+    // The TUN dispatcher and TCP flow leases use elapsed/monotonic milliseconds.
+    // A wall-clock timestamp here would silently reject every legitimate SYN
+    // when the future session owner passes Android elapsedRealtime().
+    clockMillis: () -> Long = { android.os.SystemClock.elapsedRealtime() },
 ): DnsDestinationBinding? {
     require(isValidGatewayName(expectedHost)) { "Invalid test destination hostname" }
     return exchangeOneTunDnsQueryThroughGatewayChecked(

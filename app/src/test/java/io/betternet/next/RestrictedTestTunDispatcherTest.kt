@@ -197,6 +197,50 @@ class RestrictedTestTunDispatcherTest {
         }
     }
 
+    @Test fun idleTunPollRetiresExpiredGatewayWithoutReadingOrClosingTun() {
+        for (version in listOf(4, 6)) {
+            val syn = packets.request(version)
+            val p = plan(syn)
+            val datagrams = listOf(udp(p), syn.bytes)
+            var reads = 0
+            var gatewayCloses = 0
+            var descriptorCloses = 0
+            var polls = 0
+            val input = object : java.io.InputStream() {
+                override fun read(): Int = throw AssertionError("Use packet-oriented read")
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    if (reads >= datagrams.size) throw AssertionError("Idle poll read TUN")
+                    val packet = datagrams[reads++]
+                    packet.copyInto(b, off)
+                    return packet.size
+                }
+            }
+            val dispatcher = RestrictedTestTunDispatcher(p,
+                { _, _ -> bindings.bindingFor(syn) },
+                { approved, initial, output, time ->
+                    OfflineTcpTunBridge(ByteArrayInputStream(byteArrayOf()),
+                        ByteArrayOutputStream(), p.mtu, 123L,
+                        allowedDestination = approved.address,
+                        onClose = { gatewayCloses++ }).also {
+                        assertTrue(it.pumpOneTunPacket(ByteArrayInputStream(initial.bytes), output, time))
+                    }
+                })
+            val session = RestrictedTunSession(dispatcher, input, ByteArrayOutputStream(),
+                { descriptorCloses++ }, waitForReadable = { ++polls <= 2 })
+            assertTrue(session.pumpOneTunPacket(100)) // DNS grant
+            assertTrue(session.pumpOneTunPacket(101)) // authenticated test flow
+            assertEquals(0, gatewayCloses)
+            assertTrue(session.pumpOneTunPacket(15_102)) // idle; flow lease elapsed
+            assertEquals(1, gatewayCloses)
+            assertEquals(2, reads)
+            assertEquals(0, descriptorCloses) // session remains usable
+            assertTrue(session.pumpOneTunPacket(15_103))
+            assertEquals(1, gatewayCloses) // no duplicate close
+            session.close()
+            assertEquals(1, descriptorCloses)
+        }
+    }
+
     @Test fun gatewayReadFailureClosesWholeDispatcher() {
         val syn = packets.request(4)
         val p = plan(syn)

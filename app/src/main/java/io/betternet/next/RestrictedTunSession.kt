@@ -45,13 +45,19 @@ internal class RestrictedTunSession(
         if (descriptorReleased.compareAndSet(false, true)) closeDescriptor()
     }
 
+    // nowMillis must share Android elapsedRealtime()'s monotonic time base
+    // with DNS grants; wall-clock milliseconds invalidate otherwise valid grants.
     fun pumpOneTunPacket(nowMillis: Long): Boolean = guarded {
         // Android supplies a bounded poll: an idle TUN must not monopolize
         // the owner thread or prevent cancellation and gateway scheduling.
         if (waitForReadable != null) {
             val readable = waitForReadable()
             if (stopRequested.get()) return@guarded false
-            if (!readable) return@guarded true
+            if (!readable) {
+                // No TUN traffic must not extend a stale authenticated tunnel.
+                dispatcher.expireIdleFlow(nowMillis)
+                return@guarded true
+            }
         }
         if (!dispatcher.pumpOneTunPacket(input, output, nowMillis)) {
             close()

@@ -50,6 +50,18 @@ class DnsDestinationBindingTest {
         }
     }
 
+    @Test fun dnsGrantAndTunPacketPumpMustUseSameMonotonicClock() {
+        val syn = TunTcpSynAckTest().request(4)
+        val elapsed = 12_345_678L // Synthetic elapsedRealtime() milliseconds.
+        val binding = bindingFor(syn, elapsed)
+        assertTrue(binding.allows(syn, elapsed + 1))
+        assertTrue(binding.allows(syn, elapsed + 29_999))
+        assertFalse(binding.allows(syn, elapsed + 30_000))
+        // Mixing System.currentTimeMillis() with elapsedRealtime() silently
+        // rejects a valid grant. The production DNS default must be monotonic.
+        assertFalse(binding.allows(syn, 1_800_000_000_000L))
+    }
+
     @Test fun rejectsUnrelatedOrMalformedDnsAnswers() {
         for (version in listOf(4, 6)) {
             val syn = TunTcpSynAckTest().request(version)

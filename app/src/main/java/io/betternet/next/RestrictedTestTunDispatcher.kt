@@ -25,13 +25,22 @@ internal class RestrictedTestTunDispatcher(
     private var binding: DnsDestinationBinding? = null
     private var bridge: OfflineTcpTunBridge? = null
 
+    /**
+     * Called even when a bounded TUN poll finds no datagram. Otherwise a
+     * quiescent TUN can retain an expired authenticated gateway indefinitely.
+     * All dispatcher calls remain serialized on the session owner thread.
+     */
+    fun expireIdleFlow(nowMillis: Long) {
+        if (!closed && bridge?.retireIfFlowEnded(nowMillis) == true) bridge = null
+    }
+
     /** Returns false on EOF or terminal failure; rejected packets have no side effects. */
     fun pumpOneTunPacket(input: InputStream, output: OutputStream, nowMillis: Long): Boolean {
         if (closed) return false
         try {
             // Even unrelated/unsupported packets must not prolong an expired
             // authenticated gateway lease or prevent its socket from closing.
-            if (bridge?.retireIfFlowEnded(nowMillis) == true) bridge = null
+            expireIdleFlow(nowMillis)
             val ingress = readOneTunDatagram(input, plan.mtu)
             if (ingress === TunIngressResult.EndOfStream) {
                 close()
