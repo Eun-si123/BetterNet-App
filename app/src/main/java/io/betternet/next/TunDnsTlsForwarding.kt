@@ -117,6 +117,12 @@ internal fun exchangeOneTunDnsQueryThroughGatewayAndBindTestDestination(
     clockMillis: () -> Long = { android.os.SystemClock.elapsedRealtime() },
 ): DnsDestinationBinding? {
     require(isValidGatewayName(expectedHost)) { "Invalid test destination hostname" }
+    // No underlying-network DNS lookup, socket protection, CONNECT credential,
+    // or resolver request for unrelated/unsupported selected-app questions.
+    if (!isSupportedDnsTunQuery(request)) return null
+    val header = parseTunPacketHeader(request.bytes, request.bytes.size) ?: return null
+    val query = request.bytes.copyOfRange(header.transportOffset + 8, request.bytes.size)
+    if (!isApprovedTestDnsQuestion(query, expectedHost, allowedTestAddress)) return null
     return exchangeOneTunDnsQueryThroughGatewayChecked(
         gatewayAddress, gatewayName, dnsServerName, bearerToken, timeoutMs,
         protect, request, pending, output, mtu, gatewayTlsFactory, destinationTlsFactory, bind

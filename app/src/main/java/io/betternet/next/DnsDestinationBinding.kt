@@ -90,6 +90,38 @@ internal class DnsDestinationBinding private constructor(
 }
 
 /**
+ * Preflight an explicitly approved test DNS question BEFORE resolving or
+ * authenticating to a gateway. A syntactically valid query for another host
+ * must not leak through the selected-app tunnel just because the response
+ * would later fail destination authorization.
+ *
+ * The DNS question type follows the independently approved destination IP,
+ * not the TUN IP family (IPv6 apps can legitimately ask for A records).
+ */
+internal fun isApprovedTestDnsQuestion(
+    query: ByteArray, expectedHost: String, allowedTestAddress: InetAddress,
+): Boolean {
+    if (!isValidGatewayName(expectedHost) || !isSupportedDnsQueryMessage(query)) return false
+    var at = 12
+    for (label in expectedHost.split('.')) {
+        if (at >= query.size || (query[at].toInt() and 255) != label.length) return false
+        at++
+        for (character in label) {
+            if (at >= query.size ||
+                (query[at++].toInt() and 255).toChar().lowercaseChar() != character.lowercaseChar()) {
+                return false
+            }
+        }
+    }
+    if (at + 5 > query.size || query[at++] != 0.toByte()) return false
+    val questionType = ((query[at].toInt() and 255) shl 8) or
+        (query[at + 1].toInt() and 255)
+    val approvedType = if (allowedTestAddress.address.size == 4) 1 else 28
+    return questionType == approvedType &&
+        query[at + 2] == 0.toByte() && query[at + 3] == 1.toByte()
+}
+
+/**
  * Dormant A1 composition. A DNS-correlated IP and a matching, validated SYN
  * must be present BEFORE the bearer credential or gateway socket is used.
  * CONNECT pins the numeric DNS-authorized IP, not a second hostname lookup.

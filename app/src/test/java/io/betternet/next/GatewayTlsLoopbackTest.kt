@@ -504,6 +504,42 @@ class GatewayTlsLoopbackTest {
         }
     }
 
+    @Test fun unrelatedDnsQuestionsCannotReachGatewayOrConsumeDialLease() {
+        val token = "TestOnlyOpaqueToken0123456789"
+        val ipv4 = InetAddress.getByAddress(byteArrayOf(203.toByte(), 0, 113, 9))
+        val ipv6 = InetAddress.getByName("2001:db8::9")
+        // A query on either TUN family is allowed for an IPv4 test destination;
+        // a different hostname or AAAA-only destination must be rejected first.
+        for (tunIpv6 in listOf(false, true)) {
+            val request = tunDnsRequest(tunIpv6)
+            val pending = PendingDnsReplies(maxPending = 1)
+            val output = java.io.ByteArrayOutputStream()
+            var protects = 0
+            for ((host, approved) in listOf(
+                "other.test" to ipv4,
+                "a.test" to ipv6,
+            )) {
+                assertNull(exchangeOneTunDnsQueryThroughGatewayAndBindTestDestination(
+                    InetSocketAddress.createUnresolved("gateway.example", 443),
+                    "gateway.example", "dns.example", token, 3_000,
+                    { protects++; true }, request, pending, output, 1280,
+                    host, approved,
+                    clockMillis = { 100L },
+                ))
+                assertEquals("Rejected DNS must not write a TUN reply", 0, output.size())
+                assertEquals("Rejected DNS must not touch the gateway socket", 0, protects)
+                // Neither a pending-reply slot nor an in-progress dial lease leaks.
+                val handle = pending.register(request)
+                assertNotNull(handle)
+                pending.cancel(handle!!)
+                assertTrue(pending.reserveGatewayDial())
+                pending.releaseGatewayDial()
+            }
+            assertTrue(isApprovedTestDnsQuestion(dnsQuery(), "A.TEST", ipv4))
+            assertFalse(isApprovedTestDnsQuestion(dnsQuery(), "a.test.evil", ipv4))
+        }
+    }
+
     @Test fun concurrentDnsGatewayDialIsRejectedBeforeSocketProtection() {
         val request = tunDnsRequest(false)
         val pending = PendingDnsReplies(maxPending = 1)
