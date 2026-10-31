@@ -60,6 +60,18 @@ class SelectedAppVpnServiceTest {
         }
     }
 
+    @Test fun underlyingNetworkCapabilityGateFailsClosedOnLossOrVpnHandover() {
+        // A stale Android Network handle must never become a default-route or
+        // VPN-recursive fallback between DNS, protection, binding or retries.
+        requireNonVpnInternetCapabilities(hasInternet = true, isVpn = false)
+        for ((internet, vpn) in listOf(false to false, false to true, true to true)) {
+            try {
+                requireNonVpnInternetCapabilities(internet, vpn)
+                fail("Unsafe underlying network must be rejected")
+            } catch (_: IllegalArgumentException) { }
+        }
+    }
+
     private val resolvedGateway = InetSocketAddress(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), 443)
 
     private class RecordingSocket(private val events: MutableList<String>, private val failConnect: Boolean = false) : Socket() {

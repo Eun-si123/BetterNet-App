@@ -3,6 +3,7 @@ package io.betternet.next
 import android.content.Intent
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
@@ -115,20 +116,75 @@ class SelectedAppVpnService : VpnService() {
         }
     }
 
+    /**
+     * Dormant Android adapter for the approved DNS -> pinned-IP TCP dispatcher.
+     * Unlike a generic resolver/socket callback, every operation is tied to
+     * the same explicitly selected underlying Network. Recheck its capabilities
+     * at each DNS lookup, socket protection and binding: an old network choice
+     * must not silently become a VPN route after a connectivity change.
+     *
+     * Construction does not touch the network, establish a TUN, ask for VPN
+     * consent, or start the service. The future activation owner must still
+     * validate installed app scope via newRestrictedTestTunBuilder(), verify
+     * OS consent, and own a cancellable established-TUN worker.
+     */
+    internal fun newUnderlyingNetworkRestrictedTestDispatcher(
+        manager: ConnectivityManager,
+        network: Network,
+        selectedPackage: String?,
+        plan: RestrictedTestTunPlan,
+        gatewayName: String,
+        gatewayPort: Int,
+        dnsServerName: String,
+        approvedHost: String,
+        bearerToken: String,
+        timeoutMs: Int,
+    ): RestrictedTestTunDispatcher {
+        requireSelectedPackage(selectedPackage, packageName)
+        return newDormantRestrictedGatewayDispatcher(
+            plan, gatewayName, gatewayPort, dnsServerName, approvedHost,
+            bearerToken, timeoutMs,
+            lookupOnUnderlyingNetwork = { host ->
+                requireUnderlyingInternetNetwork(manager, network)
+                network.getAllByName(host)
+            },
+            protect = { socket ->
+                requireUnderlyingInternetNetwork(manager, network)
+                protect(socket)
+            },
+            bindToUnderlyingNetwork = { socket ->
+                requireUnderlyingInternetNetwork(manager, network)
+                network.bindSocket(socket)
+            },
+            elapsedRealtimeMillis = SystemClock::elapsedRealtime,
+        )
+    }
+
+    private fun requireUnderlyingInternetNetwork(manager: ConnectivityManager, network: Network) {
+        val capabilities = manager.getNetworkCapabilities(network)
+        requireNonVpnInternetCapabilities(
+            capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true,
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true,
+        )
+    }
+
     private fun <T> onUnderlyingNetworkGateway(
         manager: ConnectivityManager, network: Network, hostname: String,
         port: Int, timeoutMs: Int, dial: (InetSocketAddress, Int) -> T,
     ): T {
-        val capabilities = manager.getNetworkCapabilities(network)
-        require(capabilities != null &&
-            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-            !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
-            "A non-VPN underlying Internet network is required"
-        }
-        // All attempts resolve and bind on this exact non-VPN network; each
-        // fresh socket is protected before connecting, even on IPv6/IPv4 fallback.
+        requireUnderlyingInternetNetwork(manager, network)
+        // Revalidate at each DNS lookup and retry, not just at method entry.
+        // Protection and binding remain mandatory in the dial callback.
         return connectWithGatewayAddressFallback(
-            hostname, port, timeoutMs, { network.getAllByName(it) }, dial
+            hostname, port, timeoutMs,
+            { host ->
+                requireUnderlyingInternetNetwork(manager, network)
+                network.getAllByName(host)
+            },
+            { address, remaining ->
+                requireUnderlyingInternetNetwork(manager, network)
+                dial(address, remaining)
+            },
         )
     }
 
@@ -161,6 +217,11 @@ private fun pollRestrictedTunReadable(descriptor: ParcelFileDescriptor): Boolean
         throw IOException("TUN descriptor is no longer readable")
     }
     return events and OsConstants.POLLIN != 0
+}
+
+/** Pure, fail-closed capability gate shared by all Android underlying-network paths. */
+internal fun requireNonVpnInternetCapabilities(hasInternet: Boolean, isVpn: Boolean) {
+    require(hasInternet && !isVpn) { "A non-VPN underlying Internet network is required" }
 }
 
 /** Reject missing, self, and malformed selections before touching a VPN builder. */
