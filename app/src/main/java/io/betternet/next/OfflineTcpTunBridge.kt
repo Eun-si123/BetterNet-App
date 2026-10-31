@@ -34,6 +34,7 @@ internal class OfflineTcpTunBridge(
     // Keep only the initial SYN transport bytes and checksummed SYN-ACK.
     // Retransmitted SYNs must never create a second authenticated CONNECT.
     private var initialSynSegment: ByteArray? = null
+    private var initialSynHeader: TunPacketHeader? = null
     private var initialSynAck: ByteArray? = null
     private var lastSynAckAt = -1L
     private var synAckRetries = 0
@@ -74,6 +75,7 @@ internal class OfflineTcpTunBridge(
                                     clientWindow)?.also {
                                     started = true
                                     initialSynSegment = packet.copyOfRange(offset, packet.size)
+                                    initialSynHeader = ingress.header
                                     initialSynAck = it.copyOf()
                                     lastSynAckAt = nowMillis
                                 }
@@ -81,6 +83,7 @@ internal class OfflineTcpTunBridge(
                         }
                         flags == 0x10 && tcp.acceptFinalAck(ingress, nowMillis) -> {
                             initialSynSegment = null
+                            initialSynHeader = null
                             initialSynAck = null
                             null
                         }
@@ -118,7 +121,15 @@ internal class OfflineTcpTunBridge(
      */
     private fun retryInitialSynAck(packet: TunIngressResult.Packet, nowMillis: Long): ByteArray? {
         val initial = initialSynSegment ?: return null
+        val original = initialSynHeader ?: return null
         val response = initialSynAck ?: return null
+        // TCP checksum equality is not a substitute for checking the IP tuple:
+        // compensating address changes can preserve the pseudo-header sum.
+        if (packet.header.ipVersion != original.ipVersion ||
+            packet.header.source != original.source ||
+            packet.header.destination != original.destination ||
+            packet.header.sourcePort != original.sourcePort ||
+            packet.header.destinationPort != original.destinationPort) return null
         if (tcp.isEstablished(nowMillis) || synAckRetries >= 3) return null
         if (!packet.bytes.copyOfRange(packet.header.transportOffset, packet.bytes.size)
                 .contentEquals(initial)) return null
@@ -174,6 +185,7 @@ internal class OfflineTcpTunBridge(
         if (closed) return
         closed = true
         initialSynSegment = null
+        initialSynHeader = null
         initialSynAck = null
         tcp.close()
         if (onClose != null) {

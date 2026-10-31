@@ -174,6 +174,26 @@ class TunTcpSynAckTest {
             assertTrue(deliver(syn, 599).isEmpty())
             assertTrue(deliver(request(version, destinationSeed = 34), 600).isEmpty())
             assertTrue(deliver(request(version, options = byteArrayOf(1, 1, 1, 1)), 600).isEmpty())
+            // Two compensating IP address changes keep the TCP pseudo-header
+            // checksum identical. The TCP bytes are an exact match, but the
+            // source/destination tuple is not: never replay the SYN-ACK.
+            val changedTuple = syn.bytes.clone()
+            val sourceAt = if (version == 4) 12 else 8
+            val destinationAt = if (version == 4) 16 else 24
+            changedTuple[sourceAt + 1] = (changedTuple[sourceAt + 1] + 1).toByte()
+            changedTuple[destinationAt + 1] = (changedTuple[destinationAt + 1] - 1).toByte()
+            if (version == 4) {
+                put16(changedTuple, 10, 0)
+                put16(changedTuple, 10, checksum(sum(changedTuple, 0, 20)))
+            }
+            val crossFlow = TunIngressResult.Packet(
+                changedTuple, parseTunPacketHeader(changedTuple, changedTuple.size)!!
+            )
+            assertArrayEquals(
+                syn.bytes.copyOfRange(syn.header.transportOffset, syn.bytes.size),
+                changedTuple.copyOfRange(crossFlow.header.transportOffset, changedTuple.size)
+            )
+            assertTrue(deliver(crossFlow, 600).isEmpty())
             // A retransmitted IP packet may have a different hop limit/TTL;
             // only its validated TCP segment needs to match the original.
             val changedIp = syn.bytes.clone()
