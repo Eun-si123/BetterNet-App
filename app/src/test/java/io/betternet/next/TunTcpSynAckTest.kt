@@ -336,6 +336,99 @@ class TunTcpSynAckTest {
         }
     }
 
+    @Test fun responseAckWithClientPayloadMatchesSeparateAckAndPayloadForBothFamilies() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val isn = 0xffff_fffeL
+            val expectedAck = 1L // server SYN (0xffffffff) + one + 2 reply bytes, modulo 2^32
+            val payload = byteArrayOf(11, 22, 33)
+            fun flow(): OfflineTcpHandshake = OfflineTcpHandshake(1000).also {
+                assertNotNull(it.begin(syn, isn, 1280, 100, clientWindow = 4))
+                assertTrue(it.acceptFinalAck(finalAck(syn, isn), 101))
+                assertNotNull(it.offerResponse(byteArrayOf(9, 8), 1280, 102))
+            }
+            val combined = flow()
+            val separate = flow()
+            val incoming = finalAck(syn, isn, flags = 0x18,
+                acknowledgement = expectedAck, payload = payload)
+            assertArrayEquals(payload, combined.stageClientPayload(incoming, 103))
+            assertNull(combined.retryPendingResponse(603)) // combined ACK retired reply
+            val combinedOut = ByteArrayOutputStream()
+            val combinedAck = combined.forwardStagedClientPayload(combinedOut, 604)!!
+            assertTrue(separate.acceptResponseAck(finalAck(syn, isn,
+                acknowledgement = expectedAck), 103))
+            assertArrayEquals(payload, separate.stageClientPayload(incoming, 104))
+            val separateOut = ByteArrayOutputStream()
+            val separateAck = separate.forwardStagedClientPayload(separateOut, 604)!!
+            assertArrayEquals(payload, combinedOut.toByteArray())
+            assertArrayEquals(separateOut.toByteArray(), combinedOut.toByteArray())
+            assertArrayEquals(separateAck, combinedAck)
+            assertEquals(0, tcpChecksum(combinedAck, version))
+            val ip = if (version == 4) 20 else 40
+            assertEquals(expectedAck, u32(combinedAck, ip + 4))
+            assertEquals(payload.size.toLong(), u32(combinedAck, ip + 8))
+        }
+    }
+
+    @Test fun malformedPiggybackAckNeverRetiresResponseOrForwardsClientBytes() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val isn = 123L
+            val flow = OfflineTcpHandshake(1000)
+            assertNotNull(flow.begin(syn, isn, 1280, 100, clientWindow = 4))
+            assertTrue(flow.acceptFinalAck(finalAck(syn, isn), 101))
+            val response = flow.offerResponse(byteArrayOf(9, 8), 1280, 102)!!
+            val good = finalAck(syn, isn, flags = 0x18,
+                acknowledgement = 126L, payload = byteArrayOf(1, 2))
+            val corrupted = good.bytes.clone().apply {
+                this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte()
+            }
+            for (invalid in listOf(
+                finalAck(syn, isn, flags = 0x18, acknowledgement = 124L,
+                    payload = byteArrayOf(1, 2)), // stale ACK
+                finalAck(syn, isn, flags = 0x18, acknowledgement = 127L,
+                    payload = byteArrayOf(1, 2)), // unsent server bytes
+                finalAck(syn, isn, flags = 0x18, sequence = 1,
+                    acknowledgement = 126L, payload = byteArrayOf(1, 2)),
+                finalAck(syn, isn, flags = 0x18, acknowledgement = 126L,
+                    sourcePort = 49153, payload = byteArrayOf(1, 2)),
+                finalAck(syn, isn, flags = 0x11, acknowledgement = 126L,
+                    payload = byteArrayOf(1, 2)), // FIN with data not supported
+                finalAck(syn, isn, flags = 0x18, acknowledgement = 126L,
+                    payload = ByteArray(5) { 1 }), // exceeds advertised window
+                good.copy(bytes = corrupted),
+            )) assertNull(flow.stageClientPayload(invalid, 103))
+            assertArrayEquals(response, flow.retryPendingResponse(603))
+            assertArrayEquals(byteArrayOf(1, 2), flow.stageClientPayload(good, 604))
+            val upstream = ByteArrayOutputStream()
+            assertNotNull(flow.forwardStagedClientPayload(upstream, 605))
+            assertArrayEquals(byteArrayOf(1, 2), upstream.toByteArray())
+        }
+    }
+
+    @Test fun bridgeForwardsCombinedResponseAckAndNextClientPayload() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val upstream = ByteArrayOutputStream()
+            val tun = ByteArrayOutputStream()
+            val bridge = OfflineTcpTunBridge(ByteArrayInputStream(byteArrayOf(9, 8)),
+                upstream, 1280, 123L, clientWindow = 4,
+                allowedDestination = syn.header.destination)
+            try {
+                assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes), tun, 100))
+                assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(
+                    finalAck(syn, 123L).bytes), tun, 101))
+                assertTrue(bridge.pumpOneGatewayReply(tun, 102))
+                val piggyback = finalAck(syn, 123L, flags = 0x18,
+                    acknowledgement = 126L, payload = byteArrayOf(4, 5))
+                assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(piggyback.bytes), tun, 103))
+                assertArrayEquals(byteArrayOf(4, 5), upstream.toByteArray())
+                assertEquals(0, tcpChecksum(tun.toByteArray().takeLast(
+                    if (version == 4) 40 else 60).toByteArray(), version))
+            } finally { bridge.close() }
+        }
+    }
+
     @Test fun lostClientAckReplaysOnlyExactPreviouslyFlushedSegment() {
         for (version in listOf(4, 6)) {
             val syn = request(version)

@@ -123,14 +123,25 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         val offset = header.transportOffset
         val count = bytes.size - offset - 20
         val flags = bytes[offset + 13].toInt() and 255
+        // TCP may acknowledge our one outstanding response AND carry the next
+        // client bytes in the same PSH|ACK. Validate the entire segment before
+        // retiring the response: a bad payload must not free its retry slot.
+        // A pending FIN is intentionally not combined with client data here.
+        val expectedAck = (current.serverNext + pendingResponseBytes) and 0xffff_ffffL
         if (count !in 1..receiveWindow ||
             (bytes[offset + 12].toInt() and 15) != 0 ||
             (flags != 0x10 && flags != 0x18) ||
             read16(bytes, offset + 18) != 0 ||
             read32(bytes, offset + 4) != current.clientNext ||
-            read32(bytes, offset + 8) != current.serverNext ||
-            pendingResponseBytes != 0) return null
+            read32(bytes, offset + 8) != expectedAck) return null
         val staged = bytes.copyOfRange(offset + 20, bytes.size)
+        if (pendingResponseBytes != 0) {
+            flow = current.copy(serverNext = expectedAck)
+            pendingResponseBytes = 0
+            pendingResponsePacket = null
+            responseSentAt = -1L
+            responseRetries = 0
+        }
         pendingClientPayload = staged
         return staged.copyOf()
     }
