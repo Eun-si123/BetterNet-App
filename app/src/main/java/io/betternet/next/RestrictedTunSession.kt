@@ -92,7 +92,16 @@ internal class RestrictedTunSession(
         if (stopRequested.get()) { close(); return false }
         if (!pumpOneTunPacket(nowMillis)) return false
         if (closed || stopRequested.get()) { close(); return false }
-        pumpOneGatewayReply(nowMillis) // Refresh again after the bounded gateway read.
+        // Preserve the pre-gateway cancellation/clock checkpoint even when no
+        // bridge is active. Subsequent samples must be taken AFTER the read.
+        val gatewayStartedAt = nowMillis()
+        var firstGatewaySample = true
+        pumpOneGatewayReply {
+            if (firstGatewaySample) {
+                firstGatewaySample = false
+                gatewayStartedAt
+            } else nowMillis()
+        }
         if (closed || stopRequested.get()) { close(); return false }
         pumpPendingRetry(nowMillis())
         if (closed || stopRequested.get()) { close(); return false }
