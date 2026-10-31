@@ -39,13 +39,13 @@ class RestrictedTestTunDispatcherTest {
     }
 
     private fun udp(plan: RestrictedTestTunPlan, destination: InetAddress = plan.virtualDnsAddress,
-                    destinationPort: Int = 53): ByteArray {
+                    destinationPort: Int = 53, payload: ByteArray = byteArrayOf()): ByteArray {
         val ipv6 = plan.clientAddress.address.size == 16
         val ip = if (ipv6) 40 else 20
-        val b = ByteArray(ip + 8)
+        val b = ByteArray(ip + 8 + payload.size)
         b[0] = (if (ipv6) 0x60 else 0x45).toByte()
         if (ipv6) {
-            put16(b, 4, 8)
+            put16(b, 4, 8 + payload.size)
             b[6] = 17; b[7] = 64
         } else {
             put16(b, 2, b.size)
@@ -57,9 +57,11 @@ class RestrictedTestTunDispatcherTest {
         destination.address.copyInto(b, dst)
         put16(b, ip, 49153)
         put16(b, ip + 2, destinationPort)
-        put16(b, ip + 4, 8)
+        put16(b, ip + 4, 8 + payload.size)
+        payload.copyInto(b, ip + 8)
         val size = plan.clientAddress.address.size
-        val sum = words(b, src, size) + words(b, dst, size) + 8 + 17 + words(b, ip, 8)
+        val sum = words(b, src, size) + words(b, dst, size) +
+            (8 + payload.size) + 17 + words(b, ip, 8 + payload.size)
         val udpChecksum = checksum(sum)
         put16(b, ip + 6, if (udpChecksum == 0) 65535 else udpChecksum)
         if (!ipv6) put16(b, 10, checksum(words(b, 0, 20)))
@@ -70,6 +72,46 @@ class RestrictedTestTunDispatcherTest {
     private fun feed(dispatcher: RestrictedTestTunDispatcher, packet: ByteArray,
                      output: ByteArrayOutputStream = ByteArrayOutputStream(), time: Long = 100): Boolean =
         dispatcher.pumpOneTunPacket(ByteArrayInputStream(packet), output, time)
+
+    @Test fun dormantCompositionDoesNotResolveGatewayUntilExactApprovedDnsQuestion() {
+        for (version in listOf(4, 6)) {
+            val syn = packets.request(version)
+            val p = plan(syn)
+            var lookups = 0
+            val dispatcher = newDormantRestrictedGatewayDispatcher(
+                plan = p, gatewayName = "gateway.example", gatewayPort = 443,
+                dnsServerName = "dns.example", approvedHost = "dns.example",
+                bearerToken = "ABCDEFGHIJKLMNOP", timeoutMs = 1000,
+                lookupOnUnderlyingNetwork = {
+                    lookups++
+                    throw IOException("Approved DNS reached the underlying-network lookup")
+                },
+                protect = { throw AssertionError("No socket should be created") },
+                bindToUnderlyingNetwork = { throw AssertionError("No bind expected") },
+                elapsedRealtimeMillis = { 100L },
+            )
+            val output = ByteArrayOutputStream()
+            // No DNS grant: even an otherwise valid SYN cannot dial.
+            assertTrue(feed(dispatcher, syn.bytes, output))
+            assertTrue(feed(dispatcher, udp(p), output)) // no DNS question
+            assertTrue(feed(dispatcher, udp(p, p.allowedHttpsAddress), output))
+            val wrong = DnsDestinationBindingTest().query(if (version == 4) 1 else 28)
+                .clone().apply { this[13] = 'x'.code.toByte() }
+            assertTrue(feed(dispatcher, udp(p, payload = wrong), output))
+            assertEquals(0, lookups)
+            assertEquals(0, output.size())
+            val approved = bindings.query(if (version == 4) 1 else 28)
+            try {
+                feed(dispatcher, udp(p, payload = approved), output)
+                fail("Expected only the approved query to reach gateway lookup")
+            } catch (expected: IOException) {
+                assertTrue(expected.message!!.contains("underlying-network lookup"))
+            }
+            assertEquals(1, lookups)
+            assertEquals(0, output.size())
+            dispatcher.close()
+        }
+    }
 
     @Test fun onlyExactSourceAndRoutesReachCallbacksForBothIpFamilies() {
         for (version in listOf(4, 6)) {
