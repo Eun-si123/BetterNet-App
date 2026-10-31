@@ -18,6 +18,9 @@
       <intent-filter>
         <action android:name="android.net.VpnService" />
       </intent-filter>
+      <!-- No forwarding path exists yet: never offer this dormant VPN as always-on. -->
+      <meta-data android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"
+        android:value="false" />
     </service>
     <activity android:name=".MainActivity" android:exported="true">
       <intent-filter>
