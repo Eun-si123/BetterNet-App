@@ -115,8 +115,10 @@ internal class OfflineTcpTunBridge(
 
     /**
      * Recover from a lost SYN-ACK without another gateway dial. Only an
-     * identical, checksum-validated TCP SYN segment is eligible; IPv4 packet
-     * IDs and hop limits may legitimately differ between retransmissions.
+     * checksum-validated SYN for the original flow is eligible. A TCP timestamp
+     * value may advance between SYN retransmissions; all other transport fields,
+     * including the timestamp echo and option layout, must remain identical.
+     * IPv4 packet IDs and hop limits may legitimately differ.
      * Three exponential-backoff retries fit inside the fixed 15s flow lease.
      */
     private fun retryInitialSynAck(packet: TunIngressResult.Packet, nowMillis: Long): ByteArray? {
@@ -131,13 +133,51 @@ internal class OfflineTcpTunBridge(
             packet.header.sourcePort != original.sourcePort ||
             packet.header.destinationPort != original.destinationPort) return null
         if (tcp.isEstablished(nowMillis) || synAckRetries >= 3) return null
-        if (!packet.bytes.copyOfRange(packet.header.transportOffset, packet.bytes.size)
-                .contentEquals(initial)) return null
+        if (!sameSynWithUpdatedTimestamp(
+                initial, packet.bytes.copyOfRange(packet.header.transportOffset, packet.bytes.size)
+            )) return null
         val delay = 500L shl synAckRetries
         if (nowMillis < lastSynAckAt || nowMillis - lastSynAckAt < delay) return null
         synAckRetries++
         lastSynAckAt = nowMillis
         return response.copyOf()
+    }
+
+    /**
+     * TCP timestamps can advance on a retransmitted SYN even though the flow
+     * tuple, sequence and negotiated options have not changed. Both segments
+     * have already passed the full IP/TCP checksum and SYN-option validators.
+     * Ignore only the TCP checksum and TSval (not TSecr); do not permit any
+     * changes to MSS, window, flags, sequence or other option bytes.
+     */
+    private fun sameSynWithUpdatedTimestamp(original: ByteArray, candidate: ByteArray): Boolean {
+        if (original.size != candidate.size || original.size < 20) return false
+        val expected = original.copyOf()
+        val actual = candidate.copyOf()
+        for (at in 16..17) {
+            expected[at] = 0
+            actual[at] = 0
+        }
+        var at = 20
+        while (at < expected.size) {
+            when (val kind = expected[at].toInt() and 255) {
+                0 -> break
+                1 -> at++
+                else -> {
+                    if (at + 2 > expected.size) return false
+                    val size = expected[at + 1].toInt() and 255
+                    if (size < 2 || size > expected.size - at) return false
+                    if (kind == 8 && size == 10) {
+                        for (i in at + 2 until at + 6) {
+                            expected[i] = 0
+                            actual[i] = 0
+                        }
+                    }
+                    at += size
+                }
+            }
+        }
+        return expected.contentEquals(actual)
     }
 
     /** May block; caller must provide a bounded tunnel read timeout and a ready flow. */

@@ -219,6 +219,47 @@ class TunTcpSynAckTest {
         }
     }
 
+    @Test fun retransmittedSynAllowsOnlyTimestampValueChangeWithoutNewGatewayDial() {
+        for (version in listOf(4, 6)) {
+            val baseOptions = byteArrayOf(1, 1, 8, 10, 0, 0, 0, 1, 0, 0, 0, 0)
+            val initial = request(version, options = baseOptions)
+            var closes = 0
+            val bridge = OfflineTcpTunBridge(
+                ByteArrayInputStream(byteArrayOf()), ByteArrayOutputStream(),
+                1280, 123L, allowedDestination = initial.header.destination,
+                onClose = { closes++ },
+            )
+            val output = ByteArrayOutputStream()
+            fun deliver(packet: TunIngressResult.Packet, time: Long): ByteArray {
+                output.reset()
+                assertTrue(bridge.pumpOneTunPacket(
+                    ByteArrayInputStream(packet.bytes), output, time
+                ))
+                return output.toByteArray()
+            }
+            val first = deliver(initial, 100)
+            assertTrue(first.isNotEmpty())
+            // A valid SYN retry updates TSval and consequently the TCP checksum.
+            val advanced = baseOptions.clone().apply { this[7] = 2 }
+            assertTrue(deliver(request(version, options = advanced), 599).isEmpty())
+            val changedEcho = advanced.clone().apply { this[11] = 1 }
+            assertTrue(deliver(request(version, options = changedEcho), 600).isEmpty())
+            val changedMss = byteArrayOf(2, 4, 5, 0xB4.toByte(), 8, 10, 0, 0, 0, 2, 0, 0, 0, 0, 1, 1)
+            assertTrue(deliver(request(version, options = changedMss), 600).isEmpty())
+            val corrupt = request(version, options = advanced).bytes.clone()
+            corrupt[if (version == 4) 20 + 16 else 40 + 16] =
+                (corrupt[if (version == 4) 20 + 16 else 40 + 16].toInt() xor 1).toByte()
+            output.reset()
+            assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(corrupt), output, 600))
+            assertEquals(0, output.size())
+            assertArrayEquals(first, deliver(request(version, options = advanced), 600))
+            assertTrue(deliver(request(version, options = advanced), 1599).isEmpty())
+            assertArrayEquals(first, deliver(request(version, options = advanced), 1600))
+            bridge.close()
+            assertEquals(1, closes)
+        }
+    }
+
     @Test fun tracksExactlyOneHandshakeAndWraparoundForBothIpFamilies() {
         for (version in listOf(4, 6)) {
             val handshake = OfflineTcpHandshake(1000)
