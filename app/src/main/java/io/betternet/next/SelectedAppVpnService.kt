@@ -73,6 +73,19 @@ class SelectedAppVpnService : VpnService() {
         waitForReadable = { pollRestrictedTunReadable(descriptor) },
     )
 
+    /**
+     * Construct, but do not start, the single-owner TUN worker. Only a future
+     * explicit-consent service path may call start() after establishing a
+     * restricted TUN and validating its protected authenticated gateway.
+     */
+    internal fun newRestrictedTunWorker(
+        descriptor: ParcelFileDescriptor,
+        dispatcher: RestrictedTestTunDispatcher,
+    ): RestrictedTunWorker = RestrictedTunWorker(
+        RestrictedTunPump(ownEstablishedRestrictedTestTun(descriptor, dispatcher),
+            SystemClock::elapsedRealtime),
+    )
+
     /** A future TLS gateway dial must protect its socket before connecting. */
     internal fun newProtectedGatewaySocket(address: InetSocketAddress, timeoutMs: Int): Socket =
         connectProtectedSocket(address, timeoutMs, { socket -> protect(socket) })
