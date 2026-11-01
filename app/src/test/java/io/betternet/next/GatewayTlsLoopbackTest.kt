@@ -1081,6 +1081,145 @@ class GatewayTlsLoopbackTest {
         }
     }
 
+    @Test fun completeDormantDispatcherDnsGrantAndTcpRoundTripOverAuthenticatedLoopbackGateway() {
+        // Exercise the *same* dispatcher across DNS -> one-use grant -> SYN ->
+        // authenticated TCP CONNECT -> response. Earlier loopback tests exercised
+        // these components separately. This still does NOT establish Android VPN.
+        val fixtures = TunTcpSynAckTest()
+        val dnsFixtures = DnsDestinationBindingTest()
+        val packetFixtures = RestrictedTestTunDispatcherTest()
+        val token = "TestOnlyOpaqueToken0123456789"
+        val requestBytes = "GET /ready HTTP/1.1\r\nHost: dns.example\r\n\r\n".toByteArray()
+        val responseBytes = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".toByteArray()
+        for (version in listOf(4, 6)) {
+            val tls = contexts("gateway.example")
+            val dnsTls = contexts("dns.example")
+            val syn = fixtures.request(version)
+            val plan = RestrictedTestTunPlan(
+                syn.header.source,
+                InetAddress.getByName(if (version == 4) "198.18.0.1" else "fd00::1"),
+                syn.header.destination, 1280,
+            )
+            val question = dnsFixtures.query(if (version == 4) 1 else 28)
+            val answer = dnsFixtures.response(question, syn.header.destination.address)
+            val listener = tls.server.serverSocketFactory.createServerSocket(
+                0, 2, InetAddress.getLoopbackAddress()
+            ) as SSLServerSocket
+            listener.soTimeout = 8_000
+            val failure = AtomicReference<Throwable?>()
+            val gatewayWorker = Thread {
+                try {
+                    listener.use { server ->
+                        repeat(2) { index ->
+                            (server.accept() as SSLSocket).use { gateway ->
+                                gateway.soTimeout = 5_000
+                                gateway.startHandshake()
+                                val reader = gateway.inputStream.bufferedReader()
+                                val authority = if (index == 0) "dns.example:853" else {
+                                    val ip = syn.header.destination
+                                    (if (version == 6) "[${ip.hostAddress}]" else ip.hostAddress) + ":443"
+                                }
+                                assertEquals("CONNECT $authority HTTP/1.1", reader.readLine())
+                                assertEquals("Host: $authority", reader.readLine())
+                                assertEquals("Proxy-Authorization: Bearer $token", reader.readLine())
+                                assertEquals("", reader.readLine())
+                                gateway.outputStream.write("HTTP/1.1 200 OK\r\n\r\n".toByteArray())
+                                gateway.outputStream.flush()
+                                if (index == 0) {
+                                    (dnsTls.server.socketFactory.createSocket(
+                                        gateway, "dns.example", 853, false
+                                    ) as SSLSocket).use { dns ->
+                                        dns.useClientMode = false
+                                        dns.soTimeout = 3_000
+                                        dns.startHandshake()
+                                        val prefix = dns.inputStream.readNBytes(2)
+                                        assertEquals(question.size,
+                                            ((prefix[0].toInt() and 255) shl 8) or (prefix[1].toInt() and 255))
+                                        assertArrayEquals(question, dns.inputStream.readNBytes(question.size))
+                                        dns.outputStream.write(byteArrayOf(0, answer.size.toByte()) + answer)
+                                        dns.outputStream.flush()
+                                    }
+                                } else {
+                                    assertArrayEquals(requestBytes,
+                                        gateway.inputStream.readNBytes(requestBytes.size))
+                                    gateway.outputStream.write(responseBytes)
+                                    gateway.outputStream.flush()
+                                }
+                            }
+                        }
+                    }
+                } catch (error: Throwable) { failure.set(error) }
+            }.apply { isDaemon = true; start() }
+            try {
+                val events = mutableListOf<String>()
+                val dispatcher = newDormantRestrictedGatewayDispatcher(
+                    plan, "gateway.example", listener.localPort, "dns.example", "dns.example",
+                    token, 3_000,
+                    lookupOnUnderlyingNetwork = { host ->
+                        assertEquals("gateway.example", host)
+                        arrayOf(InetAddress.getLoopbackAddress())
+                    },
+                    protect = { events.add("protect"); true },
+                    bindToUnderlyingNetwork = { events.add("bind") },
+                    elapsedRealtimeMillis = { 100L },
+                    nextServerIsn = { 100L },
+                    gatewayTlsFactory = tls.trustedClient.socketFactory,
+                    dnsTlsFactory = dnsTls.trustedClient.socketFactory,
+                )
+                try {
+                    val tunOut = java.io.ByteArrayOutputStream()
+                    val dnsPacket = packetFixtures.udp(plan, payload = question)
+                    assertTrue(dispatcher.pumpOneTunPacket(
+                        java.io.ByteArrayInputStream(dnsPacket), tunOut, 100))
+                    assertArrayEquals(buildDnsUdpReply(
+                        TunIngressResult.Packet(dnsPacket,
+                            parseTunPacketHeader(dnsPacket, dnsPacket.size)!!),
+                        answer, 1280), tunOut.toByteArray())
+                    tunOut.reset()
+                    assertTrue(dispatcher.pumpOneTunPacket(
+                        java.io.ByteArrayInputStream(syn.bytes), tunOut, 101))
+                    val synAck = tunOut.toByteArray()
+                    assertEquals(0x12, synAck[if (version == 4) 33 else 53].toInt() and 255)
+                    tunOut.reset()
+                    assertTrue(dispatcher.pumpOneTunPacket(
+                        java.io.ByteArrayInputStream(fixtures.finalAck(syn, 100L).bytes), tunOut, 102))
+                    tunOut.reset()
+                    assertTrue(dispatcher.pumpOneTunPacket(
+                        java.io.ByteArrayInputStream(fixtures.finalAck(syn, 100L,
+                            flags = 0x18, payload = requestBytes).bytes), tunOut, 103))
+                    assertEquals(requestBytes.size.toLong(),
+                        fixtures.u32(tunOut.toByteArray(), (if (version == 4) 20 else 40) + 8))
+                    val received = java.io.ByteArrayOutputStream()
+                    var now = 104L
+                    var attempts = 0
+                    while (received.size() < responseBytes.size) {
+                        tunOut.reset()
+                        if (!dispatcher.pumpOneGatewayReply(tunOut) { ++now }) {
+                            assertTrue("Gateway response not delivered", ++attempts < 20)
+                            continue
+                        }
+                        val response = tunOut.toByteArray()
+                        assertEquals(0, fixtures.tcpChecksum(response, version))
+                        val payload = response.copyOfRange((if (version == 4) 20 else 40) + 20,
+                            response.size)
+                        received.write(payload)
+                        dispatcher.pumpOneTunPacket(java.io.ByteArrayInputStream(
+                            fixtures.finalAck(syn, 100L, sequence = requestBytes.size.toLong(),
+                                acknowledgement = 101L + received.size()).bytes),
+                            java.io.ByteArrayOutputStream(), ++now)
+                    }
+                    assertArrayEquals(responseBytes, received.toByteArray())
+                    assertEquals(listOf("protect", "bind", "protect", "bind"), events)
+                } finally { dispatcher.close() }
+            } finally {
+                listener.close()
+                gatewayWorker.join(8_000)
+            }
+            assertFalse("Loopback gateway hung", gatewayWorker.isAlive)
+            failure.get()?.let { throw AssertionError("Loopback gateway failed", it) }
+        }
+    }
+
     private fun dnsQuery(): ByteArray = byteArrayOf(
         0x12, 0x34, 0x01, 0, 0, 1, 0, 0, 0, 0, 0, 0,
         1, 'a'.code.toByte(), 4, 't'.code.toByte(), 'e'.code.toByte(),

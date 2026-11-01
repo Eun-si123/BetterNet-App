@@ -42,7 +42,7 @@ class RestrictedTestTunDispatcherTest {
         return sum.inv() and 65535
     }
 
-    private fun udp(plan: RestrictedTestTunPlan, destination: InetAddress = plan.virtualDnsAddress,
+    internal fun udp(plan: RestrictedTestTunPlan, destination: InetAddress = plan.virtualDnsAddress,
                     destinationPort: Int = 53, payload: ByteArray = byteArrayOf()): ByteArray {
         val ipv6 = plan.clientAddress.address.size == 16
         val ip = if (ipv6) 40 else 20
