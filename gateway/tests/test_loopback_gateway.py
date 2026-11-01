@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from loopback_gateway import GatewayConfig, authorize, handle_client, read_request
+from loopback_gateway import GatewayConfig, authorize, handle_client, read_request, relay
 
 TOKEN = "TestOnlyOpaqueToken0123456789"
 
@@ -176,6 +176,68 @@ class GatewayTests(unittest.TestCase):
             worker.join(4)
             self.assertFalse(worker.is_alive(), "Origin did not finish")
             self.assertEqual([], failures)
+
+    def test_client_write_half_close_still_delivers_upstream_response(self):
+        """A TCP peer may finish sending while still expecting its reply."""
+        gateway_client, client = socket.socketpair()
+        gateway_upstream, origin = socket.socketpair()
+        failures = []
+
+        class SocketLikeTls:
+            def __init__(self, sock):
+                self.sock = sock
+            def fileno(self):
+                return self.sock.fileno()
+            def pending(self):
+                return 0
+            def settimeout(self, timeout):
+                self.sock.settimeout(timeout)
+            def recv(self, size):
+                return self.sock.recv(size)
+            def sendall(self, data):
+                return self.sock.sendall(data)
+
+        def serve_origin():
+            try:
+                with origin:
+                    origin.settimeout(2)
+                    data = bytearray()
+                    while True:
+                        part = origin.recv(1024)
+                        if not part:
+                            break
+                        data.extend(part)
+                    self.assertEqual(b"request", bytes(data))
+                    origin.sendall(b"response")
+            except Exception as error:
+                failures.append(error)
+
+        def serve_relay():
+            try:
+                with gateway_client, gateway_upstream:
+                    relay(SocketLikeTls(gateway_client), gateway_upstream)
+            except Exception as error:
+                failures.append(error)
+
+        origin_thread = threading.Thread(target=serve_origin, daemon=True)
+        relay_thread = threading.Thread(target=serve_relay, daemon=True)
+        origin_thread.start()
+        relay_thread.start()
+        try:
+            with client:
+                client.settimeout(2)
+                client.sendall(b"request")
+                client.shutdown(socket.SHUT_WR)
+                self.assertEqual(b"response", client.recv(1024))
+        finally:
+            gateway_client.close()
+            gateway_upstream.close()
+            origin.close()
+            origin_thread.join(3)
+            relay_thread.join(3)
+        self.assertFalse(origin_thread.is_alive())
+        self.assertFalse(relay_thread.is_alive())
+        self.assertEqual([], failures)
 
     def test_bad_token_never_dials(self):
         def forbidden(*args, **kwargs):

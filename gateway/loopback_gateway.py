@@ -88,10 +88,12 @@ def authorize(request: bytes, config: GatewayConfig):
 def relay(tls: ssl.SSLSocket, upstream: socket.socket):
     deadline = time.monotonic() + MAX_SESSION_SECONDS
     totals = {tls: 0, upstream: 0}
+    client_read_open = True
     # One thread handles both directions; no unbounded queues or per-client workers.
     while time.monotonic() < deadline:
-        ready, _, _ = select.select([tls, upstream], [], [], 0.2)
-        if tls.pending() and tls not in ready:
+        readers = [upstream, tls] if client_read_open else [upstream]
+        ready, _, _ = select.select(readers, [], [], 0.2)
+        if client_read_open and tls.pending() and tls not in ready:
             ready.append(tls)
         for source in ready:
             destination = upstream if source is tls else tls
@@ -101,7 +103,14 @@ def relay(tls: ssl.SSLSocket, upstream: socket.socket):
             except socket.timeout:
                 continue
             if not chunk:
-                return
+                if source is upstream:
+                    return
+                # A client can finish its request without closing its read
+                # direction. Preserve the upstream response instead of
+                # discarding it at the first client-side EOF.
+                client_read_open = False
+                upstream.shutdown(socket.SHUT_WR)
+                continue
             totals[source] += len(chunk)
             if totals[source] > MAX_BYTES_PER_DIRECTION:
                 return
