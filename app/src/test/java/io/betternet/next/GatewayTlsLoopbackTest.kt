@@ -253,6 +253,79 @@ class GatewayTlsLoopbackTest {
         }
     }
 
+    @Test fun dnsBoundClientFinHalfClosesTlsWithoutDiscardingLateGatewayResponse() {
+        // The real dormant composition must propagate a TUN FIN as TLS
+        // close_notify, while preserving the gateway -> TUN response path.
+        // No Android VPN, external network, or public listener is involved.
+        val packets = TunTcpSynAckTest()
+        val token = "TestOnlyOpaqueToken0123456789"
+        val requestBytes = "GET /after-fin HTTP/1.1\r\nHost: dns.example\r\n\r\n".toByteArray()
+        val responseBytes = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".toByteArray()
+        for (version in listOf(4, 6)) {
+            val tls = contexts()
+            val syn = packets.request(version)
+            val binding = DnsDestinationBindingTest().bindingFor(syn)
+            withServer(tls.server, { gateway ->
+                gateway.startHandshake()
+                val reader = gateway.inputStream.bufferedReader()
+                assertTrue(reader.readLine().startsWith("CONNECT "))
+                assertTrue(reader.readLine().startsWith("Host: "))
+                assertEquals("Proxy-Authorization: Bearer $token", reader.readLine())
+                assertEquals("", reader.readLine())
+                gateway.outputStream.write("HTTP/1.1 200 OK\r\n\r\n".toByteArray())
+                gateway.outputStream.flush()
+                assertArrayEquals(requestBytes, gateway.inputStream.readNBytes(requestBytes.size))
+                assertEquals("TUN FIN did not half-close TLS output", -1, gateway.inputStream.read())
+                gateway.outputStream.write(responseBytes)
+                gateway.outputStream.flush()
+            }) { address ->
+                val tunOut = java.io.ByteArrayOutputStream()
+                val bridge = connectDnsBoundTestTcpBridge(
+                    binding, syn, 100, tunOut, address, "gateway.example", token, 3_000,
+                    1280, 100L, { true }, tlsFactory = tls.trustedClient.socketFactory,
+                )
+                try {
+                    fun deliver(packet: TunIngressResult.Packet, time: Long): ByteArray {
+                        tunOut.reset()
+                        assertTrue(bridge.pumpOneTunPacket(
+                            java.io.ByteArrayInputStream(packet.bytes), tunOut, time))
+                        return tunOut.toByteArray()
+                    }
+                    assertTrue(deliver(packets.finalAck(syn, 100L), 101).isEmpty())
+                    val payloadAck = deliver(packets.finalAck(syn, 100L,
+                        flags = 0x18, payload = requestBytes), 102)
+                    assertTrue(payloadAck.isNotEmpty())
+                    val finAck = deliver(packets.finalAck(syn, 100L,
+                        flags = 0x11, sequence = requestBytes.size.toLong()), 103)
+                    assertTrue("A real TLS half-close must acknowledge TUN FIN", finAck.isNotEmpty())
+                    val ip = if (version == 4) 20 else 40
+                    assertEquals(0, packets.tcpChecksum(finAck, version))
+                    val received = java.io.ByteArrayOutputStream()
+                    var now = 103L
+                    var idlePolls = 0
+                    while (received.size() < responseBytes.size) {
+                        tunOut.reset()
+                        if (!bridge.pumpOneGatewayReply(tunOut, ++now)) {
+                            assertTrue("Late response lost after client FIN", ++idlePolls < 12)
+                            continue
+                        }
+                        val response = tunOut.toByteArray()
+                        assertEquals(0, packets.tcpChecksum(response, version))
+                        val payload = response.copyOfRange(ip + 20, response.size)
+                        assertTrue(payload.isNotEmpty())
+                        received.write(payload)
+                        assertTrue(deliver(packets.finalAck(syn, 100L,
+                            sequence = requestBytes.size.toLong() + 1,
+                            acknowledgement = 101L + received.size()), ++now).isEmpty())
+                    }
+                    assertArrayEquals(responseBytes, received.toByteArray())
+                } finally {
+                    bridge.close()
+                }
+            }
+        }
+    }
+
     @Test fun authenticatedLoopbackConnectCarriesIpv4AndIpv6TunTcpBytes() {
         // Real TLS and CONNECT framing, but only a local test peer: no Android
         // VPN, real gateway deployment, or destination HTTPS is exercised.

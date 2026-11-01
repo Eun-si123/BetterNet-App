@@ -178,7 +178,12 @@ internal fun connectDnsBoundTestTcpBridge(
         // A read timeout means "no bytes yet", not EOF or a second CONNECT.
         tunnel.soTimeout = 200
         val bridge = OfflineTcpTunBridge(tunnel.inputStream, tunnel.outputStream, mtu, serverIsn,
-            allowedDestination = binding.address, onClose = { tunnel.close() })
+            allowedDestination = binding.address,
+            // TLS output shutdown sends close_notify without discarding the
+            // still-readable response half of the authenticated CONNECT stream.
+            // Closing outputStream itself may close both directions.
+            upstreamHalfClose = { tunnel.shutdownOutput() },
+            onClose = { tunnel.close() })
         check(bridge.pumpOneTunPacket(ByteArrayInputStream(syn.bytes), tunOutput, nowMillis)) {
             "Initial authorized SYN could not start the bridge"
         }
