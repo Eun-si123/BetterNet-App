@@ -193,6 +193,85 @@ class RestrictedTunWorkerTest {
         }
     }
 
+    @Test fun lifecycleRevokeBeforeAdoptionRejectsAndReleasesDescriptor() {
+        val lifecycle = RestrictedTunLifecycle()
+        lifecycle.cancel()
+        val closes = AtomicInteger()
+        val worker = RestrictedTunWorker(RestrictedTunPump(
+            RestrictedTunSession(dispatcher(), forbiddenInput, ByteArrayOutputStream(),
+                { closes.incrementAndGet() }, waitForReadable = { false })) { 100L })
+        try {
+            lifecycle.adopt(worker)
+            fail("Revoked lifecycle must not adopt a TUN")
+        } catch (expected: IllegalStateException) {
+            assertEquals("VPN lifecycle already revoked", expected.message)
+        }
+        assertEquals(1, closes.get())
+        lifecycle.cancel()
+        assertEquals(1, closes.get())
+    }
+
+    @Test fun lifecycleRevokeCancelsAdoptedWorkerWithoutStartingIt() {
+        val lifecycle = RestrictedTunLifecycle()
+        val closes = AtomicInteger()
+        val worker = RestrictedTunWorker(RestrictedTunPump(
+            RestrictedTunSession(dispatcher(), forbiddenInput, ByteArrayOutputStream(),
+                { closes.incrementAndGet() }, waitForReadable = { false })) { 100L })
+        assertSame(worker, lifecycle.adopt(worker))
+        assertEquals(0, closes.get())
+        lifecycle.cancel()
+        lifecycle.cancel() // onRevoke() and onDestroy() may both run.
+        assertEquals(1, closes.get())
+        worker.start()
+        assertTrue(worker.awaitStopped(3000))
+        assertNull(worker.failure)
+    }
+
+    @Test fun lifecycleRevokeStopsRunningOwnerAndReleasesDescriptorOnce() {
+        val lifecycle = RestrictedTunLifecycle()
+        val entered = CountDownLatch(1)
+        val released = CountDownLatch(1)
+        val closes = AtomicInteger()
+        val worker = lifecycle.adopt(RestrictedTunWorker(RestrictedTunPump(
+            RestrictedTunSession(dispatcher(), forbiddenInput, ByteArrayOutputStream(), {
+                closes.incrementAndGet()
+                released.countDown()
+            }, waitForReadable = {
+                entered.countDown()
+                assertTrue(released.await(3, TimeUnit.SECONDS))
+                false
+            })) { 100L }))
+        worker.start()
+        assertTrue(entered.await(3, TimeUnit.SECONDS))
+        lifecycle.cancel()
+        lifecycle.cancel()
+        assertTrue(worker.awaitStopped(3000))
+        assertNull(worker.failure)
+        assertEquals(1, closes.get())
+    }
+
+    @Test fun lifecycleRejectsSecondWorkerAndClosesOnlyRejectedDescriptor() {
+        val lifecycle = RestrictedTunLifecycle()
+        val firstCloses = AtomicInteger()
+        val secondCloses = AtomicInteger()
+        fun worker(closes: AtomicInteger) = RestrictedTunWorker(RestrictedTunPump(
+            RestrictedTunSession(dispatcher(), forbiddenInput, ByteArrayOutputStream(),
+                { closes.incrementAndGet() }, waitForReadable = { false })) { 100L })
+        val first = lifecycle.adopt(worker(firstCloses))
+        try {
+            lifecycle.adopt(worker(secondCloses))
+            fail("Second worker must not replace the first")
+        } catch (expected: IllegalStateException) {
+            assertEquals("TUN worker already owned", expected.message)
+        }
+        assertEquals(0, firstCloses.get())
+        assertEquals(1, secondCloses.get())
+        lifecycle.cancel()
+        first.start()
+        assertTrue(first.awaitStopped(3000))
+        assertEquals(1, firstCloses.get())
+    }
+
     @Test fun invalidJoinCannotStartOrBlockWorker() {
         val session = RestrictedTunSession(dispatcher(), forbiddenInput,
             ByteArrayOutputStream(), {}, waitForReadable = { false })

@@ -27,6 +27,18 @@ import javax.net.ssl.SSLSocket
  * consent, establishes a TUN, or forwards packets until a safe gateway exists.
  */
 class SelectedAppVpnService : VpnService() {
+    private val tunLifecycle = RestrictedTunLifecycle()
+
+    override fun onRevoke() {
+        tunLifecycle.cancel()
+        super.onRevoke()
+    }
+
+    override fun onDestroy() {
+        tunLifecycle.cancel()
+        super.onDestroy()
+    }
+
     /** Future activation must use this scoped builder, never an unscoped fallback. */
     internal fun newSelectedAppBuilder(selectedPackage: String?): Builder {
         return Builder().apply {
@@ -81,10 +93,10 @@ class SelectedAppVpnService : VpnService() {
     internal fun newRestrictedTunWorker(
         descriptor: ParcelFileDescriptor,
         dispatcher: RestrictedTestTunDispatcher,
-    ): RestrictedTunWorker = RestrictedTunWorker(
+    ): RestrictedTunWorker = tunLifecycle.adopt(RestrictedTunWorker(
         RestrictedTunPump(ownEstablishedRestrictedTestTun(descriptor, dispatcher),
             SystemClock::elapsedRealtime),
-    )
+    ))
 
     /** A future TLS gateway dial must protect its socket before connecting. */
     internal fun newProtectedGatewaySocket(address: InetSocketAddress, timeoutMs: Int): Socket =
