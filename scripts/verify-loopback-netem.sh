@@ -29,7 +29,7 @@ ip netns exec "$namespace" python3 -m unittest discover -s gateway/tests -q
 
 # Only this disposable namespace's loopback is impaired.
 ip netns exec "$namespace" tc qdisc add dev lo root netem \
-  delay 25ms 5ms loss 3% seed 424242
+  delay 25ms 5ms loss 3%
 echo "Impaired: isolated loopback, 25ms +/- 5ms delay and 3% loss"
 ip netns exec "$namespace" python3 -m unittest discover -s gateway/tests -q
 stats="$(ip netns exec "$namespace" tc -s qdisc show dev lo)"
