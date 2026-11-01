@@ -56,10 +56,12 @@ class SelectedAppVpnService : VpnService() {
      * This does not establish a TUN or request Android VPN consent.
      */
     internal fun newRestrictedTestTunBuilder(
-        selectedPackage: String?, plan: RestrictedTestTunPlan,
+        selectedPackage: String?, configuration: RestrictedTestConfiguration,
     ): Builder {
         val builder = newSelectedAppBuilder(selectedPackage)
-        applyRestrictedTestTunPlan(plan,
+        // Derive routes from the validated, owner-approved configuration; a
+        // caller must not substitute an unrelated destination-only plan.
+        applyRestrictedTestTunPlan(configuration.newTunPlan(),
             addAddress = { address, prefix -> builder.addAddress(address, prefix); Unit },
             addRoute = { address, prefix -> builder.addRoute(address, prefix); Unit },
             addDnsServer = { address -> builder.addDnsServer(address); Unit },
@@ -157,18 +159,16 @@ class SelectedAppVpnService : VpnService() {
         manager: ConnectivityManager,
         network: Network,
         selectedPackage: String?,
-        plan: RestrictedTestTunPlan,
-        gatewayName: String,
-        gatewayPort: Int,
-        dnsServerName: String,
-        approvedHost: String,
-        bearerToken: String,
+        configuration: RestrictedTestConfiguration,
         timeoutMs: Int,
     ): RestrictedTestTunDispatcher {
         requireSelectedPackage(selectedPackage, packageName)
+        // Route, DNS grant and CONNECT authority must originate from one
+        // validated configuration, not independently supplied arguments.
         return newDormantRestrictedGatewayDispatcher(
-            plan, gatewayName, gatewayPort, dnsServerName, approvedHost,
-            bearerToken, timeoutMs,
+            configuration.newTunPlan(), configuration.gatewayName,
+            configuration.gatewayPort, configuration.dnsServerName,
+            configuration.approvedHost, configuration.bearerToken, timeoutMs,
             lookupOnUnderlyingNetwork = { host ->
                 requireUnderlyingInternetNetwork(manager, network)
                 network.getAllByName(host)
