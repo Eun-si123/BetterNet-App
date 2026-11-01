@@ -100,6 +100,73 @@ class RestrictedTunWorkerTest {
         assertEquals(1, closes.get())
     }
 
+    @Test fun joinCannotReportStoppedWhileThreadLaunchIsPending() {
+        val launchEntered = CountDownLatch(1)
+        val allowLaunch = CountDownLatch(1)
+        val joinEntered = CountDownLatch(1)
+        val joinFinished = CountDownLatch(1)
+        val closes = AtomicInteger()
+        val session = RestrictedTunSession(dispatcher(), forbiddenInput,
+            ByteArrayOutputStream(), { closes.incrementAndGet() },
+            waitForReadable = { false })
+        val worker = RestrictedTunWorker(RestrictedTunPump(session) { 100L }) { thread ->
+            launchEntered.countDown()
+            check(allowLaunch.await(3, TimeUnit.SECONDS))
+            thread.start()
+        }
+        val starter = Thread { worker.start() }
+        var joinResult = false
+        val joiner = Thread {
+            joinEntered.countDown()
+            joinResult = worker.stopAndJoin(3000)
+            joinFinished.countDown()
+        }
+        starter.start()
+        try {
+            assertTrue(launchEntered.await(3, TimeUnit.SECONDS))
+            joiner.start()
+            assertTrue(joinEntered.await(3, TimeUnit.SECONDS))
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
+            while (joiner.isAlive && joiner.state != Thread.State.BLOCKED &&
+                System.nanoTime() < deadline) Thread.sleep(5)
+            assertEquals("Join must wait for the launch to finish",
+                Thread.State.BLOCKED, joiner.state)
+            assertEquals(1L, joinFinished.count)
+        } finally {
+            allowLaunch.countDown()
+        }
+        starter.join(3000)
+        joiner.join(3000)
+        assertFalse(starter.isAlive)
+        assertFalse(joiner.isAlive)
+        assertTrue(joinResult)
+        assertNull(worker.failure)
+        assertEquals(1, closes.get())
+    }
+
+    @Test fun failedThreadLaunchCannotBeMistakenForCompletedWorker() {
+        val closes = AtomicInteger()
+        val session = RestrictedTunSession(dispatcher(), forbiddenInput,
+            ByteArrayOutputStream(), { closes.incrementAndGet() },
+            waitForReadable = { false })
+        val worker = RestrictedTunWorker(RestrictedTunPump(session) { 100L }) {
+            throw IllegalStateException("launch rejected")
+        }
+        try {
+            worker.start()
+            fail("Thread launch must fail")
+        } catch (expected: IllegalStateException) {
+            assertEquals("launch rejected", expected.message)
+        }
+        assertEquals(1, closes.get())
+        try {
+            worker.awaitStopped(100)
+            fail("Never claim an unlaunched thread has stopped")
+        } catch (expected: IllegalStateException) {
+            assertEquals("TUN worker has not started", expected.message)
+        }
+    }
+
     @Test fun invalidJoinCannotStartOrBlockWorker() {
         val session = RestrictedTunSession(dispatcher(), forbiddenInput,
             ByteArrayOutputStream(), {}, waitForReadable = { false })

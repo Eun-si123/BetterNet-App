@@ -12,8 +12,15 @@ import java.util.concurrent.atomic.AtomicBoolean
  * background thread, never the Android main thread; it is bounded because
  * a gateway read or a Linux TUN read may not wake immediately on fd close.
  */
-internal class RestrictedTunWorker(private val pump: RestrictedTunPump) {
+internal class RestrictedTunWorker(
+    private val pump: RestrictedTunPump,
+    private val launchThread: (Thread) -> Unit = { it.start() },
+) {
     private val started = AtomicBoolean(false)
+    private val launchLock = Any()
+    // CAS alone is insufficient: join() on a not-yet-started Thread returns
+    // immediately, falsely reporting shutdown while start() is still launching.
+    private var launched = false
     @Volatile var failure: Throwable? = null
         private set
 
@@ -27,10 +34,11 @@ internal class RestrictedTunWorker(private val pump: RestrictedTunPump) {
         }
     }, "BetterNet-RestrictedTun")
 
-    fun start() {
+    fun start() = synchronized(launchLock) {
         check(started.compareAndSet(false, true)) { "TUN worker already started" }
         try {
-            owner.start()
+            launchThread(owner)
+            launched = true
         } catch (error: Throwable) {
             try { pump.requestStop() } catch (closeError: Throwable) {
                 error.addSuppressed(closeError)
@@ -57,7 +65,9 @@ internal class RestrictedTunWorker(private val pump: RestrictedTunPump) {
 
     private fun validateJoin(timeoutMs: Long) {
         require(timeoutMs in 1..10_000) { "TUN worker join must be bounded" }
-        check(started.get()) { "TUN worker has not started" }
+        synchronized(launchLock) {
+            check(launched) { "TUN worker has not started" }
+        }
         check(Thread.currentThread() !== owner) { "TUN worker cannot join itself" }
     }
 }
