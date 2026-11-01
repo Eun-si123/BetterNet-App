@@ -234,6 +234,44 @@ class SelectedAppVpnServiceTest {
         assertEquals(listOf("${ipv6.hostAddress}:1000", "${ipv4.hostAddress}:700"), attempted)
     }
 
+    @Test fun fourAddressCapDoesNotHideTheOtherIpFamily() {
+        for (firstIsV6 in listOf(true, false)) {
+            val v6 = (1..4).map { index ->
+                InetAddress.getByAddress(ByteArray(16).apply {
+                    this[0] = 0x20
+                    this[1] = 0x01
+                    this[15] = index.toByte()
+                })
+            }
+            val v4 = (1..4).map { index ->
+                InetAddress.getByAddress(byteArrayOf(198.toByte(), 51, 100, index.toByte()))
+            }
+            val preferred = if (firstIsV6) v6 else v4
+            val fallback = if (firstIsV6) v4 else v6
+            val attempts = mutableListOf<InetAddress>()
+            val chosen = connectWithGatewayAddressFallback(
+                "gateway.example", 443, 1_000,
+                { (preferred + fallback).toTypedArray() },
+                { address, timeout ->
+                    attempts.add(address.address)
+                    if (address.address == fallback.first()) address
+                    else {
+                        connectProtectedSocket(address, timeout, { true }, {
+                            object : Socket() {
+                                override fun connect(endpoint: SocketAddress?, timeout: Int) {
+                                    throw NoRouteToHostException("First address family unavailable")
+                                }
+                            }
+                        }).close()
+                        throw AssertionError("Unreachable address unexpectedly connected")
+                    }
+                },
+            )
+            assertEquals(fallback.first(), chosen.address)
+            assertEquals(listOf(preferred.first(), fallback.first()), attempts)
+        }
+    }
+
     @Test fun eachFallbackAttemptProtectsAndBindsItsOwnSocketBeforeDial() {
         val first = InetAddress.getByAddress(ByteArray(16).apply { this[15] = 1 })
         val second = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))

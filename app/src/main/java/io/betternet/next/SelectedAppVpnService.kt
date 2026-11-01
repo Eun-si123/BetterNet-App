@@ -325,8 +325,19 @@ private fun resolveGatewayAddresses(
 ): List<InetSocketAddress> {
     require(isValidGatewayName(hostname)) { "Invalid gateway DNS name" }
     require(port in 1..65535) { "Invalid gateway port" }
-    // Cap retries even when a resolver supplies a very long address list.
-    val addresses = lookup(hostname).distinct().take(4)
+    // Preserve the resolver's first-family preference, but do not let four
+    // unreachable AAAA (or A) records hide a usable address of the other
+    // family behind the four-attempt limit. This is sequential fallback, not
+    // parallel Happy Eyeballs; every attempt still uses the same Network.
+    val unique = lookup(hostname).distinct()
+    val firstFamily = unique.firstOrNull()?.address?.size
+    val primary = unique.filter { it.address.size == firstFamily }.iterator()
+    val secondary = unique.filter { it.address.size != firstFamily }.iterator()
+    val addresses = mutableListOf<InetAddress>()
+    while (addresses.size < 4 && (primary.hasNext() || secondary.hasNext())) {
+        if (primary.hasNext()) addresses.add(primary.next())
+        if (addresses.size < 4 && secondary.hasNext()) addresses.add(secondary.next())
+    }
     require(addresses.isNotEmpty()) { "Underlying network returned no gateway addresses" }
     return addresses.map { InetSocketAddress(it, port) }
 }
