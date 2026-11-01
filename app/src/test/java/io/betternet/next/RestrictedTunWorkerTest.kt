@@ -126,12 +126,8 @@ class RestrictedTunWorkerTest {
             assertTrue(launchEntered.await(3, TimeUnit.SECONDS))
             joiner.start()
             assertTrue(joinEntered.await(3, TimeUnit.SECONDS))
-            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
-            while (joiner.isAlive && joiner.state != Thread.State.BLOCKED &&
-                System.nanoTime() < deadline) Thread.sleep(5)
-            assertEquals("Join must wait for the launch to finish",
-                Thread.State.BLOCKED, joiner.state)
-            assertEquals(1L, joinFinished.count)
+            assertFalse("Join must not claim completion before launch finishes",
+                joinFinished.await(50, TimeUnit.MILLISECONDS))
         } finally {
             allowLaunch.countDown()
         }
@@ -140,6 +136,36 @@ class RestrictedTunWorkerTest {
         assertFalse(starter.isAlive)
         assertFalse(joiner.isAlive)
         assertTrue(joinResult)
+        assertNull(worker.failure)
+        assertEquals(1, closes.get())
+    }
+
+    @Test fun joinDeadlineIncludesPendingThreadLaunch() {
+        val launchEntered = CountDownLatch(1)
+        val allowLaunch = CountDownLatch(1)
+        val closes = AtomicInteger()
+        val session = RestrictedTunSession(dispatcher(), forbiddenInput,
+            ByteArrayOutputStream(), { closes.incrementAndGet() },
+            waitForReadable = { false })
+        val worker = RestrictedTunWorker(RestrictedTunPump(session) { 100L }) { thread ->
+            launchEntered.countDown()
+            check(allowLaunch.await(3, TimeUnit.SECONDS))
+            thread.start()
+        }
+        val starter = Thread { worker.start() }
+        starter.start()
+        try {
+            assertTrue(launchEntered.await(3, TimeUnit.SECONDS))
+            // A blocked launch must not consume an unbounded part of this join.
+            assertFalse(worker.stopAndJoin(30))
+            assertEquals(1, closes.get())
+            assertTrue(starter.isAlive)
+        } finally {
+            allowLaunch.countDown()
+        }
+        starter.join(3000)
+        assertFalse(starter.isAlive)
+        assertTrue(worker.stopAndJoin(3000))
         assertNull(worker.failure)
         assertEquals(1, closes.get())
     }

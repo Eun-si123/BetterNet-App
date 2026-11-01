@@ -1,5 +1,7 @@
 package io.betternet.next
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -17,10 +19,10 @@ internal class RestrictedTunWorker(
     private val launchThread: (Thread) -> Unit = { it.start() },
 ) {
     private val started = AtomicBoolean(false)
-    private val launchLock = Any()
-    // CAS alone is insufficient: join() on a not-yet-started Thread returns
-    // immediately, falsely reporting shutdown while start() is still launching.
-    private var launched = false
+    // Launch may block in Thread.start(). Waiting for it must count toward
+    // the join deadline; holding a monitor would make a bounded join unbounded.
+    private val launchFinished = CountDownLatch(1)
+    @Volatile private var launched = false
     @Volatile var failure: Throwable? = null
         private set
 
@@ -34,7 +36,7 @@ internal class RestrictedTunWorker(
         }
     }, "BetterNet-RestrictedTun")
 
-    fun start() = synchronized(launchLock) {
+    fun start() {
         check(started.compareAndSet(false, true)) { "TUN worker already started" }
         try {
             launchThread(owner)
@@ -44,6 +46,8 @@ internal class RestrictedTunWorker(
                 error.addSuppressed(closeError)
             }
             throw error
+        } finally {
+            launchFinished.countDown()
         }
     }
 
@@ -59,15 +63,22 @@ internal class RestrictedTunWorker(
     /** Observe natural completion/failure without cancelling an active worker. */
     fun awaitStopped(timeoutMs: Long): Boolean {
         validateJoin(timeoutMs)
-        owner.join(timeoutMs)
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        if (!launchFinished.await(timeoutMs, TimeUnit.MILLISECONDS)) return false
+        check(launched) { "TUN worker has not started" }
+        val remainingNanos = deadline - System.nanoTime()
+        if (remainingNanos > 0) {
+            // Java join(0) waits forever; round a positive sub-ms remainder up.
+            val remainingMs = TimeUnit.NANOSECONDS.toMillis(remainingNanos) +
+                if (remainingNanos % 1_000_000L == 0L) 0L else 1L
+            owner.join(remainingMs)
+        }
         return !owner.isAlive
     }
 
     private fun validateJoin(timeoutMs: Long) {
         require(timeoutMs in 1..10_000) { "TUN worker join must be bounded" }
-        synchronized(launchLock) {
-            check(launched) { "TUN worker has not started" }
-        }
+        check(started.get()) { "TUN worker has not started" }
         check(Thread.currentThread() !== owner) { "TUN worker cannot join itself" }
     }
 }
