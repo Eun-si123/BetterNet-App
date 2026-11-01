@@ -31,6 +31,8 @@ jobs:
           done
           echo "::error::Android command-line SDK tools are missing"
           exit 1
+      - name: Verify isolated loopback gateway
+        run: python3 -m unittest discover -s gateway/tests -v
       - name: Test and build
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
       - name: Verify merged VPN manifest is not eligible for always-on
