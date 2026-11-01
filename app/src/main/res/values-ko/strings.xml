@@ -1,6 +1,6 @@
 <resources>
   <string name="app_name">BetterNet</string>
-  <string name="preview_scope">새 공개 앱의 초기 버전입니다. Android의 네트워크 상태만 확인하며, VPN·트래픽 중계·속도 최적화는 아직 구현되지 않았습니다.</string>
+  <string name="preview_scope">새 공개 앱의 초기 버전입니다. 네트워크 상태 확인과 선택적 Android VPN 권한 준비만 지원하며, VPN 연결·트래픽 중계·속도 최적화는 아직 구현되지 않았습니다.</string>
   <string name="not_checked">아직 연결 상태를 확인하지 않았습니다</string>
   <string name="refresh_network">현재 연결 상태 확인</string>
   <string name="state_disconnected">활성 네트워크 없음</string>
@@ -27,7 +27,7 @@
   <string name="vpn_readiness_vpn_active">BetterNet에 표시되는 네트워크에서 VPN이 감지되었습니다. BetterNet은 해당 VPN을 건드리지 않습니다.</string>
   <string name="vpn_readiness_network_unavailable">기본 네트워크를 확인할 수 없어 VPN 준비 상태를 판단할 수 없습니다. 아무것도 시작하지 않았습니다.</string>
   <string name="vpn_readiness_unavailable">Android가 준비 상태 확인을 허용하지 않았습니다. VPN은 시작되지 않았습니다.</string>
-  <string name="vpn_readiness_consent_required">BetterNet에서 VPN이 감지되지 않았으며 Android VPN 동의가 필요합니다. 동의 창이나 VPN 연결을 시작하지 않았습니다.</string>
+  <string name="vpn_readiness_consent_required">BetterNet에서 VPN이 감지되지 않았으며 Android VPN 권한이 아직 필요합니다. VPN 연결은 시작하지 않았습니다.</string>
   <string name="vpn_readiness_prepared">Android가 이전 VPN 준비 승인을 보고했습니다. 실제 연결이 아니며 VPN은 시작되지 않았습니다.</string>
   <string name="test_config_not_set">제한된 테스트 경로가 설정되지 않았습니다. 연결은 시작되지 않습니다.</string>
   <string name="configure_test_path">향후 테스트 경로 설정 (오프라인)</string>
@@ -41,4 +41,7 @@
   <string name="save_test_config">기기에 임시 설정</string>
   <string name="test_config_invalid">설정이 올바르지 않습니다. 이름, 공개 숫자 IP, 포트, 인증 정보 형식을 확인하세요.</string>
   <string name="test_config_summary">임시 설정만 완료: %1$s:%2$d → %3$s (%4$s). 트래픽은 라우팅되지 않습니다.</string>
+  <string name="request_vpn_consent">Android VPN 권한 요청 (연결 안 함)</string>
+  <string name="vpn_consent_warning">Android VPN 권한만 요청합니다. BetterNet은 아직 초기 개발 단계로 VPN 시작, 트래픽 수집, 게이트웨이 연결, 임시 인증 정보 사용을 하지 않습니다. Android VPN 권한은 기기 수준으로 부여되며 테스트 앱 선택을 해제해도 유지될 수 있습니다. 다른 VPN을 사용 중이면 취소하고 기존 VPN을 유지하세요.</string>
+  <string name="continue_to_system_consent">Android 동의 화면으로</string>
 </resources>

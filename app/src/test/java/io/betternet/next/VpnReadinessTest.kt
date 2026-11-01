@@ -33,4 +33,16 @@ class VpnReadinessTest {
         assertEquals(VpnReadiness.NEEDS_CONSENT, vpnReadiness(true, false, true, true, false))
         assertEquals(VpnReadiness.PREPARED, vpnReadiness(true, false, true, true, true))
     }
+
+    @Test fun consentPromptRequiresSelectionConfigurationAndObservableNonVpnNetwork() {
+        assertEquals(true, canRequestVpnConsent(true, true, VpnReadiness.NEEDS_CONSENT))
+        for (state in VpnReadiness.entries) {
+            if (state != VpnReadiness.NEEDS_CONSENT) {
+                assertEquals(false, canRequestVpnConsent(true, true, state))
+            }
+        }
+        assertEquals(false, canRequestVpnConsent(false, true, VpnReadiness.NEEDS_CONSENT))
+        assertEquals(false, canRequestVpnConsent(true, false, VpnReadiness.NEEDS_CONSENT))
+        assertEquals(false, canRequestVpnConsent(true, true, null))
+    }
 }

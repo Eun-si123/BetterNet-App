@@ -1,6 +1,6 @@
 <resources>
   <string name="app_name">BetterNet</string>
-  <string name="preview_scope">Early public app foundation. This only reads Android’s current network status. VPN, forwarding and network optimization are not yet available.</string>
+  <string name="preview_scope">Early public app foundation. Network status and optional Android VPN permission preparation only. No VPN connection, forwarding or optimization is available.</string>
   <string name="not_checked">No observation yet</string>
   <string name="refresh_network">Check connection</string>
   <string name="state_disconnected">No active network</string>
@@ -27,7 +27,7 @@
   <string name="vpn_readiness_vpn_active">A VPN is visible to BetterNet. BetterNet will not disturb it.</string>
   <string name="vpn_readiness_network_unavailable">No default network is observable. VPN readiness cannot be assessed; nothing was started.</string>
   <string name="vpn_readiness_unavailable">Android did not allow the readiness check. No VPN was started.</string>
-  <string name="vpn_readiness_consent_required">No VPN was visible to BetterNet; Android would require VPN consent. No prompt was opened and no VPN was started.</string>
+  <string name="vpn_readiness_consent_required">No VPN was visible to BetterNet; Android VPN permission is still required. No VPN was started.</string>
   <string name="vpn_readiness_prepared">Android reports prior VPN preparation. This is not a connection; no VPN was started.</string>
   <string name="test_config_not_set">No restricted test path configured. No connection is started.</string>
   <string name="configure_test_path">Configure future test path (offline)</string>
@@ -41,4 +41,7 @@
   <string name="save_test_config">Stage locally</string>
   <string name="test_config_invalid">Invalid configuration. Check names, public numeric IP, port and credential format.</string>
   <string name="test_config_summary">Staged only: %1$s:%2$d → %3$s (%4$s). No traffic is routed.</string>
+  <string name="request_vpn_consent">Request Android VPN permission (no connection)</string>
+  <string name="vpn_consent_warning">This asks Android for VPN permission only. BetterNet is still pre-alpha: it will NOT start a VPN, capture traffic, connect to a gateway, or use the staged credential. Android VPN permission is device-level and may remain granted after you clear the test app. If another VPN is active, cancel and keep using it.</string>
+  <string name="continue_to_system_consent">Continue to Android</string>
 </resources>
