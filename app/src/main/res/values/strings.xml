@@ -29,4 +29,16 @@
   <string name="vpn_readiness_unavailable">Android did not allow the readiness check. No VPN was started.</string>
   <string name="vpn_readiness_consent_required">No VPN was visible to BetterNet; Android would require VPN consent. No prompt was opened and no VPN was started.</string>
   <string name="vpn_readiness_prepared">Android reports prior VPN preparation. This is not a connection; no VPN was started.</string>
+  <string name="test_config_not_set">No restricted test path configured. No connection is started.</string>
+  <string name="configure_test_path">Configure future test path (offline)</string>
+  <string name="test_config_warning">Only stage a test configuration in memory. No VPN permission, network request, or routing is started. Use an independently approved public test destination and a disposable gateway credential. The configuration is lost when this screen is recreated.</string>
+  <string name="test_gateway_name">TLS gateway hostname</string>
+  <string name="test_gateway_port">TLS gateway port (1–65535)</string>
+  <string name="test_dns_name">DNS-over-TLS server hostname</string>
+  <string name="test_destination_host">Approved HTTPS destination hostname</string>
+  <string name="test_destination_ip">Approved numeric public IPv4 or IPv6</string>
+  <string name="test_gateway_token">Disposable bearer credential (16–256 base64url characters)</string>
+  <string name="save_test_config">Stage locally</string>
+  <string name="test_config_invalid">Invalid configuration. Check names, public numeric IP, port and credential format.</string>
+  <string name="test_config_summary">Staged only: %1$s:%2$d → %3$s (%4$s). No traffic is routed.</string>
 </resources>

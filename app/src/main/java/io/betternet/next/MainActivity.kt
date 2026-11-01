@@ -7,8 +7,11 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Bundle
+import android.text.InputType
+import android.view.View
 import android.util.TypedValue
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -16,6 +19,7 @@ import android.widget.TextView
 /** Local-only prototype: selection and read-only VPN readiness never grant access or route traffic. */
 class MainActivity : Activity() {
     private var selectedApp: AppChoice? = null
+    private var testConfiguration: RestrictedTestConfiguration? = null
     private var vpnStatus: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,6 +58,24 @@ class MainActivity : Activity() {
             setPadding(0, (16 * dp).toInt(), 0, 0)
         }
         vpnStatus = readiness
+        val configurationStatus = TextView(this).apply {
+            setText(R.string.test_config_not_set)
+            setPadding(0, (16 * dp).toInt(), 0, 0)
+        }
+        val configureButton = Button(this).apply {
+            setText(R.string.configure_test_path)
+            isEnabled = false
+            setOnClickListener {
+                if (selectedApp != null) {
+                    showRestrictedTestConfigurationDialog { configuration ->
+                        testConfiguration = configuration
+                        configurationStatus.text = getString(R.string.test_config_summary,
+                            configuration.gatewayName, configuration.gatewayPort,
+                            configuration.approvedHost, configuration.approvedAddress.hostAddress)
+                    }
+                }
+            }
+        }
         val checkVpnButton = Button(this).apply {
             setText(R.string.check_vpn_readiness)
             isEnabled = false
@@ -64,6 +86,9 @@ class MainActivity : Activity() {
             isEnabled = false
             setOnClickListener {
                 selectedApp = null
+                testConfiguration = null
+                configurationStatus.setText(R.string.test_config_not_set)
+                configureButton.isEnabled = false
                 selectedStatus.setText(R.string.no_app_selected)
                 vpnStatus?.setText(R.string.vpn_readiness_not_checked)
                 checkVpnButton.isEnabled = false
@@ -85,6 +110,9 @@ class MainActivity : Activity() {
                         .setTitle(R.string.select_test_app)
                         .setItems(labels) { _, index ->
                             selectedApp = choices[index]
+                            testConfiguration = null
+                            configurationStatus.setText(R.string.test_config_not_set)
+                            configureButton.isEnabled = true
                             selectedStatus.text = selectedApp?.let { chosen ->
                                 getString(R.string.selected_app_summary, chosen.label, chosen.packageName)
                             } ?: getString(R.string.no_app_selected)
@@ -98,6 +126,8 @@ class MainActivity : Activity() {
             }
         })
         root.addView(clearButton)
+        root.addView(configurationStatus)
+        root.addView(configureButton)
         root.addView(readiness)
         root.addView(checkVpnButton)
         // Keep the selection and clear controls reachable on small screens or large fonts.
@@ -112,6 +142,63 @@ class MainActivity : Activity() {
         super.onResume()
         // Permission and network ownership can change while this activity is backgrounded.
         vpnStatus?.setText(R.string.vpn_readiness_not_checked)
+    }
+
+    /**
+     * Only stages an owner-approved configuration in this Activity's memory.
+     * No credential is stored, logged, transmitted or passed to the dormant VPN.
+     * A future activation must revalidate app selection, consent and allowlists.
+     */
+    private fun showRestrictedTestConfigurationDialog(
+        onConfigured: (RestrictedTestConfiguration) -> Unit,
+    ) {
+        val dp = resources.displayMetrics.density
+        val fields = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((16 * dp).toInt(), 0, (16 * dp).toInt(), 0)
+        }
+        fun field(hintRes: Int, type: Int = InputType.TYPE_CLASS_TEXT): EditText =
+            EditText(this).apply {
+                setHint(hintRes)
+                inputType = type
+                isSaveEnabled = false
+                importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+                fields.addView(this)
+            }
+        val gatewayName = field(R.string.test_gateway_name)
+        val gatewayPort = field(R.string.test_gateway_port, InputType.TYPE_CLASS_NUMBER)
+        val dnsName = field(R.string.test_dns_name)
+        val approvedHost = field(R.string.test_destination_host)
+        val approvedIp = field(R.string.test_destination_ip)
+        val token = field(R.string.test_gateway_token,
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
+        val error = TextView(this)
+        fields.addView(error)
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.configure_test_path)
+            .setMessage(R.string.test_config_warning)
+            .setView(ScrollView(this).apply { addView(fields) })
+            .setPositiveButton(R.string.save_test_config, null)
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                try {
+                    val configuration = RestrictedTestConfiguration(
+                        gatewayName.text.toString(), gatewayPort.text.toString().toIntOrNull() ?: 0,
+                        dnsName.text.toString(), approvedHost.text.toString(),
+                        approvedIp.text.toString(), token.text.toString())
+                    onConfigured(configuration)
+                    dialog.dismiss()
+                } catch (_: IllegalArgumentException) {
+                    // Do not echo credentials or arbitrary exception text to UI/logs.
+                    error.setText(R.string.test_config_invalid)
+                }
+            }
+        }
+        dialog.setOnDismissListener { token.text.clear() }
+        dialog.show()
     }
 
     private fun checkVpnReadiness() {

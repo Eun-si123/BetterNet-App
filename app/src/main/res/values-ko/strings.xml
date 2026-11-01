@@ -29,4 +29,16 @@
   <string name="vpn_readiness_unavailable">Android가 준비 상태 확인을 허용하지 않았습니다. VPN은 시작되지 않았습니다.</string>
   <string name="vpn_readiness_consent_required">BetterNet에서 VPN이 감지되지 않았으며 Android VPN 동의가 필요합니다. 동의 창이나 VPN 연결을 시작하지 않았습니다.</string>
   <string name="vpn_readiness_prepared">Android가 이전 VPN 준비 승인을 보고했습니다. 실제 연결이 아니며 VPN은 시작되지 않았습니다.</string>
+  <string name="test_config_not_set">제한된 테스트 경로가 설정되지 않았습니다. 연결은 시작되지 않습니다.</string>
+  <string name="configure_test_path">향후 테스트 경로 설정 (오프라인)</string>
+  <string name="test_config_warning">테스트 설정을 메모리에만 임시 보관합니다. VPN 권한 요청, 네트워크 접속, 트래픽 라우팅은 하지 않습니다. 별도로 승인한 공개 테스트 목적지와 일회용 게이트웨이 인증 정보를 사용하세요. 화면이 다시 생성되면 설정이 사라집니다.</string>
+  <string name="test_gateway_name">TLS 게이트웨이 호스트 이름</string>
+  <string name="test_gateway_port">TLS 게이트웨이 포트 (1–65535)</string>
+  <string name="test_dns_name">DNS-over-TLS 서버 호스트 이름</string>
+  <string name="test_destination_host">승인된 HTTPS 목적지 호스트 이름</string>
+  <string name="test_destination_ip">승인된 공개 IPv4 또는 IPv6 숫자 주소</string>
+  <string name="test_gateway_token">일회용 Bearer 인증 정보 (base64url 16–256자)</string>
+  <string name="save_test_config">기기에 임시 설정</string>
+  <string name="test_config_invalid">설정이 올바르지 않습니다. 이름, 공개 숫자 IP, 포트, 인증 정보 형식을 확인하세요.</string>
+  <string name="test_config_summary">임시 설정만 완료: %1$s:%2$d → %3$s (%4$s). 트래픽은 라우팅되지 않습니다.</string>
 </resources>
