@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <!-- Required for a future explicitly consented, authenticated A1 gateway dial.
+       Declaring this permission does not initiate a connection or VPN. -->
+  <uses-permission android:name="android.permission.INTERNET" />
   <!-- Scoped launcher-app visibility; no QUERY_ALL_PACKAGES permission. -->
   <queries>
     <intent>

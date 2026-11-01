@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail CI if the dormant VPN can be selected as an always-on VPN.
+"""Fail CI if the dormant VPN can be selected as always-on or lacks Internet access.
 
 Check Android Gradle Plugin's merged manifest, not just the source manifest:
 library manifests and build variants can change the final service metadata.
@@ -11,6 +11,7 @@ from pathlib import Path
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 SERVICE = "io.betternet.next.SelectedAppVpnService"
 ALWAYS_ON = "android.net.VpnService.SUPPORTS_ALWAYS_ON"
+INTERNET = "android.permission.INTERNET"
 
 
 def is_opted_out(manifest: Path) -> bool:
@@ -27,6 +28,14 @@ def is_opted_out(manifest: Path) -> bool:
         if entry.get(ANDROID + "name") == ALWAYS_ON
     ]
     return settings == ["false"]
+
+
+def has_internet_permission(manifest: Path) -> bool:
+    root = ET.parse(manifest).getroot()
+    return any(
+        permission.get(ANDROID + "name") == INTERNET
+        for permission in root.findall("uses-permission")
+    )
 
 
 def main() -> int:
@@ -47,7 +56,10 @@ def main() -> int:
         if not is_opted_out(manifest):
             print(f"FAIL: dormant VPN always-on opt-out absent: {manifest}", file=sys.stderr)
             return 1
-    print(f"PASS: always-on disabled in {len(manifests)} debug merged manifest(s)")
+        if not has_internet_permission(manifest):
+            print(f"FAIL: A1 gateway Internet permission absent: {manifest}", file=sys.stderr)
+            return 1
+    print(f"PASS: always-on disabled and Internet permission present in {len(manifests)} debug merged manifest(s)")
     return 0
 
 
