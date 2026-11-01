@@ -273,12 +273,12 @@ class MainActivity : Activity() {
 
     /** Snapshot only; absence of a visible VPN is not proof of coexistence. */
     private fun observeVpnReadiness(): VpnReadiness? {
-        val selectedPackage = selectedApp?.packageName ?: return VpnReadiness.NO_APP
+        val selected = selectedApp ?: return VpnReadiness.NO_APP
         val manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
         return try {
             // The app can be removed or lose its launcher entry after selection.
             // Never request device-level VPN permission for a stale scope.
-            val selectedStillAvailable = availableLauncherApps().any { it.packageName == selectedPackage }
+            val selectedStillAvailable = selectedAppStillInstalled(selected, availableLauncherApps())
             val defaultCaps = manager.activeNetwork?.let { manager.getNetworkCapabilities(it) }
             var vpnFound = defaultCaps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
             var observationComplete = true
@@ -305,8 +305,10 @@ class MainActivity : Activity() {
             val pkg = info.activityInfo?.packageName ?: return@mapNotNull null
             // Launcher aliases may have misleading activity labels. Consent is per package,
             // so show the canonical application label rather than a shortcut label.
-            val appLabel = info.activityInfo.applicationInfo?.loadLabel(packageManager)
-            AppChoice(pkg, appLabel?.toString()?.trim().orEmpty().ifBlank { pkg })
+            val appInfo = info.activityInfo.applicationInfo ?: return@mapNotNull null
+            if (appInfo.packageName != pkg) return@mapNotNull null
+            val appLabel = appInfo.loadLabel(packageManager)
+            AppChoice(pkg, appLabel?.toString()?.trim().orEmpty().ifBlank { pkg }, appInfo.uid)
         }
         return selectableApps(candidates, packageName)
     }
