@@ -263,6 +263,7 @@ class MainActivity : Activity() {
         vpnStatus?.setText(when (observeVpnReadiness()) {
             null -> R.string.vpn_readiness_unavailable
             VpnReadiness.NO_APP -> R.string.vpn_readiness_no_app
+            VpnReadiness.APP_UNAVAILABLE -> R.string.vpn_readiness_app_unavailable
             VpnReadiness.VPN_ACTIVE -> R.string.vpn_readiness_vpn_active
             VpnReadiness.NETWORK_UNAVAILABLE -> R.string.vpn_readiness_network_unavailable
             VpnReadiness.NEEDS_CONSENT -> R.string.vpn_readiness_consent_required
@@ -272,9 +273,12 @@ class MainActivity : Activity() {
 
     /** Snapshot only; absence of a visible VPN is not proof of coexistence. */
     private fun observeVpnReadiness(): VpnReadiness? {
-        if (selectedApp == null) return VpnReadiness.NO_APP
+        val selectedPackage = selectedApp?.packageName ?: return VpnReadiness.NO_APP
         val manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
         return try {
+            // The app can be removed or lose its launcher entry after selection.
+            // Never request device-level VPN permission for a stale scope.
+            val selectedStillAvailable = availableLauncherApps().any { it.packageName == selectedPackage }
             val defaultCaps = manager.activeNetwork?.let { manager.getNetworkCapabilities(it) }
             var vpnFound = defaultCaps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
             var observationComplete = true
@@ -283,11 +287,13 @@ class MainActivity : Activity() {
                 if (caps == null) observationComplete = false
                 else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) vpnFound = true
             }
-            val available = defaultCaps != null
-            val prepared = if (available && observationComplete && !vpnFound) {
+            // INTERNET is only a declared capability, not proof of reachability.
+            // Do not require VALIDATED: restricted networks may lack it.
+            val available = defaultCaps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+            val prepared = if (selectedStillAvailable && available && observationComplete && !vpnFound) {
                 VpnService.prepare(this) == null
             } else false
-            vpnReadiness(true, vpnFound, available, observationComplete, prepared)
+            vpnReadiness(true, selectedStillAvailable, vpnFound, available, observationComplete, prepared)
         } catch (_: SecurityException) {
             null
         }
