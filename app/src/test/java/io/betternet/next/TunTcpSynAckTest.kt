@@ -738,6 +738,75 @@ class TunTcpSynAckTest {
         }
     }
 
+    @Test fun lostClientFinAckIsReplayedWithoutAnotherGatewayShutdown() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val isn = 123L
+            val flow = OfflineTcpHandshake()
+            assertNotNull(flow.begin(syn, isn, 1280, 100))
+            assertTrue(flow.acceptFinalAck(finalAck(syn, isn), 101))
+            var halfCloses = 0
+            val fin = finalAck(syn, isn, flags = 0x11)
+            val firstAck = flow.acceptClientFin(fin, 102) { halfCloses++ }!!
+            assertArrayEquals(firstAck, flow.acknowledgeClientFinReplay(fin, 103))
+            assertEquals(1, halfCloses)
+            val invalidChecksum = fin.bytes.clone().apply {
+                this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte()
+            }
+            for (bad in listOf(
+                finalAck(syn, isn, flags = 0x11, sequence = 1),
+                finalAck(syn, isn, flags = 0x11, acknowledgement = 999),
+                finalAck(syn, isn, flags = 0x11, sourcePort = 49153),
+                finalAck(syn, isn, flags = 0x19),
+                finalAck(syn, isn, flags = 0x11, payload = byteArrayOf(1)),
+                fin.copy(bytes = invalidChecksum),
+            )) {
+                assertNull(flow.acknowledgeClientFinReplay(bad, 104))
+            }
+            // A delayed duplicate FIN can still carry its original ACK after
+            // the gateway has delivered a later response.
+            assertNotNull(flow.offerResponse(byteArrayOf(42), 1280, 105))
+            assertTrue(flow.acceptResponseAck(finalAck(syn, isn,
+                sequence = 1, acknowledgement = isn + 2), 106))
+            val replay = flow.acknowledgeClientFinReplay(fin, 107)!!
+            val ip = if (version == 4) 20 else 40
+            assertEquals(0, tcpChecksum(replay, version))
+            assertEquals(isn + 2, u32(replay, ip + 4))
+            assertEquals(1L, u32(replay, ip + 8))
+            assertEquals(1, halfCloses)
+            assertNull(flow.stageClientPayload(finalAck(syn, isn, flags = 0x18,
+                sequence = 1, acknowledgement = isn + 2,
+                payload = byteArrayOf(1)), 108))
+        }
+    }
+
+    @Test fun dormantBridgeReacksDuplicateFinWithoutRepeatingHalfClose() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            var halfCloses = 0
+            val bridge = OfflineTcpTunBridge(
+                ByteArrayInputStream(byteArrayOf()), ByteArrayOutputStream(), 1280, 123L,
+                upstreamHalfClose = { halfCloses++ },
+                allowedDestination = syn.header.destination,
+            )
+            val output = ByteArrayOutputStream()
+            fun deliver(packet: TunIngressResult.Packet, time: Long): ByteArray {
+                output.reset()
+                assertTrue(bridge.pumpOneTunPacket(
+                    ByteArrayInputStream(packet.bytes), output, time))
+                return output.toByteArray()
+            }
+            assertTrue(deliver(syn, 100).isNotEmpty())
+            assertTrue(deliver(finalAck(syn, 123), 101).isEmpty())
+            val fin = finalAck(syn, 123, flags = 0x11)
+            val first = deliver(fin, 102)
+            assertTrue(first.isNotEmpty())
+            assertArrayEquals(first, deliver(fin, 103))
+            assertEquals(1, halfCloses)
+            bridge.close()
+        }
+    }
+
     @Test fun finHalfCloseFailureNeverAcknowledgesAndRetiresFlow() {
         val syn = request(4)
         val flow = OfflineTcpHandshake()

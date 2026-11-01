@@ -93,6 +93,7 @@ internal class OfflineTcpTunBridge(
                         }
                         flags == 0x11 && upstreamHalfClose != null ->
                             tcp.acceptClientFin(ingress, nowMillis, upstreamHalfClose)
+                                ?: tcp.acknowledgeClientFinReplay(ingress, nowMillis)
                         else -> {
                             if (tcp.stageClientPayload(ingress, nowMillis) != null) {
                                 tcp.forwardStagedClientPayload(tunnelOutput, nowMillis, clientWindow)

@@ -47,6 +47,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
     // Our SYN-ACK does not negotiate window scaling, so this is unscaled.
     private var peerReceiveWindow = 0
     private var clientHalfClosed = false
+    private var clientFinOriginalAck = -1L
     private var lastSeenAt = -1L
 
     fun begin(syn: TunIngressResult.Packet, serverIsn: Long, mtu: Int, nowMillis: Long,
@@ -81,6 +82,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         receiveWindow = clientWindow
         peerReceiveWindow = read16(syn.bytes, offset + 14)
         clientHalfClosed = false
+        clientFinOriginalAck = -1L
         lastSeenAt = nowMillis
         return synAck
     }
@@ -468,9 +470,43 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         }
         flow = current.copy(clientNext = next)
         clientHalfClosed = true
+        clientFinOriginalAck = read32(bytes, offset + 8)
         receiveWindow = 0
         if (serverHalfClosed) close()
         return ack
+    }
+
+    /**
+     * A lost FIN ACK must not strand the selected app in FIN-WAIT. Re-ACK a
+     * checksummed replay of the exact FIN sequence without half-closing the
+     * authenticated gateway a second time or accepting any new client bytes.
+     * The peer may still carry its original server ACK after later responses.
+     */
+    fun acknowledgeClientFinReplay(packet: TunIngressResult.Packet, nowMillis: Long): ByteArray? {
+        expire(nowMillis)
+        val current = flow ?: return null
+        if (!acked || !clientHalfClosed) return null
+        val bytes = packet.bytes
+        val header = parseTunPacketHeader(bytes, bytes.size) ?: return null
+        if (header.protocol != 6 || header.source != current.source ||
+            header.destination != current.destination ||
+            header.sourcePort != current.sourcePort ||
+            header.destinationPort != current.destinationPort ||
+            header.transportHeaderBytes != 20 ||
+            header.transportOffset + 20 != bytes.size) return null
+        val offset = header.transportOffset
+        val acknowledgement = read32(bytes, offset + 8)
+        if ((bytes[offset + 12].toInt() and 15) != 0 ||
+            (bytes[offset + 13].toInt() and 255) != 0x11 ||
+            read16(bytes, offset + 18) != 0 ||
+            read32(bytes, offset + 4) != ((current.clientNext - 1) and 0xffff_ffffL) ||
+            (acknowledgement != clientFinOriginalAck &&
+                acknowledgement != current.serverNext)) return null
+        return buildTcpDeliveryAck(
+            current.destination, current.source,
+            current.destinationPort, current.sourcePort,
+            current.serverNext, current.clientNext, 0,
+        )
     }
 
     /**
@@ -530,6 +566,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         receiveWindow = 0
         peerReceiveWindow = 0
         clientHalfClosed = false
+        clientFinOriginalAck = -1L
         lastSeenAt = -1L
     }
 
