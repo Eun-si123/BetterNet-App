@@ -230,11 +230,14 @@ class GatewayTests(unittest.TestCase):
                 client.shutdown(socket.SHUT_WR)
                 self.assertEqual(b"response", client.recv(1024))
         finally:
+            # The relay may still be completing its last send after recv()
+            # returns. Join first: closing its sockets from the test thread
+            # creates a spurious EBADF race on fast CI runners.
+            origin_thread.join(3)
+            relay_thread.join(3)
             gateway_client.close()
             gateway_upstream.close()
             origin.close()
-            origin_thread.join(3)
-            relay_thread.join(3)
         self.assertFalse(origin_thread.is_alive())
         self.assertFalse(relay_thread.is_alive())
         self.assertEqual([], failures)
