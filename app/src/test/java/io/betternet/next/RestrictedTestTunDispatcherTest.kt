@@ -4,6 +4,10 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.InetAddress
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -110,6 +114,46 @@ class RestrictedTestTunDispatcherTest {
             assertEquals(1, lookups)
             assertEquals(0, output.size())
             dispatcher.close()
+        }
+    }
+
+    @Test fun revokeWhileDnsGatewayIsBlockedSuppressesLateTunWrites() {
+        // Regression: the old session checked cancellation only AFTER the
+        // callback returned, so an in-flight DNS reply could write after revoke.
+        for (version in listOf(4, 6)) {
+            val syn = packets.request(version)
+            val p = plan(syn)
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val descriptorCloses = AtomicInteger()
+            val output = ByteArrayOutputStream()
+            val dispatcher = RestrictedTestTunDispatcher(p,
+                { _, tunOutput ->
+                    entered.countDown()
+                    check(release.await(3, TimeUnit.SECONDS))
+                    tunOutput.write(byteArrayOf(0x7f)) // must be rejected after revoke
+                    bindings.bindingFor(syn)
+                },
+                { _, _, _, _ -> throw AssertionError("No TCP gateway allowed") },
+            )
+            val session = RestrictedTunSession(dispatcher,
+                ByteArrayInputStream(udp(p)), output,
+                { descriptorCloses.incrementAndGet() })
+            val executor = Executors.newSingleThreadExecutor()
+            try {
+                val pending = executor.submit<Boolean> { session.pumpOneTunPacket(100) }
+                assertTrue("DNS callback did not enter", entered.await(3, TimeUnit.SECONDS))
+                session.requestStop() // simulates Android VPN permission revoke
+                release.countDown()
+                assertFalse(pending.get(3, TimeUnit.SECONDS))
+                assertEquals("No post-revoke TUN bytes", 0, output.size())
+                assertEquals(1, descriptorCloses.get())
+                assertFalse(session.pumpOneTunPacket(101))
+            } finally {
+                release.countDown()
+                executor.shutdownNow()
+                session.close()
+            }
         }
     }
 

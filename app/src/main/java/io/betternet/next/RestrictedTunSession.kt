@@ -28,6 +28,28 @@ internal class RestrictedTunSession(
     private var closed = false
     private val stopRequested = AtomicBoolean(false)
     private val descriptorReleased = AtomicBoolean(false)
+    // A gateway/DNS callback can resume after onRevoke() closes the TUN fd.
+    // Check again at the actual write boundary, not only after the callback:
+    // no late response should be handed to the selected app after cancellation.
+    // The descriptor close remains the cross-thread race backstop.
+    private val cancellableOutput = object : OutputStream() {
+        private fun ensureActive() {
+            if (stopRequested.get()) throw IOException("TUN session cancelled")
+        }
+        override fun write(value: Int) {
+            ensureActive()
+            output.write(value)
+        }
+        override fun write(bytes: ByteArray, offset: Int, length: Int) {
+            ensureActive()
+            output.write(bytes, offset, length)
+        }
+        override fun flush() {
+            ensureActive()
+            output.flush()
+        }
+        // Never close the shared descriptor via this stream wrapper.
+    }
 
     /** May be called by Android onRevoke/onDestroy from another thread.
      * Signals cancellation and closes the descriptor without touching the
@@ -63,7 +85,7 @@ internal class RestrictedTunSession(
             dispatcher.expireIdleFlow(observedAt)
             return@guarded true
         }
-        if (!dispatcher.pumpOneTunPacket(input, output, observedAt)) {
+        if (!dispatcher.pumpOneTunPacket(input, cancellableOutput, observedAt)) {
             close()
             false
         } else true
@@ -73,10 +95,10 @@ internal class RestrictedTunSession(
         pumpOneGatewayReply { nowMillis }
 
     internal fun pumpOneGatewayReply(nowMillis: () -> Long): Boolean =
-        guarded { dispatcher.pumpOneGatewayReply(output, nowMillis) }
+        guarded { dispatcher.pumpOneGatewayReply(cancellableOutput, nowMillis) }
 
     fun pumpPendingRetry(nowMillis: Long): Boolean =
-        guarded { dispatcher.pumpPendingRetry(output, nowMillis) }
+        guarded { dispatcher.pumpPendingRetry(cancellableOutput, nowMillis) }
 
     /**
      * A single serialized scheduling turn for a future consented test VPN.
