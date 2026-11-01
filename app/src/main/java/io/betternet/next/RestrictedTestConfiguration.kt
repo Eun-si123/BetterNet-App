@@ -27,12 +27,9 @@ internal class RestrictedTestConfiguration(
         }) { "Invalid gateway credential" }
         // An owner-approved public test destination must not be an accidental
         // private-network proxy. The gateway enforces its own allowlist too.
-        require(!approvedAddress.isAnyLocalAddress && !approvedAddress.isLoopbackAddress &&
-            !approvedAddress.isLinkLocalAddress && !approvedAddress.isMulticastAddress &&
-            !approvedAddress.isSiteLocalAddress &&
-            !(approvedAddress.address.size == 16 &&
-                (approvedAddress.address[0].toInt() and 0xfe) == 0xfc)
-        ) { "A non-local test destination is required" }
+        require(isPublicTestDestination(approvedAddress)) {
+            "A public test destination is required"
+        }
         // Validate against the exact TUN addresses before accepting the config.
         newTunPlan()
     }
@@ -77,4 +74,44 @@ private fun parseNumericApprovedAddress(value: String): InetAddress {
             (it.length == 1 || it[0] != '0') && (it.toIntOrNull()?.let { number -> number in 0..255 } == true)
     }) { "Invalid IPv4 literal" }
     return InetAddress.getByAddress(parts.map { it.toInt().toByte() }.toByteArray())
+}
+
+/**
+ * Fail closed for non-global, documentation and translation/benchmark ranges.
+ * InetAddress.isSiteLocalAddress alone misses CGNAT (100.64/10) and test nets.
+ * This is a UI test-destination gate, not a substitute for the gateway allowlist.
+ */
+private fun isPublicTestDestination(address: InetAddress): Boolean {
+    if (address.isAnyLocalAddress || address.isLoopbackAddress ||
+        address.isLinkLocalAddress || address.isSiteLocalAddress || address.isMulticastAddress) {
+        return false
+    }
+    val bytes = address.address
+    fun octet(index: Int) = bytes[index].toInt() and 0xff
+    if (bytes.size == 4) {
+        val a = octet(0)
+        val b = octet(1)
+        val c = octet(2)
+        return when {
+            a == 0 || a >= 224 -> false // "this network" and reserved/broadcast
+            a == 100 && b in 64..127 -> false // shared CGNAT space
+            a == 192 && b == 0 && (c == 0 || c == 2) -> false // protocol/docs
+            a == 192 && b == 88 && c == 99 -> false // deprecated 6to4 relay
+            a == 198 && b in 18..19 -> false // benchmarking (198.18/15)
+            a == 198 && b == 51 && c == 100 -> false // TEST-NET-2
+            a == 203 && b == 0 && c == 113 -> false // TEST-NET-3
+            else -> true
+        }
+    }
+    if (bytes.size != 16) return false
+    // Global unicast only; excludes ULA, unspecified, link-local and IPv4 mapping.
+    if (octet(0) !in 0x20..0x3f) return false
+    return when {
+        octet(0) == 0x20 && octet(1) == 0x01 &&
+            octet(2) == 0x0d && octet(3) == 0xb8 -> false // documentation
+        octet(0) == 0x20 && octet(1) == 0x02 -> false // 6to4 embeds IPv4
+        octet(0) == 0x20 && octet(1) == 0x01 &&
+            octet(2) == 0 && octet(3) == 0 -> false // Teredo embeds IPv4
+        else -> true
+    }
 }

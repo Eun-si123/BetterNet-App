@@ -1,6 +1,7 @@
 package io.betternet.next
 
 import org.junit.Assert.*
+import java.net.InetAddress
 import org.junit.Test
 
 class RestrictedTestConfigurationTest {
@@ -34,6 +35,27 @@ class RestrictedTestConfigurationTest {
         for (ip in listOf("127.0.0.1", "10.0.0.1", "192.168.1.1",
             "169.254.1.1", "::1", "fc00::1", "fe80::1", "ff02::1")) {
             assertThrows(IllegalArgumentException::class.java) { config(ip) }
+        }
+    }
+
+    @Test fun sharedAndReservedDestinationsCannotBeApprovedAsPublicInternet() {
+        // These are not ordinary public Internet destinations even though
+        // InetAddress.isSiteLocalAddress may return false for them.
+        for (ip in listOf("0.0.0.1", "100.64.0.1", "100.127.255.254",
+            "192.0.0.1", "192.0.2.1", "192.88.99.1", "198.18.0.1",
+            "198.19.255.254", "198.51.100.7", "203.0.113.10",
+            "240.0.0.1", "255.255.255.255", "2001:db8::1",
+            "2002:c0a8:101::1", "2001:0::1")) {
+            assertThrows("Unexpectedly approved $ip", IllegalArgumentException::class.java) {
+                config(ip)
+            }
+        }
+    }
+
+    @Test fun ordinaryPublicIpv4AndIpv6DestinationsRemainAvailable() {
+        for (ip in listOf("1.1.1.1", "8.8.8.8", "2001:4860:4860::8888",
+            "2606:4700:4700::1111")) {
+            assertEquals(InetAddress.getByName(ip), config(ip).approvedAddress)
         }
     }
 
