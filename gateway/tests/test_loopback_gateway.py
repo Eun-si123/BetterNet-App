@@ -23,11 +23,17 @@ class GatewayTests(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.cert = str(Path(cls.tmp.name) / "cert.pem")
         cls.key = str(Path(cls.tmp.name) / "key.pem")
-        subprocess.run([
-            "openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
-            "-nodes", "-keyout", cls.key, "-out", cls.cert, "-days", "1",
-            "-subj", "/CN=gateway.example", "-addext", "subjectAltName=DNS:gateway.example",
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=10)
+        cls.origin_cert = str(Path(cls.tmp.name) / "origin-cert.pem")
+        cls.origin_key = str(Path(cls.tmp.name) / "origin-key.pem")
+        for cert, key, hostname in (
+            (cls.cert, cls.key, "gateway.example"),
+            (cls.origin_cert, cls.origin_key, "origin.example"),
+        ):
+            subprocess.run([
+                "openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                "-nodes", "-keyout", key, "-out", cert, "-days", "1",
+                "-subj", f"/CN={hostname}", "-addext", f"subjectAltName=DNS:{hostname}",
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=10)
 
     @classmethod
     def tearDownClass(cls):
@@ -105,6 +111,71 @@ class GatewayTests(unittest.TestCase):
         finally:
             gateway_socket.close()
             upstream_peer.close()
+
+    def test_real_https_response_through_independently_verified_nested_tls(self):
+        """A real TLS origin replies through the authenticated gateway; no Internet/VPN."""
+        origin_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        origin_context.load_cert_chain(self.origin_cert, self.origin_key)
+        client_context = ssl.create_default_context(cafile=self.origin_cert)
+        failures = []
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            listener.settimeout(4)
+
+            def origin():
+                try:
+                    conn, _ = listener.accept()
+                    with conn:
+                        conn.settimeout(3)
+                        with origin_context.wrap_socket(conn, server_side=True) as tls:
+                            request = bytearray()
+                            while not request.endswith(b"\r\n\r\n"):
+                                request.extend(tls.recv(1024))
+                            if bytes(request) != b"GET /health HTTP/1.1\r\nHost: origin.example\r\n\r\n":
+                                raise AssertionError("Unexpected HTTPS request")
+                            tls.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
+                except Exception as error:
+                    failures.append(error)
+
+            worker = threading.Thread(target=origin, daemon=True)
+            worker.start()
+            original_connect = socket.create_connection
+            def dial(address, timeout):
+                self.assertEqual(("127.0.0.1", 443), address)
+                return original_connect(listener.getsockname(), timeout=timeout)
+
+            for outer, response in self.with_tls_gateway(self.request(), dial):
+                self.assertEqual(b"HTTP/1.1 200 OK\r\n\r\n", response)
+                incoming, outgoing = ssl.MemoryBIO(), ssl.MemoryBIO()
+                inner = client_context.wrap_bio(incoming, outgoing, server_side=False,
+                                                server_hostname="origin.example")
+
+                def exchange(operation):
+                    while True:
+                        try:
+                            result = operation()
+                        except (ssl.SSLWantReadError, ssl.SSLWantWriteError):
+                            result = None
+                            needs_more = True
+                        else:
+                            needs_more = False
+                        pending = outgoing.read()
+                        if pending:
+                            outer.sendall(pending)
+                        if not needs_more:
+                            return result
+                        incoming.write(outer.recv(16384))
+
+                exchange(inner.do_handshake)
+                exchange(lambda: inner.write(b"GET /health HTTP/1.1\r\nHost: origin.example\r\n\r\n"))
+                reply = bytearray()
+                while not reply.endswith(b"\r\n\r\nOK"):
+                    reply.extend(exchange(lambda: inner.read(16384)))
+                self.assertEqual(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK", bytes(reply))
+            worker.join(4)
+            self.assertFalse(worker.is_alive(), "Origin did not finish")
+            self.assertEqual([], failures)
 
     def test_bad_token_never_dials(self):
         def forbidden(*args, **kwargs):

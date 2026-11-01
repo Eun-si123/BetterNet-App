@@ -21,4 +21,4 @@ Verify without external traffic:
 python3 -m unittest discover -s gateway/tests -v
 ```
 
-The tests generate a disposable TLS certificate, connect to an ephemeral loopback TLS listener, and mock the upstream socket with a local socket pair. They check accepted bytes, rejected bearer/authority, and strict configuration. No remote DNS, external network or public listener is used.
+The tests generate a disposable TLS certificate, connect to an ephemeral loopback TLS listener, and mock the upstream socket with a local socket pair. They check accepted bytes, rejected bearer/authority, and strict configuration. A separate integration test uses independently generated gateway and HTTPS-origin certificates to complete an actual nested TLS handshake and HTTP request/response through the loopback relay; it is not Android or Internet evidence. No remote DNS, external network or public listener is used.
