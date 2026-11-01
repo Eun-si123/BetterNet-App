@@ -36,7 +36,7 @@ class GatewayTlsLoopbackTest {
                 "-groupname", "secp256r1", "-validity", "1", "-storetype", "PKCS12",
                 "-keystore", file.toString(), "-storepass", password, "-keypass", password,
                 "-dname", "CN=${sanNames.substringBefore(',')}", "-ext",
-                "SAN=${sanNames.split(',').joinToString(',') { "dns:$it" }}", "-noprompt",
+                "SAN=${sanNames.split(',').joinToString(",") { "dns:$it" }}", "-noprompt",
             ).redirectErrorStream(true).start()
             val completed = process.waitFor(20, TimeUnit.SECONDS)
             if (!completed) {
