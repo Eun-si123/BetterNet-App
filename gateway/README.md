@@ -13,7 +13,7 @@ python3 gateway/loopback_gateway.py \
   --https-ip 127.0.0.1 --dns-host dns.example --dns-ip 127.0.0.1 --port 0
 ```
 
-The example is intentionally local-only; port `0` chooses an ephemeral port. Do not publish, forward, tunnel or expose this listener, connect it to real endpoints, or use a production token without separate authorization, threat review, and deployment design. A loopback listener cannot be reached from an Android device on a different host. There is no graceful multi-session server management, Android VPN activation, real DNS/HTTPS success, or tc/netem evidence yet. This is a bounded integration reference, not an Internet acceleration or censorship-bypass service.
+The example is intentionally local-only; port `0` chooses an ephemeral port. Do not publish, forward, tunnel or expose this listener, connect it to real endpoints, or use a production token without separate authorization, threat review, and deployment design. A loopback listener cannot be reached from an Android device on a different host. There is no graceful multi-session server management, Android VPN activation, or real selected-app Internet success. An isolated Linux namespace CI check now repeats the gateway loopback tests with 25ms ± 5ms delay and 3% configured packet loss; this is gateway-only impairment evidence, **not** an A2 OFF/ON comparison or a real Internet test. This is a bounded integration reference, not an Internet acceleration or censorship-bypass service.
 
 Verify without external traffic:
 
@@ -22,3 +22,11 @@ python3 -m unittest discover -s gateway/tests -v
 ```
 
 The tests generate a disposable TLS certificate, connect to an ephemeral loopback TLS listener, and mock the upstream socket with a local socket pair. They check accepted bytes, rejected bearer/authority, and strict configuration. A separate integration test uses independently generated gateway and HTTPS-origin certificates to complete an actual nested TLS handshake and HTTP request/response through the loopback relay; it is not Android or Internet evidence. No remote DNS, external network or public listener is used.
+
+To repeat the isolated Linux gateway impairment check (requires `sudo`, `ip`, `tc`, and `runuser`):
+
+```sh
+bash scripts/verify-loopback-netem.sh
+```
+
+The script creates a disposable network namespace, modifies only its loopback qdisc, runs repository tests as the original non-root user, and removes the namespace on exit. It never changes the host qdisc or creates an external listener.
