@@ -25,7 +25,7 @@ import org.junit.Test
 class GatewayTlsLoopbackTest {
     private data class Contexts(val server: SSLContext, val trustedClient: SSLContext)
 
-    private fun contexts(): Contexts {
+    private fun contexts(sanNames: String = "gateway.example,dns.example"): Contexts {
         val file = Files.createTempFile("betternet-test-tls-", ".p12")
         Files.delete(file)
         val password = UUID.randomUUID().toString().replace("-", "")
@@ -35,7 +35,8 @@ class GatewayTlsLoopbackTest {
                 tool, "-genkeypair", "-alias", "gateway-test", "-keyalg", "EC",
                 "-groupname", "secp256r1", "-validity", "1", "-storetype", "PKCS12",
                 "-keystore", file.toString(), "-storepass", password, "-keypass", password,
-                "-dname", "CN=gateway.example", "-ext", "SAN=dns:gateway.example,dns:dns.example", "-noprompt",
+                "-dname", "CN=${sanNames.substringBefore(',')}", "-ext",
+                "SAN=${sanNames.split(',').joinToString(',') { "dns:$it" }}", "-noprompt",
             ).redirectErrorStream(true).start()
             val completed = process.waitFor(20, TimeUnit.SECONDS)
             if (!completed) {
@@ -602,9 +603,11 @@ class GatewayTlsLoopbackTest {
     }
 
     @Test fun nestedHttpsOverAuthenticatedConnectReturnsRealResponseBytes() {
-        val tls = contexts()
+        val gatewayTls = contexts("gateway.example")
+        // Gateway and HTTPS origin have independent certificates/trust roots.
+        val originTls = contexts("dns.example")
         val token = "TestOnlyOpaqueToken0123456789"
-        withServer(tls.server, { gateway ->
+        withServer(gatewayTls.server, { gateway ->
             gateway.startHandshake()
             val request = gateway.inputStream.bufferedReader()
             assertEquals("CONNECT dns.example:443 HTTP/1.1", request.readLine())
@@ -613,7 +616,7 @@ class GatewayTlsLoopbackTest {
             assertEquals("", request.readLine())
             gateway.outputStream.write("HTTP/1.1 200 OK\r\n\r\n".toByteArray())
             gateway.outputStream.flush()
-            (tls.server.socketFactory.createSocket(gateway, "dns.example", 443, false) as SSLSocket).use { https ->
+            (originTls.server.socketFactory.createSocket(gateway, "dns.example", 443, false) as SSLSocket).use { https ->
                 https.useClientMode = false
                 https.soTimeout = 3_000
                 https.startHandshake()
@@ -629,8 +632,8 @@ class GatewayTlsLoopbackTest {
         }) { address ->
             connectVerifiedDestinationTlsThroughGateway(
                 address, "gateway.example", "dns.example", 443, token, 3_000,
-                { true }, gatewayTlsFactory = tls.trustedClient.socketFactory,
-                destinationTlsFactory = tls.trustedClient.socketFactory,
+                { true }, gatewayTlsFactory = gatewayTls.trustedClient.socketFactory,
+                destinationTlsFactory = originTls.trustedClient.socketFactory,
             ).use { https ->
                 https.outputStream.write(
                     "GET /probe HTTP/1.1\r\nHost: dns.example\r\n\r\n".toByteArray()
@@ -639,6 +642,49 @@ class GatewayTlsLoopbackTest {
                 val reply = https.inputStream.bufferedReader().readText()
                 assertTrue(reply.startsWith("HTTP/1.1 200 OK\r\n"))
                 assertTrue(reply.endsWith("\r\n\r\nOK"))
+            }
+        }
+    }
+
+    @Test fun trustedGatewayCertificateCannotAuthorizeUntrustedHttpsOrigin() {
+        // A valid gateway TLS handshake and accepted CONNECT must not make
+        // the gateway trust store sufficient to authenticate the HTTPS origin.
+        val gatewayTls = contexts("gateway.example")
+        val originTls = contexts("dns.example")
+        val token = "TestOnlyOpaqueToken0123456789"
+        withServer(gatewayTls.server, { gateway ->
+            gateway.startHandshake()
+            val lines = gateway.inputStream.bufferedReader()
+            assertEquals("CONNECT dns.example:443 HTTP/1.1", lines.readLine())
+            assertEquals("Host: dns.example:443", lines.readLine())
+            assertEquals("Proxy-Authorization: Bearer $token", lines.readLine())
+            assertEquals("", lines.readLine())
+            gateway.outputStream.write("HTTP/1.1 200 OK\r\n\r\n".toByteArray())
+            gateway.outputStream.flush()
+            try {
+                (originTls.server.socketFactory.createSocket(
+                    gateway, "dns.example", 443, false
+                ) as SSLSocket).use { origin ->
+                    origin.useClientMode = false
+                    origin.soTimeout = 3_000
+                    origin.startHandshake()
+                    assertEquals("Rejected HTTPS origin received application data",
+                        -1, origin.inputStream.read())
+                }
+            } catch (_: SSLException) {
+                // Client may abort the handshake with a TLS fatal alert.
+            }
+        }) { address ->
+            try {
+                connectVerifiedDestinationTlsThroughGateway(
+                    address, "gateway.example", "dns.example", 443, token, 3_000,
+                    { true }, gatewayTlsFactory = gatewayTls.trustedClient.socketFactory,
+                    // Deliberately wrong: this trusts only the gateway certificate.
+                    destinationTlsFactory = gatewayTls.trustedClient.socketFactory,
+                ).close()
+                fail("Trusted gateway must not imply trusted HTTPS origin")
+            } catch (_: SSLException) {
+                // Destination TLS certificate validation is independent.
             }
         }
     }
