@@ -72,6 +72,27 @@ class SelectedAppVpnServiceTest {
         }
     }
 
+    @Test fun dormantActivationRequiresPreparedOsAndObservableNonVpnUnderlyingNetwork() {
+        requireDormantActivationPreflight(true, true, false, true, false, true)
+        // Every failure must reject the whole preparation, rather than
+        // silently switching to a default network or broad VPN route.
+        for (unsafe in listOf(
+            listOf(false, true, false, true, false, true), // stale Network handle
+            listOf(true, false, false, true, false, true), // unknown capabilities
+            listOf(true, true, true, true, false, true), // another VPN visible
+            listOf(true, true, false, false, false, true), // no Internet capability
+            listOf(true, true, false, true, true, true), // underlying became VPN
+            listOf(true, true, false, true, false, false), // OS consent revoked
+        )) {
+            try {
+                requireDormantActivationPreflight(
+                    unsafe[0], unsafe[1], unsafe[2], unsafe[3], unsafe[4], unsafe[5],
+                )
+                fail("Unsafe dormant activation must be rejected: $unsafe")
+            } catch (_: IllegalStateException) { }
+        }
+    }
+
     private val resolvedGateway = InetSocketAddress(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), 443)
 
     private class RecordingSocket(private val events: MutableList<String>, private val failConnect: Boolean = false) : Socket() {

@@ -70,6 +70,41 @@ class SelectedAppVpnService : VpnService() {
     }
 
     /**
+     * Dormant A1 activation preflight. Assemble the exact single-app builder
+     * and protected-network dispatcher together, but NEVER establish the TUN,
+     * start a worker, or connect to the gateway. The eventual activation path
+     * must repeat these checks immediately before Builder.establish(): Android
+     * consent, package identity and networks can all change after this call.
+     */
+    internal fun prepareDormantRestrictedTestActivation(
+        manager: ConnectivityManager,
+        underlyingNetwork: Network,
+        selectedApp: AppChoice?,
+        configuration: RestrictedTestConfiguration,
+        timeoutMs: Int,
+    ): DormantRestrictedTestActivation {
+        // Validate app identity and exact host routes before any OS consent
+        // inspection. This builder has no side effects until establish().
+        val builder = newRestrictedTestTunBuilder(selectedApp, configuration)
+        val networks = manager.allNetworks
+        val capabilities = networks.map { manager.getNetworkCapabilities(it) }
+        val underlyingIndex = networks.indexOf(underlyingNetwork)
+        val underlying = capabilities.getOrNull(underlyingIndex)
+        requireDormantActivationPreflight(
+            underlyingIndex >= 0,
+            capabilities.all { it != null },
+            capabilities.any { it?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true },
+            underlying?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true,
+            underlying?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true,
+            VpnService.prepare(this) == null,
+        )
+        val dispatcher = newUnderlyingNetworkRestrictedTestDispatcher(
+            manager, underlyingNetwork, selectedApp, configuration, timeoutMs,
+        )
+        return DormantRestrictedTestActivation(builder, dispatcher)
+    }
+
+    /**
      * Dormant adapter for a future explicitly consented, established TUN.
      * Does NOT call Builder.establish(), request consent or start the service.
      * The session exclusively owns the supplied descriptor and its shared fd.
@@ -219,6 +254,27 @@ class SelectedAppVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         stopSelf(startId)
         return START_NOT_STICKY
+    }
+}
+
+/** Preflight artifacts only: holding these does not authorize TUN establishment. */
+internal class DormantRestrictedTestActivation(
+    val builder: VpnService.Builder,
+    val dispatcher: RestrictedTestTunDispatcher,
+)
+
+/** Fail closed on unknown networks, other VPNs, or missing OS permission. */
+internal fun requireDormantActivationPreflight(
+    underlyingPresent: Boolean,
+    allNetworksObservable: Boolean,
+    anyVisibleVpn: Boolean,
+    underlyingHasInternet: Boolean,
+    underlyingIsVpn: Boolean,
+    osPrepared: Boolean,
+) {
+    check(underlyingPresent && allNetworksObservable && !anyVisibleVpn &&
+        underlyingHasInternet && !underlyingIsVpn && osPrepared) {
+        "Restricted VPN activation prerequisites are not satisfied"
     }
 }
 
