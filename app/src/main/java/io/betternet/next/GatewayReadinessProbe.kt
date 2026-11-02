@@ -4,7 +4,9 @@ import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import java.net.Socket
+import java.io.Closeable
+import java.net.InetAddress
+import java.net.InetSocketAddress
 
 /**
  * An explicitly user-triggered, credential-free gateway TLS handshake.
@@ -37,29 +39,55 @@ internal fun probeGatewayTlsWithoutVpn(
             underlying?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true,
         )
     }
-    verify()
-    val address = resolveGatewayAddress(gatewayName, gatewayPort) { host ->
-        verify()
-        network.getAllByName(host).also { verify() }
-    }
-    // Only one address is attempted. Never fall back to Android's default
-    // resolver or network if the pinned network becomes unavailable.
-    withFreshRestrictedGatewaySocketScope(verify) {
-        val socket = Socket()
-        try {
-            verify()
-            network.bindSocket(socket)
-            verify()
-            socket.connect(address, 3_000)
-            verify()
-            establishVerifiedGatewayTls(socket, address, gatewayName, handshakeTimeoutMs = 3_000)
-        } catch (failure: Throwable) {
-            try { socket.close() } catch (cleanup: Throwable) {
-                if (cleanup !== failure) failure.addSuppressed(cleanup)
+    probePinnedGatewayTls(gatewayName, gatewayPort, verify,
+        lookup = { host -> network.getAllByName(host) },
+        dial = { address, remaining ->
+            // This is a VPN-free, read-only probe. No VpnService exists to
+            // protect a socket; instead pin it to the inspected Network and
+            // reject any changed/hidden VPN state before and after each step.
+            // Reuse the TCP-only failure tags so an unreachable first IPv6/IPv4
+            // address can fall back without retrying TLS identity failures.
+            val attemptDeadline = System.nanoTime() + remaining.toLong() * 1_000_000L
+            val socket = connectProtectedSocket(address, remaining,
+                protect = { verify(); true },
+                bind = { raw -> verify(); network.bindSocket(raw); verify() })
+            try {
+                verify()
+                // TCP and TLS share the remaining per-attempt deadline; a
+                // slow TCP connect must not earn a fresh full TLS timeout.
+                establishVerifiedGatewayTls(socket, address, gatewayName,
+                    handshakeTimeoutMs = remainingResponseTimeoutMs(
+                        attemptDeadline, System.nanoTime()))
+            } catch (failure: Throwable) {
+                try { socket.close() } catch (cleanup: Throwable) {
+                    if (cleanup !== failure) failure.addSuppressed(cleanup)
+                }
+                throw failure
             }
-            throw failure
-        }
-    }.use { /* TLS handshake only: do not send a credential or request. */ }
+        })
+}
+
+/**
+ * Bounded dual-stack readiness check: only TCP-connect failures permit a
+ * different DNS address. TLS identity, network authorization, binding and
+ * cancellation failures are terminal; no token or HTTP bytes are sent.
+ * Injected operations let JVM tests verify this without Android or a network.
+ */
+internal fun probePinnedGatewayTls(
+    gatewayName: String,
+    gatewayPort: Int,
+    verify: () -> Unit,
+    lookup: (String) -> Array<InetAddress>,
+    dial: (InetSocketAddress, Int) -> Closeable,
+) {
+    verify()
+    connectWithGatewayAddressFallback(
+        gatewayName, gatewayPort, 3_000,
+        lookup = { host -> withFreshRestrictedGatewayScope(verify) { lookup(host) } },
+        dial = { address, remaining ->
+            withFreshRestrictedGatewaySocketScope(verify) { dial(address, remaining) }
+        },
+    ).use { verify() }
 }
 
 /** Reject a stale/default VPN route even if a previously chosen Network remains visible. */
