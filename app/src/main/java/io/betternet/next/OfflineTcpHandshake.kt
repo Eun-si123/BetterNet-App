@@ -430,10 +430,12 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
      * provide transport-specific semantics. This offline controller does not
      * own the tunnel or emit anything to TUN.
      *
-     * Pending client payloads or unacknowledged server responses are rejected
-     * rather than guessing TCP sequence/ACK state. A rejected FIN must not
-     * acknowledge bytes or invoke the callback. On upstream failure, retire
-     * the flow without sending a misleading FIN ACK. Serialize all calls.
+     * Pending client payloads are rejected. A FIN|ACK may acknowledge the
+     * exact outstanding server response in the same packet; commit that ACK
+     * only after upstream half-close succeeds. Stale/partial ACKs cannot
+     * discard an unacknowledged response. A rejected FIN must not invoke the
+     * callback. On upstream failure, retire the flow without a misleading
+     * FIN ACK. Serialize all calls.
      */
     fun acceptClientFin(
         packet: TunIngressResult.Packet, nowMillis: Long, halfCloseUpstream: () -> Unit,
@@ -441,7 +443,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         expire(nowMillis)
         val current = flow ?: return null
         if (!acked || clientHalfClosed || pendingClientPayload != null ||
-            pendingResponseBytes != 0 || serverFinPending) return null
+            serverFinPending) return null
         val bytes = packet.bytes
         val header = parseTunPacketHeader(bytes, bytes.size) ?: return null
         if (header.protocol != 6 || header.source != current.source ||
@@ -451,16 +453,18 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             header.transportHeaderBytes != 20 ||
             header.transportOffset + 20 != bytes.size) return null
         val offset = header.transportOffset
+        val acknowledgedServerNext =
+            (current.serverNext + pendingResponseBytes) and 0xffff_ffffL
         if ((bytes[offset + 12].toInt() and 15) != 0 ||
             (bytes[offset + 13].toInt() and 255) != 0x11 || // FIN | ACK only.
             read16(bytes, offset + 18) != 0 ||
             read32(bytes, offset + 4) != current.clientNext ||
-            read32(bytes, offset + 8) != current.serverNext) return null
+            read32(bytes, offset + 8) != acknowledgedServerNext) return null
         val next = (current.clientNext + 1) and 0xffff_ffffL
         val ack = buildTcpDeliveryAck(
             current.destination, current.source,
             current.destinationPort, current.sourcePort,
-            current.serverNext, next, 0,
+            acknowledgedServerNext, next, 0,
         ) ?: return null
         try {
             halfCloseUpstream()
@@ -468,9 +472,15 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             close()
             throw failure
         }
-        flow = current.copy(clientNext = next)
+        flow = current.copy(clientNext = next, serverNext = acknowledgedServerNext)
+        if (pendingResponseBytes != 0) {
+            pendingResponseBytes = 0
+            pendingResponsePacket = null
+            responseSentAt = -1L
+            responseRetries = 0
+        }
         clientHalfClosed = true
-        clientFinOriginalAck = read32(bytes, offset + 8)
+        clientFinOriginalAck = acknowledgedServerNext
         receiveWindow = 0
         if (serverHalfClosed) close()
         return ack

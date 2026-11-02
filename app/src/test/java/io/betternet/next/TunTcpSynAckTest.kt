@@ -738,6 +738,75 @@ class TunTcpSynAckTest {
         }
     }
 
+    @Test fun clientFinCanAcknowledgeOutstandingResponseWithoutLosingRetrySafety() {
+        // Real TCP peers may combine the response ACK with their own FIN.
+        // This is a dormant offline flow test, not a VPN or Internet test.
+        for (version in listOf(4, 6)) {
+            for (isn in listOf(123L, 0xffff_ffffL)) {
+                val syn = request(version)
+                val flow = OfflineTcpHandshake()
+                assertNotNull(flow.begin(syn, isn, 1280, 100))
+                assertTrue(flow.acceptFinalAck(finalAck(syn, isn), 101))
+                val payload = byteArrayOf(1, 2, 3)
+                assertNotNull(flow.offerResponse(payload, 1280, 102))
+                var shutdowns = 0
+                val expectedAck = (isn + 1 + payload.size) and 0xffff_ffffL
+                // A stale, partial or malformed FIN cannot consume the
+                // outstanding response or invoke upstream half-close.
+                for (bad in listOf(
+                    finalAck(syn, isn, flags = 0x11),
+                    finalAck(syn, isn, flags = 0x11,
+                        acknowledgement = (expectedAck - 1) and 0xffff_ffffL),
+                    finalAck(syn, isn, flags = 0x11,
+                        acknowledgement = expectedAck, payload = byteArrayOf(9)),
+                )) {
+                    assertNull(flow.acceptClientFin(bad, 103) { shutdowns++ })
+                }
+                assertEquals(0, shutdowns)
+                // The pending response must still be retransmittable.
+                assertNotNull(flow.retryPendingResponse(602))
+                val fin = finalAck(syn, isn, flags = 0x11,
+                    acknowledgement = expectedAck)
+                val finAck = flow.acceptClientFin(fin, 603) { shutdowns++ }!!
+                val ip = if (version == 4) 20 else 40
+                assertEquals(0, tcpChecksum(finAck, version))
+                assertEquals(expectedAck, u32(finAck, ip + 4))
+                assertEquals(1L, u32(finAck, ip + 8))
+                assertEquals(1, shutdowns)
+                assertNull(flow.retryPendingResponse(1200))
+                assertArrayEquals(finAck, flow.acknowledgeClientFinReplay(fin, 604))
+                assertEquals(1, shutdowns)
+                // Server-to-client traffic can continue after client FIN,
+                // starting at the sequence acknowledged by the combined FIN.
+                val later = flow.offerResponse(byteArrayOf(4), 1280, 605)!!
+                assertEquals(expectedAck, u32(later, ip + 4))
+                assertTrue(flow.acceptResponseAck(finalAck(syn, isn,
+                    sequence = 1, acknowledgement = (expectedAck + 1) and 0xffff_ffffL), 606))
+            }
+        }
+    }
+
+    @Test fun clientFinWithResponseAckDoesNotCommitIfUpstreamHalfCloseFails() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val flow = OfflineTcpHandshake()
+            assertNotNull(flow.begin(syn, 99L, 1280, 100))
+            assertTrue(flow.acceptFinalAck(finalAck(syn, 99L), 101))
+            assertNotNull(flow.offerResponse(byteArrayOf(7, 8), 1280, 102))
+            try {
+                flow.acceptClientFin(finalAck(syn, 99L,
+                    flags = 0x11, acknowledgement = 102L), 103) {
+                    throw IOException("upstream half-close failed")
+                }
+                fail("Failed upstream half-close must not emit a FIN ACK")
+            } catch (expected: IOException) {
+                assertEquals("upstream half-close failed", expected.message)
+            }
+            assertFalse(flow.isEstablished(104))
+            assertNull(flow.retryPendingResponse(700))
+        }
+    }
+
     @Test fun lostClientFinAckIsReplayedWithoutAnotherGatewayShutdown() {
         for (version in listOf(4, 6)) {
             val syn = request(version)
