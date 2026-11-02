@@ -29,6 +29,18 @@ import javax.net.ssl.SSLSocket
 class SelectedAppVpnService : VpnService() {
     private val tunLifecycle = RestrictedTunLifecycle()
 
+    /**
+     * The OS may start a declared VPN service independently of our Activity.
+     * Until an explicit, authenticated foreground owner is implemented, every
+     * start (including a null-intent restart) must stop immediately. In
+     * particular, Service's inherited sticky-compatible start policy must not
+     * keep a dormant VPN service alive or restart it after process death.
+     */
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        stopSelf(startId)
+        return START_NOT_STICKY
+    }
+
     override fun onRevoke() {
         // Even if closing the TUN descriptor fails, Android's revocation
         // callback must still run; otherwise the service can remain alive.
