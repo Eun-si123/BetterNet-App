@@ -45,4 +45,6 @@
   <string name="request_vpn_consent">Android VPN 권한 요청 (연결 안 함)</string>
   <string name="vpn_consent_warning">Android VPN 권한만 요청합니다. BetterNet은 아직 초기 개발 단계로 VPN 시작, 트래픽 수집, 게이트웨이 연결, 임시 인증 정보 사용을 하지 않습니다. Android VPN 권한은 기기 수준으로 부여되며 테스트 앱 선택을 해제해도 유지될 수 있습니다. 다른 VPN을 사용 중이면 취소하고 기존 VPN을 유지하세요.</string>
   <string name="continue_to_system_consent">Android 동의 화면으로</string>
+  <string name="vpn_notification_channel">제한된 VPN 테스트</string>
+  <string name="vpn_foreground_notice">제한된 VPN 테스트가 실행 중입니다</string>
 </resources>

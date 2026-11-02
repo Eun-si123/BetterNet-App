@@ -4,6 +4,9 @@
   <!-- Required for a future explicitly consented, authenticated A1 gateway dial.
        Declaring this permission does not initiate a connection or VPN. -->
   <uses-permission android:name="android.permission.INTERNET" />
+  <!-- Dormant A1 foreground ownership; no service start is currently exposed. -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
   <!-- Scoped launcher-app visibility; no QUERY_ALL_PACKAGES permission. -->
   <queries>
     <intent>
@@ -17,6 +20,7 @@
     <!-- Inactive until an explicitly reviewed, authenticated forwarding path exists. -->
     <service android:name=".SelectedAppVpnService"
       android:permission="android.permission.BIND_VPN_SERVICE"
+      android:foregroundServiceType="systemExempted"
       android:exported="true">
       <intent-filter>
         <action android:name="android.net.VpnService" />

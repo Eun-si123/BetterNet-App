@@ -40,3 +40,30 @@ internal fun <D : Closeable, W> establishRestrictedTunTransaction(
         throw failure
     }
 }
+
+/**
+ * Foreground ownership is acquired only after a fresh preflight, before TUN
+ * establishment. If promotion or activation fails, remove the notification;
+ * the caller's activation rollback separately cancels any worker/descriptor.
+ * On success the service owns foreground teardown via onRevoke/onDestroy.
+ * No caller currently starts this activation from an Android component.
+ */
+internal fun <T> withRestrictedForegroundOwnership(
+    revalidate: () -> Unit,
+    promote: () -> Unit,
+    activate: () -> T,
+    demote: () -> Unit,
+): T {
+    revalidate()
+    try {
+        promote()
+        return activate()
+    } catch (failure: Throwable) {
+        // Promotion can throw after partially entering foreground mode. The
+        // best-effort cleanup must not mask the original security/OS failure.
+        try { demote() } catch (cleanup: Throwable) {
+            if (cleanup !== failure) failure.addSuppressed(cleanup)
+        }
+        throw failure
+    }
+}

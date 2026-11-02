@@ -136,4 +136,56 @@ class RestrictedTunActivationTest {
         }
         assertEquals(listOf("rollback", "descriptor.close"), events)
     }
+
+    @Test fun foregroundPromotionMustPrecedeTunAndRemainOwnedOnSuccess() {
+        val events = mutableListOf<String>()
+        val result = withRestrictedForegroundOwnership(
+            revalidate = { events += "preflight" },
+            promote = { events += "foreground" },
+            activate = { events += "establish"; "worker" },
+            demote = { events += "demote" },
+        )
+        assertEquals("worker", result)
+        assertEquals(listOf("preflight", "foreground", "establish"), events)
+    }
+
+    @Test fun failedPreflightNeverPromotesOrEstablishesTun() {
+        val events = mutableListOf<String>()
+        try {
+            withRestrictedForegroundOwnership(
+                revalidate = { events += "preflight"; throw SecurityException("revoked") },
+                promote = { events += "foreground" },
+                activate = { events += "establish" },
+                demote = { events += "demote" },
+            )
+            fail("Revoked consent must prevent foreground service and TUN")
+        } catch (expected: SecurityException) {
+            assertEquals("revoked", expected.message)
+        }
+        assertEquals(listOf("preflight"), events)
+    }
+
+    @Test fun foregroundOrActivationFailureDemotesWithoutMaskingPrimaryError() {
+        for (failAt in listOf("foreground", "establish")) {
+            val events = mutableListOf<String>()
+            try {
+                withRestrictedForegroundOwnership(
+                    revalidate = { events += "preflight" },
+                    promote = {
+                        events += "foreground"
+                        if (failAt == "foreground") throw IOException("foreground failed")
+                    },
+                    activate = { events += "establish"; throw IOException("establish failed") },
+                    demote = { events += "demote"; throw IOException("demote failed") },
+                )
+                fail("Expected activation failure")
+            } catch (expected: IOException) {
+                assertEquals("$failAt failed", expected.message)
+                assertEquals(listOf("demote failed"), expected.suppressed.map { it.message })
+            }
+            assertEquals(if (failAt == "foreground")
+                listOf("preflight", "foreground", "demote")
+                else listOf("preflight", "foreground", "establish", "demote"), events)
+        }
+    }
 }

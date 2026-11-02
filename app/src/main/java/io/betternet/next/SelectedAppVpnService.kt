@@ -1,6 +1,10 @@
 package io.betternet.next
 
 import android.content.Intent
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
@@ -36,7 +40,9 @@ class SelectedAppVpnService : VpnService() {
         try {
             tunLifecycle.cancel()
         } finally {
-            super.onRevoke()
+            // Revocation may occur before a worker was started. Never leave
+            // a future foreground service or its notification orphaned.
+            try { stopSelf() } finally { super.onRevoke() }
         }
     }
 
@@ -120,21 +126,55 @@ class SelectedAppVpnService : VpnService() {
         val prepared = prepareDormantRestrictedTestActivation(
             manager, underlyingNetwork, selectedApp, configuration, timeoutMs,
         )
-        return establishRestrictedTunTransaction(
+        // A future explicit service start must promote before establishing
+        // a TUN, and remove the notification if activation fails. This method
+        // remains unreachable from onStartCommand and the Activity.
+        return withRestrictedForegroundOwnership(
             revalidate = {
                 requireFreshRestrictedTestPrerequisites(manager, underlyingNetwork, selectedApp)
             },
-            establish = { prepared.builder.establish() },
-            attach = { descriptor -> newRestrictedTunWorker(
-                descriptor, prepared.dispatcher, manager, underlyingNetwork, selectedApp) },
-            start = { worker -> worker.start() },
-            rollback = {
-                // Never close a possibly running worker's dispatcher from a
-                // second thread. Before start, it owns no network resources;
-                // after start, cancellation lets the owner close it.
-                tunLifecycle.cancel()
+            promote = { promoteRestrictedTestForeground() },
+            activate = {
+                establishRestrictedTunTransaction(
+                    revalidate = {
+                        requireFreshRestrictedTestPrerequisites(manager, underlyingNetwork, selectedApp)
+                    },
+                    establish = { prepared.builder.establish() },
+                    attach = { descriptor -> newRestrictedTunWorker(
+                        descriptor, prepared.dispatcher, manager, underlyingNetwork, selectedApp) },
+                    start = { worker -> worker.start() },
+                    rollback = {
+                        // A running worker owns its descriptor; only signal it.
+                        tunLifecycle.cancel()
+                    },
+                )
             },
+            demote = { try { stopForeground(true) } finally { stopSelf() } },
         )
+    }
+
+    /** A notification is required for a future explicitly started VPN worker.
+     * Android 14+ permits the systemExempted type only for configured VPN apps;
+     * a rejected promotion must abort before any TUN establishment.
+     */
+    private fun promoteRestrictedTestForeground() {
+        val channelId = "betternet_restricted_vpn"
+        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        manager.createNotificationChannel(NotificationChannel(
+            channelId, getString(R.string.vpn_notification_channel),
+            NotificationManager.IMPORTANCE_LOW,
+        ))
+        val openApp = PendingIntent.getActivity(this, 0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val notification = Notification.Builder(this, channelId)
+            .setSmallIcon(android.R.drawable.stat_sys_upload)
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText(getString(R.string.vpn_foreground_notice))
+            .setContentIntent(openApp)
+            .setOngoing(true)
+            .build()
+        startForeground(1001, notification)
     }
 
     /**

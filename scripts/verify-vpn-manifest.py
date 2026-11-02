@@ -12,6 +12,10 @@ ANDROID = "{http://schemas.android.com/apk/res/android}"
 SERVICE = "io.betternet.next.SelectedAppVpnService"
 ALWAYS_ON = "android.net.VpnService.SUPPORTS_ALWAYS_ON"
 INTERNET = "android.permission.INTERNET"
+FOREGROUND_PERMISSIONS = {
+    "android.permission.FOREGROUND_SERVICE",
+    "android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED",
+}
 
 
 def is_opted_out(manifest: Path) -> bool:
@@ -38,6 +42,15 @@ def has_internet_permission(manifest: Path) -> bool:
     )
 
 
+def has_restricted_foreground_declaration(manifest: Path) -> bool:
+    root = ET.parse(manifest).getroot()
+    permissions = {item.get(ANDROID + "name") for item in root.findall("uses-permission")}
+    services = [service for service in root.findall(".//service")
+                if service.get(ANDROID + "name") in (SERVICE, ".SelectedAppVpnService")]
+    return (FOREGROUND_PERMISSIONS.issubset(permissions) and len(services) == 1
+            and services[0].get(ANDROID + "foregroundServiceType") == "systemExempted")
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("Usage: verify-vpn-manifest.py <AGP intermediates directory>", file=sys.stderr)
@@ -59,7 +72,10 @@ def main() -> int:
         if not has_internet_permission(manifest):
             print(f"FAIL: A1 gateway Internet permission absent: {manifest}", file=sys.stderr)
             return 1
-    print(f"PASS: always-on disabled and Internet permission present in {len(manifests)} debug merged manifest(s)")
+        if not has_restricted_foreground_declaration(manifest):
+            print(f"FAIL: A1 VPN foreground ownership declaration absent: {manifest}", file=sys.stderr)
+            return 1
+    print(f"PASS: always-on disabled, Internet and VPN foreground declarations present in {len(manifests)} debug merged manifest(s)")
     return 0
 
 
