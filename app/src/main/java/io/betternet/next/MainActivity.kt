@@ -4,8 +4,6 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.VpnService
@@ -124,9 +122,9 @@ class MainActivity : Activity() {
                         .setItems(labels) { _, index ->
                             // Reject an unobservable signer rather than silently
                             // downgrading to package-name/UID-only consent.
-                            selectedApp = currentSignerFingerprint(choices[index].packageName)?.let {
-                                choices[index].copy(signerFingerprint = it)
-                            }
+                            selectedApp = readInstalledAppIdentity(packageManager, choices[index].packageName)
+                                ?.takeIf { it.uid == choices[index].uid }
+                                ?.let { choices[index].copy(signerFingerprint = it.signerFingerprint) }
                             testConfiguration = null
                             requestConsentButton.isEnabled = false
                             configurationStatus.setText(R.string.test_config_not_set)
@@ -285,8 +283,11 @@ class MainActivity : Activity() {
         return try {
             // The app can be removed or lose its launcher entry after selection.
             // Never request device-level VPN permission for a stale scope.
-            val selectedStillAvailable = selectedAppStillInstalled(
-                selected, availableLauncherApps(), currentSignerFingerprint(selected.packageName))
+            val currentIdentity = readInstalledAppIdentity(packageManager, selected.packageName)
+            val selectedStillAvailable = currentIdentity?.let {
+                it.uid == selected.uid && selectedAppStillInstalled(
+                    selected, availableLauncherApps(), it.signerFingerprint)
+            } == true
             val defaultCaps = manager.activeNetwork?.let { manager.getNetworkCapabilities(it) }
             var vpnFound = defaultCaps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
             var observationComplete = true
@@ -305,24 +306,6 @@ class MainActivity : Activity() {
         } catch (_: SecurityException) {
             null
         }
-    }
-
-    /** Read the *current* APK signers, not the signing lineage/history. A
-     * rotation may require reselecting the app; it must never silently widen
-     * an existing consent scope. Only an in-memory digest is retained.
-     */
-    @Suppress("DEPRECATION")
-    private fun currentSignerFingerprint(pkg: String): String? = try {
-        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
-            PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
-        val info = packageManager.getPackageInfo(pkg, flags)
-        val signers = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
-            info.signingInfo?.apkContentsSigners else info.signatures
-        signerSetFingerprint(signers?.map { it.toByteArray() }.orEmpty())
-    } catch (_: PackageManager.NameNotFoundException) {
-        null
-    } catch (_: SecurityException) {
-        null
     }
 
     private fun availableLauncherApps(): List<AppChoice> {

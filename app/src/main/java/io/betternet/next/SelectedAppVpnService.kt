@@ -40,14 +40,13 @@ class SelectedAppVpnService : VpnService() {
     }
 
     /** Future activation must use this scoped builder, never an unscoped fallback. */
-    internal fun newSelectedAppBuilder(selectedPackage: String?): Builder {
-        return Builder().apply {
-            // NameNotFoundException must abort activation, not widen to all apps.
-            addOnlySelectedApplication(selectedPackage, packageName) { allowed ->
-                addAllowedApplication(allowed)
-                Unit
-            }
-        }
+    internal fun newSelectedAppBuilder(selectedApp: AppChoice?): Builder {
+        // The Activity's earlier consent check is not an activation grant.
+        // Re-read UID and current APK signers before creating any builder.
+        val pkg = requireSelectedPackage(selectedApp?.packageName, packageName)
+        val allowed = requirePinnedSelectedApp(selectedApp, packageName,
+            readInstalledAppIdentity(packageManager, pkg))
+        return Builder().apply { addAllowedApplication(allowed) }
     }
 
     /**
@@ -56,9 +55,9 @@ class SelectedAppVpnService : VpnService() {
      * This does not establish a TUN or request Android VPN consent.
      */
     internal fun newRestrictedTestTunBuilder(
-        selectedPackage: String?, configuration: RestrictedTestConfiguration,
+        selectedApp: AppChoice?, configuration: RestrictedTestConfiguration,
     ): Builder {
-        val builder = newSelectedAppBuilder(selectedPackage)
+        val builder = newSelectedAppBuilder(selectedApp)
         // Derive routes from the validated, owner-approved configuration; a
         // caller must not substitute an unrelated destination-only plan.
         applyRestrictedTestTunPlan(configuration.newTunPlan(),
@@ -158,11 +157,13 @@ class SelectedAppVpnService : VpnService() {
     internal fun newUnderlyingNetworkRestrictedTestDispatcher(
         manager: ConnectivityManager,
         network: Network,
-        selectedPackage: String?,
+        selectedApp: AppChoice?,
         configuration: RestrictedTestConfiguration,
         timeoutMs: Int,
     ): RestrictedTestTunDispatcher {
-        requireSelectedPackage(selectedPackage, packageName)
+        val pkg = requireSelectedPackage(selectedApp?.packageName, packageName)
+        requirePinnedSelectedApp(selectedApp, packageName,
+            readInstalledAppIdentity(packageManager, pkg))
         // Route, DNS grant and CONNECT authority must originate from one
         // validated configuration, not independently supplied arguments.
         return newDormantRestrictedGatewayDispatcher(

@@ -1,6 +1,8 @@
 package io.betternet.next
 
 import java.util.Locale
+import android.content.pm.PackageManager
+import android.os.Build
 import java.security.MessageDigest
 import java.util.Base64
 
@@ -14,6 +16,39 @@ internal data class AppChoice(
     val packageName: String, val label: String, val uid: Int,
     val signerFingerprint: String? = null,
 )
+
+/** One PackageManager snapshot; no package-name/UID-only fallback on missing signers. */
+internal data class InstalledAppIdentity(val uid: Int, val signerFingerprint: String)
+
+@Suppress("DEPRECATION")
+internal fun readInstalledAppIdentity(manager: PackageManager, pkg: String): InstalledAppIdentity? = try {
+    val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+        PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+    val info = manager.getPackageInfo(pkg, flags)
+    val signers = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+        info.signingInfo?.apkContentsSigners else info.signatures
+    val fingerprint = signerSetFingerprint(signers?.map { it.toByteArray() }.orEmpty())
+    val uid = info.applicationInfo?.uid
+    if (uid == null || uid <= 0 || fingerprint == null) null
+    else InstalledAppIdentity(uid, fingerprint)
+} catch (_: PackageManager.NameNotFoundException) {
+    null
+} catch (_: SecurityException) {
+    null
+}
+
+/** A future VPN builder must recheck identity independently of Activity consent. */
+internal fun requirePinnedSelectedApp(
+    selected: AppChoice?, ownPackage: String, current: InstalledAppIdentity?,
+): String {
+    val pkg = requireSelectedPackage(selected?.packageName, ownPackage)
+    require(selected != null && current != null && selected.uid > 0 &&
+        !selected.signerFingerprint.isNullOrBlank() &&
+        selected.uid == current.uid && selected.signerFingerprint == current.signerFingerprint) {
+        "Selected app identity changed or is unavailable"
+    }
+    return pkg
+}
 
 internal fun selectedAppStillInstalled(
     selected: AppChoice, current: List<AppChoice>, currentSignerFingerprint: String?,

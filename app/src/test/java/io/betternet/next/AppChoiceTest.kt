@@ -2,6 +2,7 @@ package io.betternet.next
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.fail
 import org.junit.Test
 
 class AppChoiceTest {
@@ -40,6 +41,28 @@ class AppChoiceTest {
             signerSetFingerprint(listOf(second)))
         assertEquals(null, signerSetFingerprint(emptyList()))
         assertEquals(null, signerSetFingerprint(listOf(first, byteArrayOf())))
+    }
+
+    @Test fun serviceBuilderRequiresPinnedCurrentIdentityIndependentlyOfConsent() {
+        val selected = AppChoice("com.example.browser", "Browser", 10001, "signer-A")
+        val installed = InstalledAppIdentity(10001, "signer-A")
+        assertEquals("com.example.browser",
+            requirePinnedSelectedApp(selected, "io.betternet.next", installed))
+        val rejected = listOf(
+            null to installed,
+            selected to null,
+            selected to InstalledAppIdentity(10002, "signer-A"),
+            selected to InstalledAppIdentity(10001, "signer-B"),
+            selected.copy(signerFingerprint = null) to installed,
+            selected.copy(uid = 0) to installed,
+            selected.copy(packageName = "io.betternet.next") to installed,
+        )
+        for ((choice, current) in rejected) {
+            try {
+                requirePinnedSelectedApp(choice, "io.betternet.next", current)
+                fail("Stale or self-app identity must never enter VPN builder")
+            } catch (_: IllegalArgumentException) { }
+        }
     }
 
     @Test fun invalidUidCannotBeSelected() {
