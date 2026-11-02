@@ -1074,10 +1074,18 @@ class GatewayTlsLoopbackTest {
                             // Closing the test tunnel terminates this half of the relay.
                         }
                     }.apply { isDaemon = true; start() }
-                    upstream.inputStream.copyTo(gateway.outputStream)
-                    gateway.outputStream.flush()
-                    upstream.close()
-                    forward.join(5_000)
+                    try {
+                        upstream.inputStream.copyTo(gateway.outputStream)
+                        gateway.outputStream.flush()
+                    } catch (_: java.net.SocketException) {
+                        // The client may close the outer TLS socket immediately
+                        // after reading the complete inner HTTPS response. That
+                        // close can race the relay's final write; the client
+                        // independently asserts the full response below.
+                    } finally {
+                        upstream.close()
+                        forward.join(5_000)
+                    }
                 }
             }) { address ->
                 val protection = mutableListOf<String>()
