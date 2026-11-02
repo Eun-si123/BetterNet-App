@@ -1,19 +1,27 @@
 package io.betternet.next
 
 import java.util.Locale
+import java.security.MessageDigest
+import java.util.Base64
 
 /** Only launcher-visible applications can be explicitly selected for future testing. */
 // The package name alone is not a durable identity: an uninstalled app can be
 // replaced by a different package instance while the Activity is still alive.
-// Capture the Android-assigned UID at selection time and recheck it before
-// requesting device-level VPN permission. This is not a signature pin and a
-// future VPN activation must independently revalidate its selected app.
-internal data class AppChoice(val packageName: String, val label: String, val uid: Int)
+// Pin both the UID and current APK signer set at selection time. Launcher
+// candidates are deliberately unpinned until the user actually selects one.
+// A future VPN activation must revalidate identity and OS consent again.
+internal data class AppChoice(
+    val packageName: String, val label: String, val uid: Int,
+    val signerFingerprint: String? = null,
+)
 
-internal fun selectedAppStillInstalled(selected: AppChoice, current: List<AppChoice>): Boolean =
-    selected.uid > 0 && current.any {
-        it.packageName == selected.packageName && it.uid == selected.uid
-    }
+internal fun selectedAppStillInstalled(
+    selected: AppChoice, current: List<AppChoice>, currentSignerFingerprint: String?,
+): Boolean =
+    selected.uid > 0 && !selected.signerFingerprint.isNullOrBlank() &&
+        selected.signerFingerprint == currentSignerFingerprint && current.any {
+            it.packageName == selected.packageName && it.uid == selected.uid
+        }
 
 internal fun selectableApps(candidates: List<AppChoice>, ownPackage: String): List<AppChoice> =
     candidates.asSequence()
@@ -21,3 +29,14 @@ internal fun selectableApps(candidates: List<AppChoice>, ownPackage: String): Li
         .sortedWith(compareBy({ it.label.lowercase(Locale.ROOT) }, { it.packageName }, { it.label }))
         .distinctBy { it.packageName }
         .toList()
+
+/** Canonical digest of the *current* signer set; ordering from PackageManager
+ * is not an app identity. Reject missing/empty certificate data.
+ */
+internal fun signerSetFingerprint(signers: List<ByteArray>): String? {
+    if (signers.isEmpty() || signers.any { it.isEmpty() }) return null
+    val digest = MessageDigest.getInstance("SHA-256")
+    val encoder = Base64.getUrlEncoder().withoutPadding()
+    return signers.map { encoder.encodeToString(digest.digest(it)) }
+        .sorted().joinToString(".")
+}
