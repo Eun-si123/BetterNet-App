@@ -73,6 +73,51 @@ class RestrictedTunPumpTest {
         }
     }
 
+    @Test fun changedRuntimePrerequisitesAbortBeforeNextTunOrGatewayCycle() {
+        // A VPN may remain established after its selected app is replaced or
+        // the underlying network disappears. Never rely on the start snapshot.
+        val closes = AtomicInteger()
+        var polls = 0
+        var checks = 0
+        val session = RestrictedTunSession(
+            dispatcher(), forbiddenInput(), ByteArrayOutputStream(),
+            { closes.incrementAndGet() }, waitForReadable = { polls++; false },
+        )
+        val pump = RestrictedTunPump(session,
+            revalidate = {
+                checks++
+                if (checks == 2) throw SecurityException("Selected app identity changed")
+            },
+            nowMillis = { 100L },
+        )
+        try {
+            pump.runUntilStopped()
+            fail("A stale selection must terminate the owner")
+        } catch (expected: SecurityException) {
+            assertEquals("Selected app identity changed", expected.message)
+        }
+        assertEquals(2, checks)
+        assertEquals(1, polls) // No second TUN read or gateway operation.
+        assertEquals(1, closes.get())
+        pump.requestStop()
+        assertEquals(1, closes.get())
+    }
+
+    @Test fun cancellationBeforeStartSkipsEvenRuntimeRevalidation() {
+        var checks = 0
+        val closes = AtomicInteger()
+        val session = RestrictedTunSession(dispatcher(), forbiddenInput(),
+            ByteArrayOutputStream(), { closes.incrementAndGet() })
+        val pump = RestrictedTunPump(session,
+            revalidate = { checks++; throw AssertionError("No validation after cancellation") },
+            nowMillis = { throw AssertionError("No clock after cancellation") },
+        )
+        pump.requestStop()
+        pump.runUntilStopped()
+        assertEquals(0, checks)
+        assertEquals(1, closes.get())
+    }
+
     @Test fun pollFailurePropagatesAndClosesOwnedDescriptor() {
         val releases = AtomicInteger()
         val session = RestrictedTunSession(dispatcher(), forbiddenInput(),

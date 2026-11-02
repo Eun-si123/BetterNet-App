@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 internal class RestrictedTunPump(
     private val session: RestrictedTunSession,
+    private val revalidate: () -> Unit = {},
     private val nowMillis: () -> Long,
 ) {
     private val started = AtomicBoolean(false)
@@ -25,8 +26,12 @@ internal class RestrictedTunPump(
         check(started.compareAndSet(false, true)) { "TUN pump already started" }
         var failure: Throwable? = null
         try {
-            while (!stopRequested.get() && session.pumpOneCycle(nowMillis)) {
-                // Bounded TUN poll and gateway read yield to lifecycle cancellation.
+            while (!stopRequested.get()) {
+                // An established TUN can outlive the original app identity,
+                // OS permission or underlying network. Fail before the next
+                // packet/gateway cycle rather than trusting activation-time state.
+                revalidate()
+                if (stopRequested.get() || !session.pumpOneCycle(nowMillis)) break
             }
         } catch (error: Throwable) {
             failure = error

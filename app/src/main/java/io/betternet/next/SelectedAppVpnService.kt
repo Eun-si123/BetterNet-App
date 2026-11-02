@@ -124,7 +124,8 @@ class SelectedAppVpnService : VpnService() {
                 requireFreshRestrictedTestPrerequisites(manager, underlyingNetwork, selectedApp)
             },
             establish = { prepared.builder.establish() },
-            attach = { descriptor -> newRestrictedTunWorker(descriptor, prepared.dispatcher) },
+            attach = { descriptor -> newRestrictedTunWorker(
+                descriptor, prepared.dispatcher, manager, underlyingNetwork, selectedApp) },
             start = { worker -> worker.start() },
             rollback = {
                 // Never close a possibly running worker's dispatcher from a
@@ -181,9 +182,23 @@ class SelectedAppVpnService : VpnService() {
     internal fun newRestrictedTunWorker(
         descriptor: ParcelFileDescriptor,
         dispatcher: RestrictedTestTunDispatcher,
+        manager: ConnectivityManager,
+        underlyingNetwork: Network,
+        selectedApp: AppChoice?,
     ): RestrictedTunWorker = tunLifecycle.adopt(RestrictedTunWorker(
-        RestrictedTunPump(ownEstablishedRestrictedTestTun(descriptor, dispatcher),
-            SystemClock::elapsedRealtime),
+        RestrictedTunPump(
+            ownEstablishedRestrictedTestTun(descriptor, dispatcher),
+            revalidate = {
+                // The established VPN itself is now visible in allNetworks,
+                // so do NOT reuse the pre-activation other-VPN rejection here.
+                val pkg = requireSelectedPackage(selectedApp?.packageName, packageName)
+                requirePinnedSelectedApp(selectedApp, packageName,
+                    readInstalledAppIdentity(packageManager, pkg))
+                requireUnderlyingInternetNetwork(manager, underlyingNetwork)
+                check(VpnService.prepare(this) == null) { "VPN permission was revoked" }
+            },
+            nowMillis = SystemClock::elapsedRealtime,
+        ),
     ))
 
     /** A future TLS gateway dial must protect its socket before connecting. */
