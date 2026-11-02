@@ -30,13 +30,21 @@ class SelectedAppVpnService : VpnService() {
     private val tunLifecycle = RestrictedTunLifecycle()
 
     override fun onRevoke() {
-        tunLifecycle.cancel()
-        super.onRevoke()
+        // Even if closing the TUN descriptor fails, Android's revocation
+        // callback must still run; otherwise the service can remain alive.
+        try {
+            tunLifecycle.cancel()
+        } finally {
+            super.onRevoke()
+        }
     }
 
     override fun onDestroy() {
-        tunLifecycle.cancel()
-        super.onDestroy()
+        try {
+            tunLifecycle.cancel()
+        } finally {
+            super.onDestroy()
+        }
     }
 
     /** Future activation must use this scoped builder, never an unscoped fallback. */

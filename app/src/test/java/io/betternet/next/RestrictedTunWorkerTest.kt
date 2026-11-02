@@ -211,6 +211,37 @@ class RestrictedTunWorkerTest {
         assertEquals(1, closes.get())
     }
 
+    @Test fun descriptorCloseFailureCannotReopenRevokedLifecycle() {
+        val lifecycle = RestrictedTunLifecycle()
+        val closes = AtomicInteger()
+        val worker = RestrictedTunWorker(RestrictedTunPump(
+            RestrictedTunSession(dispatcher(), forbiddenInput, ByteArrayOutputStream(), {
+                closes.incrementAndGet()
+                throw IOException("simulated descriptor close failure")
+            }, waitForReadable = { false })) { 100L })
+        lifecycle.adopt(worker)
+        try {
+            lifecycle.cancel()
+            fail("Descriptor close failure must be observable")
+        } catch (expected: IOException) {
+            assertEquals("simulated descriptor close failure", expected.message)
+        }
+        // onDestroy() may follow onRevoke(); no repeated close or adoption.
+        lifecycle.cancel()
+        assertEquals(1, closes.get())
+        val replacementCloses = AtomicInteger()
+        val replacement = RestrictedTunWorker(RestrictedTunPump(
+            RestrictedTunSession(dispatcher(), forbiddenInput, ByteArrayOutputStream(),
+                { replacementCloses.incrementAndGet() }, waitForReadable = { false })) { 100L })
+        try {
+            lifecycle.adopt(replacement)
+            fail("A failed descriptor close must not re-authorize the VPN")
+        } catch (expected: IllegalStateException) {
+            assertEquals("VPN lifecycle already revoked", expected.message)
+        }
+        assertEquals(1, replacementCloses.get())
+    }
+
     @Test fun lifecycleRevokeCancelsAdoptedWorkerWithoutStartingIt() {
         val lifecycle = RestrictedTunLifecycle()
         val closes = AtomicInteger()
