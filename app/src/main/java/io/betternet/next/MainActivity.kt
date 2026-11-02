@@ -179,6 +179,30 @@ class MainActivity : Activity() {
         }
         root.addView(probeButton)
         root.addView(probeStatus)
+        val authenticatedStatus = TextView(this).apply {
+            setText(R.string.authenticated_probe_not_run)
+        }
+        val authenticatedButton = Button(this).apply {
+            setText(R.string.authenticated_probe_button)
+            setOnClickListener {
+                val selected = selectedApp ?: return@setOnClickListener
+                val config = testConfiguration ?: return@setOnClickListener
+                if (gatewayProbeRunning || observeVpnReadiness() !in listOf(
+                        VpnReadiness.NEEDS_CONSENT, VpnReadiness.PREPARED)) {
+                    checkVpnReadiness()
+                    return@setOnClickListener
+                }
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle(R.string.authenticated_probe_button)
+                    .setMessage(R.string.authenticated_probe_warning)
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setPositiveButton(R.string.authenticated_probe_confirm) { _, _ ->
+                        startAuthenticatedHttpsProbe(selected, config, authenticatedStatus, this)
+                    }.show()
+            }
+        }
+        root.addView(authenticatedButton)
+        root.addView(authenticatedStatus)
         // Keep the selection and clear controls reachable on small screens or large fonts.
         setContentView(ScrollView(this).apply {
             fitsSystemWindows = true
@@ -339,6 +363,47 @@ class MainActivity : Activity() {
                 }
             }
         }, "BetterNet-GatewayTlsProbe").start()
+    }
+
+    /** Explicit diagnostic only: authenticates a gateway and reads one HTTPS status. */
+    private fun startAuthenticatedHttpsProbe(
+        selected: AppChoice, config: RestrictedTestConfiguration,
+        status: TextView, button: Button,
+    ) {
+        if (gatewayProbeRunning || selectedApp != selected || testConfiguration !== config ||
+            observeVpnReadiness() !in listOf(VpnReadiness.NEEDS_CONSENT, VpnReadiness.PREPARED)) {
+            checkVpnReadiness()
+            return
+        }
+        val manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = manager.activeNetwork ?: run {
+            status.setText(R.string.authenticated_probe_failed)
+            return
+        }
+        val generation = gatewayProbeGeneration.get()
+        gatewayProbeRunning = true
+        button.isEnabled = false
+        status.setText(R.string.authenticated_probe_running)
+        Thread({
+            val result = try {
+                probeApprovedHttpsThroughGatewayWithoutVpn(
+                    manager, network, packageManager, packageName, selected, config
+                ) { gatewayProbeGeneration.get() == generation }
+            } catch (_: Exception) {
+                // Never display/log credentials, hostnames or exception details.
+                null
+            }
+            Handler(Looper.getMainLooper()).post {
+                gatewayProbeRunning = false
+                if (!isDestroyed) {
+                    button.isEnabled = true
+                    if (gatewayProbeGeneration.get() == generation) {
+                        status.text = if (result == null) getString(R.string.authenticated_probe_failed)
+                            else getString(R.string.authenticated_probe_response, result)
+                    }
+                }
+            }
+        }, "BetterNet-AuthenticatedHttpsProbe").start()
     }
 
     private fun checkVpnReadiness() {

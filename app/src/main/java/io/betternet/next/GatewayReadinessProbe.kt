@@ -24,21 +24,9 @@ internal fun probeGatewayTlsWithoutVpn(
     stillAuthorized: () -> Boolean,
 ) {
     require(isValidGatewayName(gatewayName) && gatewayPort in 1..65535)
-    val verify = {
-        check(stillAuthorized()) { "Gateway probe authorization was withdrawn" }
-        val pinned = requireSelectedPackage(selectedApp.packageName, ownPackage)
-        requirePinnedSelectedApp(selectedApp, ownPackage,
-            readInstalledAppIdentity(packages, pinned))
-        val networks = manager.allNetworks
-        val caps = networks.map { manager.getNetworkCapabilities(it) }
-        val underlying = caps.getOrNull(networks.indexOf(network))
-        requireReadOnlyGatewayProbeScope(
-            manager.activeNetwork == network && networks.contains(network),
-            caps.all { it != null },
-            caps.any { it?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true },
-            underlying?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true,
-        )
-    }
+    val verify = readOnlyGatewayProbeVerifier(
+        manager, network, packages, ownPackage, selectedApp, stillAuthorized
+    )
     probePinnedGatewayTls(gatewayName, gatewayPort, verify,
         lookup = { host -> network.getAllByName(host) },
         dial = { address, remaining ->
@@ -101,4 +89,31 @@ internal fun requireReadOnlyGatewayProbeScope(
         !anotherVpnVisible && underlyingInternetCapable) {
         "Gateway probe requires the same observable non-VPN Internet network"
     }
+}
+
+
+/** Shared single-app, observable non-VPN gate for explicitly confirmed probes.
+ * This gate must be checked around each potentially blocking network operation.
+ */
+internal fun readOnlyGatewayProbeVerifier(
+    manager: ConnectivityManager,
+    network: Network,
+    packages: PackageManager,
+    ownPackage: String,
+    selectedApp: AppChoice,
+    stillAuthorized: () -> Boolean,
+): () -> Unit = {
+    check(stillAuthorized()) { "Gateway probe authorization was withdrawn" }
+    val pinned = requireSelectedPackage(selectedApp.packageName, ownPackage)
+    requirePinnedSelectedApp(selectedApp, ownPackage,
+        readInstalledAppIdentity(packages, pinned))
+    val networks = manager.allNetworks
+    val caps = networks.map { manager.getNetworkCapabilities(it) }
+    val underlying = caps.getOrNull(networks.indexOf(network))
+    requireReadOnlyGatewayProbeScope(
+        manager.activeNetwork == network && networks.contains(network),
+        caps.all { it != null },
+        caps.any { it?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true },
+        underlying?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true,
+    )
 }

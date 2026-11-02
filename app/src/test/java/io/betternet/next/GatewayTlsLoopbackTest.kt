@@ -675,6 +675,49 @@ class GatewayTlsLoopbackTest {
         assertEquals(0, output.size())
     }
 
+    @Test fun pinnedNumericConnectAndIndependentHttpsIdentityDeliverHeadResponse() {
+        // The authenticated gateway receives an IP authority, never a
+        // hostname to resolve. The origin receives no bearer credential.
+        val gatewayTls = contexts("gateway.example")
+        val originTls = contexts("dns.example")
+        val token = "TestOnlyOpaqueToken0123456789"
+        withServer(gatewayTls.server, { gateway ->
+            gateway.startHandshake()
+            val reader = gateway.inputStream.bufferedReader()
+            assertEquals("CONNECT 127.0.0.1:443 HTTP/1.1", reader.readLine())
+            assertEquals("Host: 127.0.0.1:443", reader.readLine())
+            assertEquals("Proxy-Authorization: Bearer $token", reader.readLine())
+            assertEquals("", reader.readLine())
+            gateway.outputStream.write("HTTP/1.1 200 OK\r\n\r\n".toByteArray())
+            gateway.outputStream.flush()
+            (originTls.server.socketFactory.createSocket(gateway, "dns.example", 443, false) as SSLSocket).use { origin ->
+                origin.useClientMode = false
+                origin.soTimeout = 3_000
+                origin.startHandshake()
+                val http = origin.inputStream.bufferedReader()
+                assertEquals("HEAD / HTTP/1.1", http.readLine())
+                assertEquals("Host: dns.example", http.readLine())
+                assertEquals("Connection: close", http.readLine())
+                assertEquals("", http.readLine())
+                origin.outputStream.write("HTTP/1.1 204 No Content\r\n\r\n".toByteArray())
+                origin.outputStream.flush()
+            }
+        }) { address ->
+            val tunnel = connectAuthenticatedPinnedIpTestTunnel(
+                address, "gateway.example", 3_000, { true },
+                InetAddress.getByName("127.0.0.1"), 443, token,
+                tlsFactory = gatewayTls.trustedClient.socketFactory,
+            )
+            establishVerifiedDestinationTlsOnTunnel(
+                tunnel, "dns.example", 443, 3_000, originTls.trustedClient.socketFactory,
+            ).use { https ->
+                assertEquals(204, readBoundedHttpsHeadStatus(
+                    "dns.example", https.inputStream, https.outputStream, {}, { https.soTimeout = it },
+                ))
+            }
+        }
+    }
+
     @Test fun nestedHttpsOverAuthenticatedConnectReturnsRealResponseBytes() {
         val gatewayTls = contexts("gateway.example")
         // Gateway and HTTPS origin have independent certificates/trust roots.

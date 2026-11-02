@@ -55,4 +55,11 @@
   <string name="gateway_probe_running">Checking gateway TLS…</string>
   <string name="gateway_probe_success">Gateway TLS identity verified. No VPN or Internet forwarding was tested.</string>
   <string name="gateway_probe_failed">Gateway TLS check failed or network/app scope changed. No VPN was started.</string>
+  <string name="authenticated_probe_button">Check authenticated HTTPS gateway path (no VPN)</string>
+  <string name="authenticated_probe_not_run">Authenticated HTTPS path not checked.</string>
+  <string name="authenticated_probe_warning">This sends your disposable gateway credential over verified TLS to the gateway you entered, then sends one HTTPS HEAD request to the approved public IP and hostname through that gateway. It may use metered data. The gateway can observe the destination. No VPN or selected-app traffic is started. Only use a gateway and destination you control or are authorized to test. A response does not prove selected-app forwarding.</string>
+  <string name="authenticated_probe_confirm">Send one HTTPS request</string>
+  <string name="authenticated_probe_running">Checking authenticated HTTPS path…</string>
+  <string name="authenticated_probe_response">Verified HTTPS peer responded with HTTP %1$d via the gateway. No VPN or selected-app forwarding was tested.</string>
+  <string name="authenticated_probe_failed">Authenticated HTTPS path failed or authorization changed. No VPN was started.</string>
 </resources>

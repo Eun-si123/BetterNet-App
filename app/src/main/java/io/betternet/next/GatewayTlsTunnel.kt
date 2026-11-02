@@ -33,7 +33,25 @@ internal fun connectVerifiedDestinationTlsThroughGateway(
         gatewayAddress, gatewayName, timeoutMs, protect, destinationName, destinationPort,
         bearerToken, tlsFactory = gatewayTlsFactory, bind = bind
     )
+    return establishVerifiedDestinationTlsOnTunnel(
+        tunnel, destinationName, destinationPort, timeoutMs, destinationTlsFactory
+    )
+}
+
+/** An independently verified HTTPS peer over an already authenticated CONNECT.
+ * The caller must authenticate and scope the CONNECT before entering here.
+ */
+internal fun establishVerifiedDestinationTlsOnTunnel(
+    tunnel: SSLSocket,
+    destinationName: String,
+    destinationPort: Int,
+    timeoutMs: Int,
+    destinationTlsFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
+): SSLSocket {
     try {
+        require(isValidGatewayName(destinationName))
+        require(destinationPort == 443 || destinationPort == 853)
+        require(timeoutMs in 1..10_000)
         val inner = destinationTlsFactory.createSocket(tunnel, destinationName, destinationPort, true) as SSLSocket
         try {
             inner.useClientMode = true
