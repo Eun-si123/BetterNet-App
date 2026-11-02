@@ -94,6 +94,54 @@ class SelectedAppVpnService : VpnService() {
         // Validate app identity and exact host routes before any OS consent
         // inspection. This builder has no side effects until establish().
         val builder = newRestrictedTestTunBuilder(selectedApp, configuration)
+        requireFreshRestrictedTestPrerequisites(manager, underlyingNetwork, selectedApp)
+        val dispatcher = newUnderlyingNetworkRestrictedTestDispatcher(
+            manager, underlyingNetwork, selectedApp, configuration, timeoutMs,
+        )
+        return DormantRestrictedTestActivation(builder, dispatcher)
+    }
+
+    /**
+     * Dormant activation boundary, deliberately NOT called by the Activity or
+     * onStartCommand. A future user-confirmed service start may invoke this only
+     * after explicit OS consent and foreground-service/lifecycle review.
+     * No background, implicit, or whole-device activation path is provided.
+     * A worker returned here still needs a background owner to monitor failure,
+     * stop/join on shutdown, and handle Android network/permission changes.
+     */
+    internal fun activateExplicitRestrictedTestTun(
+        manager: ConnectivityManager,
+        underlyingNetwork: Network,
+        selectedApp: AppChoice?,
+        configuration: RestrictedTestConfiguration,
+        timeoutMs: Int,
+    ): RestrictedTunWorker {
+        val prepared = prepareDormantRestrictedTestActivation(
+            manager, underlyingNetwork, selectedApp, configuration, timeoutMs,
+        )
+        return establishRestrictedTunTransaction(
+            revalidate = {
+                requireFreshRestrictedTestPrerequisites(manager, underlyingNetwork, selectedApp)
+            },
+            establish = { prepared.builder.establish() },
+            attach = { descriptor -> newRestrictedTunWorker(descriptor, prepared.dispatcher) },
+            start = { worker -> worker.start() },
+            rollback = {
+                // Never close a possibly running worker's dispatcher from a
+                // second thread. Before start, it owns no network resources;
+                // after start, cancellation lets the owner close it.
+                tunLifecycle.cancel()
+            },
+        )
+    }
+
+    /** Mutable consent, app identity and network capabilities are never cached. */
+    private fun requireFreshRestrictedTestPrerequisites(
+        manager: ConnectivityManager, underlyingNetwork: Network, selectedApp: AppChoice?,
+    ) {
+        val pkg = requireSelectedPackage(selectedApp?.packageName, packageName)
+        requirePinnedSelectedApp(selectedApp, packageName,
+            readInstalledAppIdentity(packageManager, pkg))
         val networks = manager.allNetworks
         val capabilities = networks.map { manager.getNetworkCapabilities(it) }
         val underlyingIndex = networks.indexOf(underlyingNetwork)
@@ -106,10 +154,6 @@ class SelectedAppVpnService : VpnService() {
             underlying?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true,
             VpnService.prepare(this) == null,
         )
-        val dispatcher = newUnderlyingNetworkRestrictedTestDispatcher(
-            manager, underlyingNetwork, selectedApp, configuration, timeoutMs,
-        )
-        return DormantRestrictedTestActivation(builder, dispatcher)
     }
 
     /**
