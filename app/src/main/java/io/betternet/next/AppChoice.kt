@@ -29,13 +29,28 @@ internal fun readInstalledAppIdentity(manager: PackageManager, pkg: String): Ins
         info.signingInfo?.apkContentsSigners else info.signatures
     val fingerprint = signerSetFingerprint(signers?.map { it.toByteArray() }.orEmpty())
     val uid = info.applicationInfo?.uid
-    if (uid == null || uid <= 0 || fingerprint == null) null
+    // VpnService.Builder.addAllowedApplication() routes by UID, not by APK.
+    // A shared UID could silently capture another app's traffic. Reject
+    // legacy sharedUserId even if Android's package-visibility filtering hides
+    // the other packages from getPackagesForUid().
+    if (uid == null || uid <= 0 || fingerprint == null ||
+        !hasExclusiveVpnUid(pkg, info.sharedUserId, manager.getPackagesForUid(uid))) null
     else InstalledAppIdentity(uid, fingerprint)
 } catch (_: PackageManager.NameNotFoundException) {
     null
 } catch (_: SecurityException) {
     null
 }
+
+/**
+ * A single-app VPN scope is possible only for a UID not shared with other
+ * packages. Android 11+ may filter getPackagesForUid() by package visibility;
+ * a non-null declared sharedUserId is therefore an independent hard reject.
+ * Unknown, incomplete or ambiguous package snapshots must fail closed.
+ */
+internal fun hasExclusiveVpnUid(
+    selectedPackage: String, declaredSharedUserId: String?, uidPackages: Array<String>?,
+): Boolean = declaredSharedUserId == null && uidPackages?.singleOrNull() == selectedPackage
 
 /** A future VPN builder must recheck identity independently of Activity consent. */
 internal fun requirePinnedSelectedApp(

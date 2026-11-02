@@ -6,6 +6,19 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class AppChoiceTest {
+    @Test fun sharedUidCannotBePresentedAsOneAppVpnScope() {
+        val pkg = "com.example.browser"
+        assertEquals(true, hasExclusiveVpnUid(pkg, null, arrayOf(pkg)))
+        // The selected APK may declare a shared UID even when package
+        // visibility hides every other package using that UID.
+        assertEquals(false, hasExclusiveVpnUid(pkg, "com.example.shared", arrayOf(pkg)))
+        assertEquals(false, hasExclusiveVpnUid(pkg, null, arrayOf(pkg, "com.example.hidden")))
+        assertEquals(false, hasExclusiveVpnUid(pkg, null, arrayOf(pkg, pkg)))
+        assertEquals(false, hasExclusiveVpnUid(pkg, null, arrayOf("com.example.other")))
+        assertEquals(false, hasExclusiveVpnUid(pkg, null, emptyArray()))
+        assertEquals(false, hasExclusiveVpnUid(pkg, null, null))
+    }
+
     @Test fun selectionIdentityRejectsReinstalledOrMissingPackage() {
         val selected = AppChoice("com.example.browser", "Browser", 10001, "signer-A")
         assertEquals(true, selectedAppStillInstalled(selected, listOf(
