@@ -18,6 +18,7 @@ import java.net.ConnectException
 import java.net.NoRouteToHostException
 import java.net.SocketTimeoutException
 import java.io.IOException
+import java.io.Closeable
 import java.net.InetSocketAddress
 import java.net.Socket
 import javax.net.ssl.SSLSocket
@@ -321,7 +322,7 @@ class SelectedAppVpnService : VpnService() {
         )
     }
 
-    private fun <T> onUnderlyingNetworkGateway(
+    private fun <T : Closeable> onUnderlyingNetworkGateway(
         manager: ConnectivityManager, network: Network, hostname: String,
         port: Int, timeoutMs: Int, dial: (InetSocketAddress, Int) -> T,
     ): T {
@@ -335,8 +336,13 @@ class SelectedAppVpnService : VpnService() {
                 network.getAllByName(host)
             },
             { address, remaining ->
-                requireUnderlyingInternetNetwork(manager, network)
-                dial(address, remaining)
+                // The selected Network may disappear or become a VPN while a
+                // protected TLS/CONNECT dial is blocked. Reject its socket and
+                // close it rather than handing out a stale recursive route.
+                withFreshRestrictedGatewaySocketScope(
+                    { requireUnderlyingInternetNetwork(manager, network) },
+                    { dial(address, remaining) },
+                )
             },
         )
     }
@@ -361,6 +367,28 @@ internal inline fun <T> withFreshRestrictedGatewayScope(
     val result = operation()
     verify()
     return result
+}
+
+/**
+ * A TLS/CONNECT dial can outlive the non-VPN Network that authorized it.
+ * Unlike a DNS lookup, its result owns a live socket: a failed post-dial
+ * capability check must close that socket, preserving the original failure.
+ * Dial implementations remain responsible for closing on their own errors.
+ */
+internal inline fun <T : Closeable> withFreshRestrictedGatewaySocketScope(
+    verify: () -> Unit, dial: () -> T,
+): T {
+    verify()
+    val socket = dial()
+    try {
+        verify()
+    } catch (failure: Throwable) {
+        try { socket.close() } catch (closeFailure: Throwable) {
+            failure.addSuppressed(closeFailure)
+        }
+        throw failure
+    }
+    return socket
 }
 
 /** Preflight artifacts only: holding these does not authorize TUN establishment. */

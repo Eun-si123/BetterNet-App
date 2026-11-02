@@ -55,6 +55,68 @@ class SelectedAppVpnServiceTest {
         }
     }
 
+    @Test fun gatewaySocketClosesIfUnderlyingNetworkChangesDuringTlsDial() {
+        val events = mutableListOf<String>()
+        var valid = true
+        val socket = RecordingSocket(events)
+        val verify = {
+            events.add("verify")
+            check(valid) { "Underlying network is no longer safe" }
+        }
+        assertEquals(socket, withFreshRestrictedGatewaySocketScope(verify) {
+            events.add("dial")
+            socket
+        })
+        assertEquals(listOf("verify", "dial", "verify"), events)
+
+        events.clear()
+        valid = false
+        try {
+            withFreshRestrictedGatewaySocketScope(verify) {
+                events.add("dial")
+                socket
+            }
+            fail("Invalid network must never initiate a dial")
+        } catch (_: IllegalStateException) {
+            assertEquals(listOf("verify"), events)
+        }
+
+        events.clear()
+        valid = true
+        try {
+            withFreshRestrictedGatewaySocketScope(verify) {
+                events.add("dial")
+                valid = false // Network disappeared while TLS/CONNECT blocked.
+                socket
+            }
+            fail("Stale socket must not escape")
+        } catch (expected: IllegalStateException) {
+            assertEquals("Underlying network is no longer safe", expected.message)
+            assertEquals(listOf("verify", "dial", "verify", "close"), events)
+        }
+    }
+
+    @Test fun gatewaySocketCleanupFailureDoesNotHideRevocation() {
+        val revocation = IllegalStateException("Network changed")
+        val cleanup = IOException("Socket close failed")
+        val events = mutableListOf<String>()
+        val socket = object : Socket() {
+            override fun close() { events.add("close"); throw cleanup }
+        }
+        var checks = 0
+        try {
+            withFreshRestrictedGatewaySocketScope(
+                { if (++checks == 2) throw revocation },
+                { events.add("dial"); socket },
+            )
+            fail("Post-dial revocation must abort")
+        } catch (caught: IllegalStateException) {
+            assertTrue(caught === revocation)
+            assertEquals(listOf(cleanup), caught.suppressed.toList())
+            assertEquals(listOf("dial", "close"), events)
+        }
+    }
+
     @Test fun acceptsOneExplicitOtherPackage() {
         assertEquals("com.example.browser", requireSelectedPackage("com.example.browser", "io.betternet.next"))
     }
