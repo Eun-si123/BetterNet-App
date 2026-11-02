@@ -69,8 +69,12 @@ internal class RestrictedTestTunDispatcher(
                         }
                     } else {
                         val approved = binding
-                        if (approved != null && approved.allows(ingress, nowMillis)) {
-                            // Single use even if the CONNECT dial fails.
+                        if (approved != null && approved.allows(ingress, nowMillis) &&
+                            buildTcpSynAck(ingress, 0L, plan.mtu) != null) {
+                            // Only a fully validated SYN consumes the DNS grant.
+                            // A malformed SYN must not trigger gateway credentials
+                            // or prevent the app from retrying with a valid SYN.
+                            // Single use once an actual CONNECT dial is attempted.
                             binding = null
                             bridge = connectTcp(approved, ingress, output, nowMillis)
                         }

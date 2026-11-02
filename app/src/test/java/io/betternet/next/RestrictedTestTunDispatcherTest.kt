@@ -257,6 +257,45 @@ class RestrictedTestTunDispatcherTest {
         }
     }
 
+    @Test fun malformedSynCannotSpendDnsGrantOrDialGateway() {
+        for (version in listOf(4, 6)) {
+            val syn = packets.request(version)
+            val p = plan(syn)
+            var dials = 0
+            var closes = 0
+            val dispatcher = RestrictedTestTunDispatcher(p,
+                { _, _ -> bindings.bindingFor(syn) },
+                { approved, initial, output, time ->
+                    dials++
+                    OfflineTcpTunBridge(ByteArrayInputStream(byteArrayOf()),
+                        ByteArrayOutputStream(), p.mtu, 123L,
+                        allowedDestination = approved.address,
+                        onClose = { closes++ }).also {
+                        assertTrue(it.pumpOneTunPacket(ByteArrayInputStream(initial.bytes), output, time))
+                    }
+                })
+            val output = ByteArrayOutputStream()
+            assertTrue(feed(dispatcher, udp(p), output))
+            // These packets pass the IP/TCP checksum and SYN-flag gate in the
+            // DNS binding, but are not valid initial TCP handshakes.
+            for (invalid in listOf(
+                packets.request(version, ack = 1),
+                packets.request(version, payload = byteArrayOf(42)),
+                packets.request(version, options = byteArrayOf(30, 2, 0, 0)),
+            )) {
+                assertTrue(feed(dispatcher, invalid.bytes, output))
+                assertEquals(0, dials)
+                assertEquals(0, output.size())
+            }
+            // The original grant remains available for a legitimate SYN.
+            assertTrue(feed(dispatcher, syn.bytes, output))
+            assertEquals(1, dials)
+            assertNotNull(parseTunPacketHeader(output.toByteArray(), output.size()))
+            dispatcher.close()
+            assertEquals(1, closes)
+        }
+    }
+
     @Test fun rejectedOrExpiredDnsGrantCannotOpenGateway() {
         for (version in listOf(4, 6)) {
             val syn = packets.request(version)
