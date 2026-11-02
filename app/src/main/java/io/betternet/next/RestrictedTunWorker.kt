@@ -13,10 +13,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  * requestStop() may run on a lifecycle thread. stopAndJoin() must run on a
  * background thread, never the Android main thread; it is bounded because
  * a gateway read or a Linux TUN read may not wake immediately on fd close.
+ * onTerminated runs once on the owner thread after pump cleanup; a future
+ * service may use it to schedule foreground-service shutdown, but must never
+ * join the owner from this callback. Callback errors are retained as failures.
  */
 internal class RestrictedTunWorker(
     private val pump: RestrictedTunPump,
     private val launchThread: (Thread) -> Unit = { it.start() },
+    private val onTerminated: (Throwable?) -> Unit = {},
 ) {
     private val started = AtomicBoolean(false)
     // Launch may block in Thread.start(). Waiting for it must count toward
@@ -33,6 +37,14 @@ internal class RestrictedTunWorker(
             // Retain the actual failure for the owner to inspect after join.
             // An uncaught worker exception must not silently kill the service.
             failure = error
+        } finally {
+            try {
+                onTerminated(failure)
+            } catch (callbackError: Throwable) {
+                val original = failure
+                if (original == null) failure = callbackError
+                else if (callbackError !== original) original.addSuppressed(callbackError)
+            }
         }
     }, "BetterNet-RestrictedTun")
 

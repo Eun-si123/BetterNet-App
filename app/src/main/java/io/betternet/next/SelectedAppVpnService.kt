@@ -199,6 +199,12 @@ class SelectedAppVpnService : VpnService() {
             },
             nowMillis = SystemClock::elapsedRealtime,
         ),
+        onTerminated = {
+            // Even an unexpected pump failure must not leave a future
+            // foreground service running without an owned TUN. The callback
+            // runs after owner-thread cleanup and never joins its own thread.
+            stopSelf()
+        },
     ))
 
     /** A future TLS gateway dial must protect its socket before connecting. */

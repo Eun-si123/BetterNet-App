@@ -100,6 +100,61 @@ class RestrictedTunWorkerTest {
         assertEquals(1, closes.get())
     }
 
+    @Test fun terminationCallbackRunsOnceAfterCleanupForNormalStopAndFailure() {
+        for (shouldFail in listOf(false, true)) {
+            val closes = AtomicInteger()
+            val notices = AtomicInteger()
+            var observedFailure: Throwable? = null
+            val session = RestrictedTunSession(dispatcher(), forbiddenInput,
+                ByteArrayOutputStream(), { closes.incrementAndGet() },
+                waitForReadable = {
+                    if (shouldFail) throw IOException("poll failed")
+                    false
+                })
+            val worker = RestrictedTunWorker(RestrictedTunPump(session) { 100L },
+                onTerminated = { error ->
+                    assertEquals(1, closes.get()) // Owner has already cleaned up.
+                    observedFailure = error
+                    notices.incrementAndGet()
+                })
+            assertEquals(0, notices.get()) // Construction must not notify.
+            if (!shouldFail) worker.requestStop()
+            worker.start()
+            assertTrue(worker.awaitStopped(3000))
+            assertEquals(1, notices.get())
+            assertEquals(1, closes.get())
+            if (shouldFail) {
+                assertEquals("poll failed", (worker.failure as IOException).message)
+                assertSame(worker.failure, observedFailure)
+            } else {
+                assertNull(worker.failure)
+                assertNull(observedFailure)
+            }
+            assertTrue(worker.stopAndJoin(3000))
+            assertEquals(1, notices.get())
+        }
+    }
+
+    @Test fun callbackFailureDoesNotHideOriginalPumpFailureOrCrashOwner() {
+        val session = RestrictedTunSession(dispatcher(), forbiddenInput,
+            ByteArrayOutputStream(), {}, waitForReadable = { throw IOException("poll failed") })
+        val worker = RestrictedTunWorker(RestrictedTunPump(session) { 100L },
+            onTerminated = { throw IllegalStateException("monitor failed") })
+        worker.start()
+        assertTrue(worker.awaitStopped(3000))
+        assertEquals("poll failed", (worker.failure as IOException).message)
+        assertEquals(listOf("monitor failed"), worker.failure!!.suppressed.map { it.message })
+
+        val normal = RestrictedTunWorker(RestrictedTunPump(
+            RestrictedTunSession(dispatcher(), forbiddenInput, ByteArrayOutputStream(), {},
+                waitForReadable = { false })) { 100L },
+            onTerminated = { throw IllegalStateException("monitor failed") })
+        normal.requestStop()
+        normal.start()
+        assertTrue(normal.awaitStopped(3000))
+        assertEquals("monitor failed", (normal.failure as IllegalStateException).message)
+    }
+
     @Test fun joinCannotReportStoppedWhileThreadLaunchIsPending() {
         val launchEntered = CountDownLatch(1)
         val allowLaunch = CountDownLatch(1)
@@ -171,13 +226,14 @@ class RestrictedTunWorkerTest {
     }
 
     @Test fun failedThreadLaunchCannotBeMistakenForCompletedWorker() {
+        val notices = AtomicInteger()
         val closes = AtomicInteger()
         val session = RestrictedTunSession(dispatcher(), forbiddenInput,
             ByteArrayOutputStream(), { closes.incrementAndGet() },
             waitForReadable = { false })
-        val worker = RestrictedTunWorker(RestrictedTunPump(session) { 100L }) {
-            throw IllegalStateException("launch rejected")
-        }
+        val worker = RestrictedTunWorker(RestrictedTunPump(session) { 100L },
+            launchThread = { throw IllegalStateException("launch rejected") },
+            onTerminated = { notices.incrementAndGet() })
         try {
             worker.start()
             fail("Thread launch must fail")
@@ -185,6 +241,7 @@ class RestrictedTunWorkerTest {
             assertEquals("launch rejected", expected.message)
         }
         assertEquals(1, closes.get())
+        assertEquals(0, notices.get()) // No owner thread ever ran.
         try {
             worker.awaitStopped(100)
             fail("Never claim an unlaunched thread has stopped")
