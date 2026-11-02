@@ -149,7 +149,7 @@ class SelectedAppVpnService : VpnService() {
                     },
                 )
             },
-            demote = { try { stopForeground(true) } finally { stopSelf() } },
+            demote = { try { stopForeground(STOP_FOREGROUND_REMOVE) } finally { stopSelf() } },
         )
     }
 
