@@ -1,7 +1,8 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 language: "ko-KR"
+tone_instructions: "Write concise, direct Korean reviews. Explain concrete risks, impact, and practical fixes. Be constructive, flag uncertainty, and avoid style-only nitpicks."
 reviews:
-  profile: "chill"
+  profile: "assertive"
   poem: false
   auto_approvals:
     enabled: false
@@ -11,6 +12,17 @@ reviews:
     auto_incremental_review: true
     auto_pause_after_reviewed_commits: 0
   path_instructions:
+    - path: "**/*"
+      instructions: |
+        Look assertively for concrete correctness, security, privacy, integrity,
+        concurrency, lifecycle, resource, recovery, and regression defects.
+        Include subtle edge cases when a realistic failure mode exists.
+        For each finding, explain the trigger, impact, and a minimal fix or
+        regression test. Distinguish evidence from speculation.
+        Report minor issues when they cause real behavior or maintainability
+        risks; skip purely stylistic, naming, or formatting nitpicks and
+        speculative refactors without a demonstrated consequence.
+        Apply the more specific path instructions below as well.
     - path: "app/src/**"
       instructions: |
         Prioritize explicit user opt-in, Android VPN permission and lifecycle
