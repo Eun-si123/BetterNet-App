@@ -7,6 +7,8 @@ import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.VpnService
+import android.os.Handler
+import android.os.Looper
 import android.os.Bundle
 import android.text.InputType
 import android.view.View
@@ -16,6 +18,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Local-only prototype: selection and read-only VPN readiness never grant access or route traffic. */
 class MainActivity : Activity() {
@@ -24,6 +27,8 @@ class MainActivity : Activity() {
     private var testConfiguration: RestrictedTestConfiguration? = null
     private var vpnStatus: TextView? = null
     private var consentButton: Button? = null
+    private var gatewayProbeRunning = false
+    private val gatewayProbeGeneration = AtomicInteger(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,6 +76,7 @@ class MainActivity : Activity() {
             setOnClickListener {
                 if (selectedApp != null) {
                     showRestrictedTestConfigurationDialog { configuration ->
+                        gatewayProbeGeneration.incrementAndGet()
                         testConfiguration = configuration
                         consentButton?.isEnabled = true
                         configurationStatus.text = getString(R.string.test_config_summary,
@@ -95,6 +101,7 @@ class MainActivity : Activity() {
             setText(R.string.clear_app_selection)
             isEnabled = false
             setOnClickListener {
+                gatewayProbeGeneration.incrementAndGet()
                 selectedApp = null
                 testConfiguration = null
                 requestConsentButton.isEnabled = false
@@ -122,6 +129,7 @@ class MainActivity : Activity() {
                         .setItems(labels) { _, index ->
                             // Reject an unobservable signer rather than silently
                             // downgrading to package-name/UID-only consent.
+                            gatewayProbeGeneration.incrementAndGet()
                             selectedApp = readInstalledAppIdentity(packageManager, choices[index].packageName)
                                 ?.takeIf { it.uid == choices[index].uid }
                                 ?.let { choices[index].copy(signerFingerprint = it.signerFingerprint) }
@@ -148,12 +156,40 @@ class MainActivity : Activity() {
         root.addView(readiness)
         root.addView(checkVpnButton)
         root.addView(requestConsentButton)
+        val probeStatus = TextView(this).apply { setText(R.string.gateway_probe_not_run) }
+        val probeButton = Button(this).apply {
+            setText(R.string.probe_gateway_tls)
+            setOnClickListener {
+                val selected = selectedApp ?: return@setOnClickListener
+                val config = testConfiguration ?: return@setOnClickListener
+                if (gatewayProbeRunning || observeVpnReadiness() !in listOf(
+                        VpnReadiness.NEEDS_CONSENT, VpnReadiness.PREPARED)) {
+                    checkVpnReadiness()
+                    return@setOnClickListener
+                }
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle(R.string.probe_gateway_tls)
+                    .setMessage(R.string.gateway_probe_warning)
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setPositiveButton(R.string.gateway_probe_confirm) { _, _ ->
+                        startGatewayTlsProbe(selected, config.gatewayName, config.gatewayPort,
+                            probeStatus, this)
+                    }.show()
+            }
+        }
+        root.addView(probeButton)
+        root.addView(probeStatus)
         // Keep the selection and clear controls reachable on small screens or large fonts.
         setContentView(ScrollView(this).apply {
             fitsSystemWindows = true
             isFillViewport = true
             addView(root)
         })
+    }
+
+    override fun onDestroy() {
+        gatewayProbeGeneration.incrementAndGet()
+        super.onDestroy()
     }
 
     override fun onResume() {
@@ -262,6 +298,47 @@ class MainActivity : Activity() {
             // Android's current state; selection/configuration may have reset.
             checkVpnReadiness()
         }
+    }
+
+    /** One user-confirmed TLS handshake on a pinned non-VPN network, never a VPN start. */
+    private fun startGatewayTlsProbe(
+        selected: AppChoice, gatewayName: String, gatewayPort: Int,
+        status: TextView, button: Button,
+    ) {
+        if (gatewayProbeRunning || selectedApp != selected ||
+            testConfiguration?.gatewayName != gatewayName ||
+            testConfiguration?.gatewayPort != gatewayPort ||
+            observeVpnReadiness() !in listOf(VpnReadiness.NEEDS_CONSENT, VpnReadiness.PREPARED)) {
+            checkVpnReadiness()
+            return
+        }
+        val manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = manager.activeNetwork ?: run {
+            status.setText(R.string.gateway_probe_failed)
+            return
+        }
+        val generation = gatewayProbeGeneration.get()
+        gatewayProbeRunning = true
+        button.isEnabled = false
+        status.setText(R.string.gateway_probe_running)
+        Thread({
+            val success = try {
+                probeGatewayTlsWithoutVpn(manager, network, packageManager, packageName,
+                    selected, gatewayName, gatewayPort) { gatewayProbeGeneration.get() == generation }
+                true
+            } catch (_: Exception) {
+                // Never expose DNS, credentials, endpoint details or exception text in UI/logs.
+                false
+            }
+            Handler(Looper.getMainLooper()).post {
+                gatewayProbeRunning = false
+                if (!isDestroyed) {
+                    button.isEnabled = true
+                    if (gatewayProbeGeneration.get() == generation) status.setText(if (success) R.string.gateway_probe_success
+                        else R.string.gateway_probe_failed)
+                }
+            }
+        }, "BetterNet-GatewayTlsProbe").start()
     }
 
     private fun checkVpnReadiness() {

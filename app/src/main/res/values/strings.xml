@@ -1,6 +1,6 @@
 <resources>
   <string name="app_name">BetterNet</string>
-  <string name="preview_scope">Early public app foundation. Network status and optional Android VPN permission preparation only. No VPN connection, forwarding or optimization is available.</string>
+  <string name="preview_scope">Early public app foundation. Network status, optional VPN permission preparation and a user-confirmed TLS-only gateway check. No VPN connection, forwarding or optimization is available.</string>
   <string name="not_checked">No observation yet</string>
   <string name="refresh_network">Check connection</string>
   <string name="state_disconnected">No active network</string>
@@ -48,4 +48,11 @@
   <string name="vpn_notification_channel">Restricted VPN test</string>
   <string name="stop_restricted_vpn_test">Stop restricted VPN test</string>
   <string name="vpn_foreground_notice">A restricted VPN test is active</string>
+  <string name="probe_gateway_tls">Check gateway TLS (no VPN)</string>
+  <string name="gateway_probe_not_run">Gateway TLS not checked.</string>
+  <string name="gateway_probe_warning">This makes one outbound DNS/TCP/TLS connection to the gateway you entered, on the current non-VPN network. It may use metered data. No bearer credential, CONNECT request, VPN or selected-app traffic is sent. A valid TLS handshake does not prove Internet forwarding.</string>
+  <string name="gateway_probe_confirm">Connect once</string>
+  <string name="gateway_probe_running">Checking gateway TLS…</string>
+  <string name="gateway_probe_success">Gateway TLS identity verified. No VPN or Internet forwarding was tested.</string>
+  <string name="gateway_probe_failed">Gateway TLS check failed or network/app scope changed. No VPN was started.</string>
 </resources>
