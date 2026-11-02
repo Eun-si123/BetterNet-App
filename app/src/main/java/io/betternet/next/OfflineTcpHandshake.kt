@@ -219,19 +219,33 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             header.transportHeaderBytes != 20) return null
         val offset = header.transportOffset
         val flags = bytes[offset + 13].toInt() and 255
+        val acknowledgement = read32(bytes, offset + 8)
+        // A retransmission of already-forwarded client bytes may also ACK the
+        // one outstanding server response. Validate the exact replay first;
+        // never forward it upstream again or retire a response on a bad ACK.
+        val pendingAck = (current.serverNext + pendingResponseBytes) and 0xffff_ffffL
+        val acknowledgesResponse = pendingResponseBytes != 0 && acknowledgement == pendingAck
         if ((bytes[offset + 12].toInt() and 15) != 0 ||
             (flags != 0x10 && flags != 0x18) ||
             read16(bytes, offset + 18) != 0 ||
             read32(bytes, offset + 4) != previous.sequence ||
-            read32(bytes, offset + 8) != current.serverNext ||
+            (acknowledgement != current.serverNext && !acknowledgesResponse) ||
             ((previous.sequence + previous.payload.size) and 0xffff_ffffL) != current.clientNext ||
             !bytes.copyOfRange(offset + 20, bytes.size).contentEquals(previous.payload)) return null
-        peerReceiveWindow = read16(bytes, offset + 14)
-        return buildTcpDeliveryAck(
+        val reply = buildTcpDeliveryAck(
             current.destination, current.source,
             current.destinationPort, current.sourcePort,
-            current.serverNext, current.clientNext, receiveWindow,
-        )
+            acknowledgement, current.clientNext, receiveWindow,
+        ) ?: return null
+        if (acknowledgesResponse) {
+            flow = current.copy(serverNext = acknowledgement)
+            pendingResponseBytes = 0
+            pendingResponsePacket = null
+            responseSentAt = -1L
+            responseRetries = 0
+        }
+        peerReceiveWindow = read16(bytes, offset + 14)
+        return reply
     }
 
     /**

@@ -584,6 +584,49 @@ class TunTcpSynAckTest {
         }
     }
 
+    @Test fun replayedClientPayloadMayAlsoAcknowledgePendingServerResponse() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val isn = 0xffff_fffeL
+            val payload = byteArrayOf(1, 2, 3)
+            val original = finalAck(syn, isn, flags = 0x18,
+                acknowledgement = 0xffff_ffffL, payload = payload)
+            fun readyFlow(): Pair<OfflineTcpHandshake, ByteArrayOutputStream> {
+                val flow = OfflineTcpHandshake(1000)
+                assertNotNull(flow.begin(syn, isn, 1280, 100, clientWindow = 4))
+                assertTrue(flow.acceptFinalAck(finalAck(syn, isn), 101))
+                assertArrayEquals(payload, flow.stageClientPayload(original, 102))
+                val upstream = ByteArrayOutputStream()
+                assertNotNull(flow.forwardStagedClientPayload(upstream, 103, 4))
+                assertNotNull(flow.offerResponse(byteArrayOf(9, 8), 1280, 104))
+                return flow to upstream
+            }
+            val (combined, combinedUpstream) = readyFlow()
+            val (separate, separateUpstream) = readyFlow()
+            val combinedAck = finalAck(syn, isn, flags = 0x18,
+                acknowledgement = 1L, payload = payload) // wraparound server ACK
+            val wrongBytes = finalAck(syn, isn, flags = 0x18,
+                acknowledgement = 1L, payload = byteArrayOf(1, 2, 4))
+            val wrongAck = finalAck(syn, isn, flags = 0x18,
+                acknowledgement = 2L, payload = payload)
+            assertNull(combined.acknowledgeForwardedReplay(wrongBytes, 105))
+            assertNull(combined.acknowledgeForwardedReplay(wrongAck, 106))
+            // Rejected replays must not consume the pending response/retry.
+            assertNotNull(combined.retryPendingResponse(604))
+            val actual = combined.acknowledgeForwardedReplay(combinedAck, 605)!!
+            assertTrue(separate.acceptResponseAck(finalAck(syn, isn,
+                sequence = 3, acknowledgement = 1L), 605))
+            val expected = separate.acknowledgeForwardedReplay(combinedAck, 606)!!
+            assertArrayEquals(expected, actual)
+            assertEquals(0, tcpChecksum(actual, version))
+            assertNull(combined.retryPendingResponse(606))
+            assertArrayEquals(separate.offerResponse(byteArrayOf(7), 1280, 607),
+                combined.offerResponse(byteArrayOf(7), 1280, 607))
+            assertArrayEquals(payload, combinedUpstream.toByteArray())
+            assertArrayEquals(separateUpstream.toByteArray(), combinedUpstream.toByteArray())
+        }
+    }
+
     @Test fun clientIngressRejectsWrongSequenceAckTupleChecksumAndOversize() {
         for (version in listOf(4, 6)) {
             val syn = request(version)
