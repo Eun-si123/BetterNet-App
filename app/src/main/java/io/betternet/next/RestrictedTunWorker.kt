@@ -19,8 +19,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 internal class RestrictedTunWorker(
     private val pump: RestrictedTunPump,
-    private val launchThread: (Thread) -> Unit = { it.start() },
     private val onTerminated: (Throwable?) -> Unit = {},
+    private val launchThread: (Thread) -> Unit = { it.start() },
 ) {
     private val started = AtomicBoolean(false)
     // Launch may block in Thread.start(). Waiting for it must count toward
