@@ -31,6 +31,13 @@ internal class RestrictedTunLifecycle {
         return candidate
     }
 
+    /** Do not open a new gateway operation after Android revoked this owner. */
+    fun requireNotCancelled() {
+        synchronized(lock) {
+            check(!cancelled) { "VPN lifecycle already revoked" }
+        }
+    }
+
     fun cancel() {
         val current = synchronized(lock) {
             if (cancelled) null else {

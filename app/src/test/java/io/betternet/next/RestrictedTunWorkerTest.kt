@@ -12,6 +12,20 @@ import org.junit.Test
 
 /** JVM-only lifecycle tests: no VPN, TUN descriptor or gateway is opened. */
 class RestrictedTunWorkerTest {
+    @Test fun cancelledOwnerRejectsGatewayOperationsBeforeAndAfterAdoption() {
+        val lifecycle = RestrictedTunLifecycle()
+        lifecycle.requireNotCancelled()
+        lifecycle.cancel()
+        repeat(2) {
+            try {
+                lifecycle.requireNotCancelled()
+                fail("Revoked owner must not authorize another gateway operation")
+            } catch (expected: IllegalStateException) {
+                assertEquals("VPN lifecycle already revoked", expected.message)
+            }
+        }
+    }
+
     private fun dispatcher(): RestrictedTestTunDispatcher {
         val syn = TunTcpSynAckTest().request(4)
         return RestrictedTestTunDispatcher(

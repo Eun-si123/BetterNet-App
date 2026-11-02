@@ -15,6 +15,46 @@ import java.net.SocketAddress
 import org.junit.Test
 
 class SelectedAppVpnServiceTest {
+    @Test fun gatewayBoundaryChecksBeforeAndAfterBlockingNetworkOperations() {
+        val events = mutableListOf<String>()
+        var valid = true
+        val check = {
+            events.add("verify")
+            check(valid) { "VPN scope changed" }
+        }
+        val result = withFreshRestrictedGatewayScope(check) {
+            events.add("network")
+            "resolved"
+        }
+        assertEquals("resolved", result)
+        assertEquals(listOf("verify", "network", "verify"), events)
+
+        events.clear()
+        valid = false
+        try {
+            withFreshRestrictedGatewayScope(check) {
+                events.add("network")
+                "should never run"
+            }
+            fail("Revoked scope must prevent gateway access")
+        } catch (_: IllegalStateException) {
+            assertEquals(listOf("verify"), events)
+        }
+
+        events.clear()
+        valid = true
+        try {
+            withFreshRestrictedGatewayScope(check) {
+                events.add("network")
+                valid = false // Consent revoked while DNS or binding blocked.
+                "stale result"
+            }
+            fail("Stale network result must never be returned")
+        } catch (_: IllegalStateException) {
+            assertEquals(listOf("verify", "network", "verify"), events)
+        }
+    }
+
     @Test fun acceptsOneExplicitOtherPackage() {
         assertEquals("com.example.browser", requireSelectedPackage("com.example.browser", "io.betternet.next"))
     }

@@ -136,6 +136,23 @@ class SelectedAppVpnService : VpnService() {
         )
     }
 
+    /**
+     * Check the active TUN owner and scope at each sensitive gateway boundary,
+     * not only at the start of a potentially blocking TUN pump cycle. The
+     * established VPN is visible in allNetworks, so only the explicit
+     * underlying Network is checked here (no pre-activation other-VPN gate).
+     */
+    private fun requireActiveRestrictedTestPrerequisites(
+        manager: ConnectivityManager, network: Network, selectedApp: AppChoice?,
+    ) {
+        tunLifecycle.requireNotCancelled()
+        val pkg = requireSelectedPackage(selectedApp?.packageName, packageName)
+        requirePinnedSelectedApp(selectedApp, packageName,
+            readInstalledAppIdentity(packageManager, pkg))
+        check(VpnService.prepare(this) == null) { "VPN permission was revoked" }
+        requireUnderlyingInternetNetwork(manager, network)
+    }
+
     /** Mutable consent, app identity and network capabilities are never cached. */
     private fun requireFreshRestrictedTestPrerequisites(
         manager: ConnectivityManager, underlyingNetwork: Network, selectedApp: AppChoice?,
@@ -191,11 +208,7 @@ class SelectedAppVpnService : VpnService() {
             revalidate = {
                 // The established VPN itself is now visible in allNetworks,
                 // so do NOT reuse the pre-activation other-VPN rejection here.
-                val pkg = requireSelectedPackage(selectedApp?.packageName, packageName)
-                requirePinnedSelectedApp(selectedApp, packageName,
-                    readInstalledAppIdentity(packageManager, pkg))
-                requireUnderlyingInternetNetwork(manager, underlyingNetwork)
-                check(VpnService.prepare(this) == null) { "VPN permission was revoked" }
+                requireActiveRestrictedTestPrerequisites(manager, underlyingNetwork, selectedApp)
             },
             nowMillis = SystemClock::elapsedRealtime,
         ),
@@ -279,16 +292,22 @@ class SelectedAppVpnService : VpnService() {
             configuration.gatewayPort, configuration.dnsServerName,
             configuration.approvedHost, configuration.bearerToken, timeoutMs,
             lookupOnUnderlyingNetwork = { host ->
-                requireUnderlyingInternetNetwork(manager, network)
-                network.getAllByName(host)
+                withFreshRestrictedGatewayScope(
+                    { requireActiveRestrictedTestPrerequisites(manager, network, selectedApp) },
+                    { network.getAllByName(host) },
+                )
             },
             protect = { socket ->
-                requireUnderlyingInternetNetwork(manager, network)
-                protect(socket)
+                withFreshRestrictedGatewayScope(
+                    { requireActiveRestrictedTestPrerequisites(manager, network, selectedApp) },
+                    { protect(socket) },
+                )
             },
             bindToUnderlyingNetwork = { socket ->
-                requireUnderlyingInternetNetwork(manager, network)
-                network.bindSocket(socket)
+                withFreshRestrictedGatewayScope(
+                    { requireActiveRestrictedTestPrerequisites(manager, network, selectedApp) },
+                    { network.bindSocket(socket) },
+                )
             },
             elapsedRealtimeMillis = SystemClock::elapsedRealtime,
         )
@@ -328,6 +347,20 @@ class SelectedAppVpnService : VpnService() {
         stopSelf(startId)
         return START_NOT_STICKY
     }
+}
+
+/**
+ * A DNS lookup, socket protection or binding call may block while Android
+ * revokes VPN ownership or the selected package changes. Check on BOTH sides;
+ * a revoked result must never be used for the next connect step.
+ */
+internal inline fun <T> withFreshRestrictedGatewayScope(
+    verify: () -> Unit, operation: () -> T,
+): T {
+    verify()
+    val result = operation()
+    verify()
+    return result
 }
 
 /** Preflight artifacts only: holding these does not authorize TUN establishment. */
