@@ -241,13 +241,96 @@ class RestrictedTunWorkerTest {
             assertEquals("launch rejected", expected.message)
         }
         assertEquals(1, closes.get())
-        assertEquals(0, notices.get()) // No owner thread ever ran.
+        assertEquals(1, notices.get()) // Launch failure must notify after cleanup.
         try {
             worker.awaitStopped(100)
             fail("Never claim an unlaunched thread has stopped")
         } catch (expected: IllegalStateException) {
             assertEquals("TUN worker has not started", expected.message)
         }
+    }
+
+    @Test fun failedLaunchCallbackErrorCannotHideLaunchFailure() {
+        val closes = AtomicInteger()
+        val worker = RestrictedTunWorker(RestrictedTunPump(
+            RestrictedTunSession(dispatcher(), forbiddenInput, ByteArrayOutputStream(),
+                { closes.incrementAndGet() }, waitForReadable = { false })) { 100L },
+            onTerminated = { throw IOException("shutdown notification failed") },
+            launchThread = { throw IllegalStateException("launch rejected") })
+        try {
+            worker.start()
+            fail("Launch failure must propagate")
+        } catch (expected: IllegalStateException) {
+            assertEquals("launch rejected", expected.message)
+            assertSame(expected, worker.failure)
+            assertEquals(listOf("shutdown notification failed"),
+                expected.suppressed.map { it.message })
+        }
+        assertEquals(1, closes.get())
+    }
+
+    @Test fun launcherReturningWithoutStartingWorkerFailsClosedAndNotifies() {
+        val closes = AtomicInteger()
+        val notices = AtomicInteger()
+        var reported: Throwable? = null
+        val worker = RestrictedTunWorker(RestrictedTunPump(
+            RestrictedTunSession(dispatcher(), forbiddenInput, ByteArrayOutputStream(),
+                { closes.incrementAndGet() }, waitForReadable = { false })) { 100L },
+            onTerminated = { error ->
+                assertEquals(1, closes.get())
+                reported = error
+                notices.incrementAndGet()
+            },
+            launchThread = { /* Simulate a launcher that silently drops the thread. */ })
+        try {
+            worker.start()
+            fail("An unstarted worker must never be accepted")
+        } catch (expected: IllegalStateException) {
+            assertEquals("TUN worker thread was not launched", expected.message)
+        }
+        assertEquals(1, closes.get())
+        assertEquals(1, notices.get())
+        assertSame(worker.failure, reported)
+        try {
+            worker.awaitStopped(100)
+            fail("A worker that never ran cannot be joined")
+        } catch (expected: IllegalStateException) {
+            assertEquals("TUN worker has not started", expected.message)
+        }
+    }
+
+    @Test fun launcherThrowingAfterStartingWorkerDoesNotNotifyBeforeCleanup() {
+        val entered = CountDownLatch(1)
+        val released = CountDownLatch(1)
+        val closes = AtomicInteger()
+        val notices = AtomicInteger()
+        val worker = RestrictedTunWorker(RestrictedTunPump(
+            RestrictedTunSession(dispatcher(), forbiddenInput, ByteArrayOutputStream(),
+                { closes.incrementAndGet(); released.countDown() },
+                waitForReadable = {
+                    entered.countDown()
+                    assertTrue(released.await(3, TimeUnit.SECONDS))
+                    false
+                })) { 100L },
+            onTerminated = {
+                assertEquals(1, closes.get())
+                notices.incrementAndGet()
+            },
+            launchThread = { thread ->
+                thread.start()
+                assertTrue(entered.await(3, TimeUnit.SECONDS))
+                throw IllegalStateException("launcher failed after start")
+            })
+        try {
+            worker.start()
+            fail("Launch failure must propagate")
+        } catch (expected: IllegalStateException) {
+            assertEquals("launcher failed after start", expected.message)
+        }
+        // A thread that started owns its own terminal notification.
+        assertTrue(worker.awaitStopped(3000))
+        assertEquals(1, notices.get())
+        assertEquals(1, closes.get())
     }
 
     @Test fun lifecycleRevokeBeforeAdoptionRejectsAndReleasesDescriptor() {

@@ -13,9 +13,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * requestStop() may run on a lifecycle thread. stopAndJoin() must run on a
  * background thread, never the Android main thread; it is bounded because
  * a gateway read or a Linux TUN read may not wake immediately on fd close.
- * onTerminated runs once on the owner thread after pump cleanup; a future
- * service may use it to schedule foreground-service shutdown, but must never
- * join the owner from this callback. Callback errors are retained as failures.
+ * onTerminated runs once after cleanup: on the owner thread after a normal
+ * launch, or on the launching thread if launch failed before the owner started.
+ * A future service may use it to schedule foreground-service shutdown, but
+ * must never join the owner from this callback. Callback errors are retained.
  */
 internal class RestrictedTunWorker(
     private val pump: RestrictedTunPump,
@@ -23,6 +24,7 @@ internal class RestrictedTunWorker(
     private val launchThread: (Thread) -> Unit = { it.start() },
 ) {
     private val started = AtomicBoolean(false)
+    private val terminationNotified = AtomicBoolean(false)
     // Launch may block in Thread.start(). Waiting for it must count toward
     // the join deadline; holding a monitor would make a bounded join unbounded.
     private val launchFinished = CountDownLatch(1)
@@ -38,25 +40,41 @@ internal class RestrictedTunWorker(
             // An uncaught worker exception must not silently kill the service.
             failure = error
         } finally {
-            try {
-                onTerminated(failure)
-            } catch (callbackError: Throwable) {
-                val original = failure
-                if (original == null) failure = callbackError
-                else if (callbackError !== original) original.addSuppressed(callbackError)
-            }
+            notifyTerminated()
         }
     }, "BetterNet-RestrictedTun")
+
+    private fun notifyTerminated() {
+        if (!terminationNotified.compareAndSet(false, true)) return
+        try {
+            onTerminated(failure)
+        } catch (callbackError: Throwable) {
+            val original = failure
+            if (original == null) failure = callbackError
+            else if (callbackError !== original) original.addSuppressed(callbackError)
+        }
+    }
 
     fun start() {
         check(started.compareAndSet(false, true)) { "TUN worker already started" }
         try {
             launchThread(owner)
+            // A custom launcher returning without starting the owner is not a
+            // successful activation. Never report an unstarted thread as joined.
+            check(owner.state != Thread.State.NEW) { "TUN worker thread was not launched" }
             launched = true
         } catch (error: Throwable) {
+            val neverLaunched = owner.state == Thread.State.NEW
+            // A launcher may throw after actually starting the thread. It is
+            // still joinable and must finish its own cleanup/notification.
+            if (neverLaunched) failure = error else launched = true
             try { pump.requestStop() } catch (closeError: Throwable) {
                 error.addSuppressed(closeError)
             }
+            // No owner thread exists to call back in this case. Notify only
+            // after cancellation/descriptor release, and never twice if a
+            // launcher actually started the thread before throwing.
+            if (neverLaunched) notifyTerminated()
             throw error
         } finally {
             launchFinished.countDown()
