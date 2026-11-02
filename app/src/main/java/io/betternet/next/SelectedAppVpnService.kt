@@ -32,6 +32,7 @@ import javax.net.ssl.SSLSocket
  * consent, establishes a TUN, or forwards packets until a safe gateway exists.
  */
 class SelectedAppVpnService : VpnService() {
+    private companion object { const val ACTION_STOP_RESTRICTED_TEST = "io.betternet.next.STOP_RESTRICTED_TEST" }
     private val tunLifecycle = RestrictedTunLifecycle()
 
     override fun onRevoke() {
@@ -167,11 +168,20 @@ class SelectedAppVpnService : VpnService() {
         val openApp = PendingIntent.getActivity(this, 0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        // The notification must offer a direct, explicit stop path even when
+        // the Activity is not running. This command can only cancel, never start.
+        val stopTest = PendingIntent.getService(this, 1,
+            Intent(this, SelectedAppVpnService::class.java).setAction(ACTION_STOP_RESTRICTED_TEST),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val notification = Notification.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.stat_sys_upload)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(getString(R.string.vpn_foreground_notice))
             .setContentIntent(openApp)
+            .addAction(Notification.Action.Builder(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                getString(R.string.stop_restricted_vpn_test), stopTest,
+            ).build())
             .setOngoing(true)
             .build()
         startForeground(1001, notification)
@@ -198,6 +208,10 @@ class SelectedAppVpnService : VpnService() {
     private fun requireFreshRestrictedTestPrerequisites(
         manager: ConnectivityManager, underlyingNetwork: Network, selectedApp: AppChoice?,
     ) {
+        // onRevoke/onDestroy can cancel while a preflight is in progress.
+        // Neither a cached permission result nor an existing builder can
+        // resurrect a cancelled service owner.
+        tunLifecycle.requireNotCancelled()
         val pkg = requireSelectedPackage(selectedApp?.packageName, packageName)
         requirePinnedSelectedApp(selectedApp, packageName,
             readInstalledAppIdentity(packageManager, pkg))
@@ -213,6 +227,7 @@ class SelectedAppVpnService : VpnService() {
             underlying?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true,
             VpnService.prepare(this) == null,
         )
+        tunLifecycle.requireNotCancelled()
     }
 
     /**
@@ -387,10 +402,20 @@ class SelectedAppVpnService : VpnService() {
         )
     }
 
-    // Explicit starts are not an activation mechanism. A future authenticated
-    // forwarding implementation must introduce a separately reviewed path.
+    // STOP is the only supported notification command. Unknown or null
+    // starts (including Android process recreation) also fail closed; none
+    // may establish a TUN or reach the network. Cancellation precedes stop.
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        stopSelf(startId)
+        try {
+            stopRestrictedServiceFailClosed(
+                cancel = { tunLifecycle.cancel() },
+                stop = { stopSelf(startId); Unit },
+            )
+        } catch (_: Exception) {
+            // stopSelf was still requested. Avoid crashing the main thread
+            // if Android already closed the descriptor during revocation.
+            android.util.Log.w("BetterNet", "Restricted VPN shutdown cleanup failed")
+        }
         return START_NOT_STICKY
     }
 }

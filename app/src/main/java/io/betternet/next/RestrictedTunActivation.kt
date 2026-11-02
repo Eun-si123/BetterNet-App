@@ -67,3 +67,18 @@ internal fun <T> withRestrictedForegroundOwnership(
         throw failure
     }
 }
+
+/**
+ * Explicit notification STOP and unexpected service starts share this
+ * fail-closed shutdown. Stop the Android service even if descriptor cancellation
+ * throws; never leave an active foreground notification after a failed stop.
+ */
+internal fun stopRestrictedServiceFailClosed(cancel: () -> Unit, stop: () -> Unit) {
+    var failure: Throwable? = null
+    try { cancel() } catch (error: Throwable) { failure = error }
+    try { stop() } catch (error: Throwable) {
+        if (failure == null) failure = error
+        else if (error !== failure) failure.addSuppressed(error)
+    }
+    if (failure != null) throw failure
+}

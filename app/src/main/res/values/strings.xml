@@ -46,5 +46,6 @@
   <string name="vpn_consent_warning">This asks Android for VPN permission only. BetterNet is still pre-alpha: it will NOT start a VPN, capture traffic, connect to a gateway, or use the staged credential. Android VPN permission is device-level and may remain granted after you clear the test app. If another VPN is active, cancel and keep using it.</string>
   <string name="continue_to_system_consent">Continue to Android</string>
   <string name="vpn_notification_channel">Restricted VPN test</string>
+  <string name="stop_restricted_vpn_test">Stop restricted VPN test</string>
   <string name="vpn_foreground_notice">A restricted VPN test is active</string>
 </resources>

@@ -188,4 +188,71 @@ class RestrictedTunActivationTest {
                 else listOf("preflight", "foreground", "establish", "demote"), events)
         }
     }
+
+    @Test fun notificationStopCancelsTunOwnerBeforeServiceShutdown() {
+        val events = mutableListOf<String>()
+        stopRestrictedServiceFailClosed(
+            cancel = { events += "cancel" },
+            stop = { events += "stop" },
+        )
+        assertEquals(listOf("cancel", "stop"), events)
+    }
+
+    @Test fun notificationStopStillStopsServiceIfTunCancellationThrows() {
+        val events = mutableListOf<String>()
+        val error = IOException("TUN close failed")
+        try {
+            stopRestrictedServiceFailClosed(
+                cancel = { events += "cancel"; throw error },
+                stop = { events += "stop" },
+            )
+            fail("Cancellation error must not be silently swallowed")
+        } catch (caught: IOException) {
+            assertSame(error, caught)
+        }
+        assertEquals(listOf("cancel", "stop"), events)
+    }
+
+    @Test fun serviceStopFailurePreservesFirstCancellationError() {
+        val first = IOException("cancel failed")
+        val second = IOException("stop failed")
+        val events = mutableListOf<String>()
+        try {
+            stopRestrictedServiceFailClosed(
+                cancel = { events += "cancel"; throw first },
+                stop = { events += "stop"; throw second },
+            )
+            fail("Both failures must be reported")
+        } catch (caught: IOException) {
+            assertSame(first, caught)
+            assertEquals(listOf(second), caught.suppressed.toList())
+        }
+        assertEquals(listOf("cancel", "stop"), events)
+    }
+
+    @Test fun revokeDuringForegroundPromotionCannotEstablishTun() {
+        val lifecycle = RestrictedTunLifecycle()
+        val events = mutableListOf<String>()
+        try {
+            withRestrictedForegroundOwnership(
+                revalidate = { lifecycle.requireNotCancelled(); events += "preflight" },
+                promote = { events += "foreground"; lifecycle.cancel() },
+                activate = {
+                    establishRestrictedTunTransaction(
+                        revalidate = { lifecycle.requireNotCancelled() },
+                        establish = { events += "establish"; FakeDescriptor(events) },
+                        attach = { events += "attach"; "worker" },
+                        start = { events += "start" },
+                        rollback = { events += "rollback" },
+                    )
+                },
+                demote = { events += "demote" },
+            )
+            fail("Revoked owner must not establish a TUN after foreground promotion")
+        } catch (expected: IllegalStateException) {
+            assertEquals("VPN lifecycle already revoked", expected.message)
+        }
+        assertEquals(listOf("preflight", "foreground", "rollback", "demote"), events)
+    }
+
 }
