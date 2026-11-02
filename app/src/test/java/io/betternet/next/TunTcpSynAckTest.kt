@@ -773,15 +773,16 @@ class TunTcpSynAckTest {
                 assertEquals(expectedAck, u32(finAck, ip + 4))
                 assertEquals(1L, u32(finAck, ip + 8))
                 assertEquals(1, shutdowns)
+                // Preserve monotonic time when testing a late retry deadline.
                 assertNull(flow.retryPendingResponse(1200))
-                assertArrayEquals(finAck, flow.acknowledgeClientFinReplay(fin, 604))
+                assertArrayEquals(finAck, flow.acknowledgeClientFinReplay(fin, 1201))
                 assertEquals(1, shutdowns)
                 // Server-to-client traffic can continue after client FIN,
                 // starting at the sequence acknowledged by the combined FIN.
-                val later = flow.offerResponse(byteArrayOf(4), 1280, 605)!!
+                val later = flow.offerResponse(byteArrayOf(4), 1280, 1202)!!
                 assertEquals(expectedAck, u32(later, ip + 4))
                 assertTrue(flow.acceptResponseAck(finalAck(syn, isn,
-                    sequence = 1, acknowledgement = (expectedAck + 1) and 0xffff_ffffL), 606))
+                    sequence = 1, acknowledgement = (expectedAck + 1) and 0xffff_ffffL), 1203))
             }
         }
     }
