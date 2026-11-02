@@ -80,22 +80,60 @@ class RestrictedTunActivationTest {
         assertEquals(listOf("revalidate", "establish", "attach", "rollback", "descriptor.close"), events)
     }
 
-    @Test fun startFailureRetainsOriginalErrorAndSuppressesCleanupErrors() {
+    @Test fun startFailureCancelsAdoptedWorkerWithoutDoubleClosingItsDescriptor() {
         val events = mutableListOf<String>()
+        val descriptor = FakeDescriptor(events)
         try {
             establishRestrictedTunTransaction(
                 revalidate = { events += "revalidate" },
-                establish = { events += "establish"; FakeDescriptor(events, closeFails = true) },
+                establish = { events += "establish"; descriptor },
                 attach = { events += "attach"; "worker" },
                 start = { events += "start"; throw IOException("start failed") },
-                rollback = { events += "rollback"; throw IOException("cancel failed") },
+                rollback = { events += "rollback"; descriptor.close() },
             )
             fail("Start failure must abort")
         } catch (expected: IOException) {
             assertEquals("start failed", expected.message)
-            assertEquals(listOf("cancel failed", "descriptor close failed"),
-                expected.suppressed.map { it.message })
+            assertTrue(expected.suppressed.isEmpty())
+        }
+        // The adopted worker owns closure. Transaction must never close it twice.
+        assertEquals(listOf("revalidate", "establish", "attach", "start", "rollback", "descriptor.close"), events)
+    }
+
+    @Test fun startFailureRetainsOriginalErrorAndSuppressesOwnerCleanupError() {
+        val events = mutableListOf<String>()
+        val descriptor = FakeDescriptor(events, closeFails = true)
+        try {
+            establishRestrictedTunTransaction(
+                revalidate = { events += "revalidate" },
+                establish = { events += "establish"; descriptor },
+                attach = { events += "attach"; "worker" },
+                start = { events += "start"; throw IOException("start failed") },
+                rollback = { events += "rollback"; descriptor.close() },
+            )
+            fail("Start failure must abort")
+        } catch (expected: IOException) {
+            assertEquals("start failed", expected.message)
+            assertEquals(listOf("descriptor close failed"), expected.suppressed.map { it.message })
         }
         assertEquals(listOf("revalidate", "establish", "attach", "start", "rollback", "descriptor.close"), events)
+    }
+
+    @Test fun failedAttachStillClosesUnownedDescriptorAndPreservesBothErrors() {
+        val events = mutableListOf<String>()
+        try {
+            establishRestrictedTunTransaction(
+                revalidate = {},
+                establish = { FakeDescriptor(events, closeFails = true) },
+                attach = { throw IOException("attach failed") },
+                start = { fail("Must not start") },
+                rollback = { events += "rollback" },
+            )
+            fail("Attach failure must abort")
+        } catch (expected: IOException) {
+            assertEquals("attach failed", expected.message)
+            assertEquals(listOf("descriptor close failed"), expected.suppressed.map { it.message })
+        }
+        assertEquals(listOf("rollback", "descriptor.close"), events)
     }
 }

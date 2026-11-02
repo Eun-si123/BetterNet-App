@@ -16,10 +16,15 @@ internal fun <D : Closeable, W> establishRestrictedTunTransaction(
     rollback: () -> Unit,
 ): W {
     var descriptor: D? = null
+    var transferredToWorker = false
     try {
         revalidate()
         descriptor = establish() ?: throw IllegalStateException("Android refused restricted TUN establishment")
         val worker = attach(descriptor)
+        // The worker now owns the descriptor even if its start() fails.
+        // Rollback must signal that owner; closing the same fd again here
+        // can race a running owner or obscure the original launch failure.
+        transferredToWorker = true
         start(worker)
         return worker // Worker now owns the descriptor and must be stopped/joined by its owner.
     } catch (failure: Throwable) {
@@ -27,8 +32,10 @@ internal fun <D : Closeable, W> establishRestrictedTunTransaction(
         try { rollback() } catch (rollbackFailure: Throwable) {
             failure.addSuppressed(rollbackFailure)
         }
-        try { descriptor?.close() } catch (closeFailure: Throwable) {
-            failure.addSuppressed(closeFailure)
+        if (!transferredToWorker) {
+            try { descriptor?.close() } catch (closeFailure: Throwable) {
+                failure.addSuppressed(closeFailure)
+            }
         }
         throw failure
     }
