@@ -117,6 +117,24 @@ class SelectedAppVpnServiceTest {
         }
     }
 
+    @Test fun socketCloseRethrowingRevocationDoesNotMaskOriginalFailure() {
+        val revoked = IllegalStateException("VPN scope revoked")
+        val socket = object : Socket() {
+            override fun close() { throw revoked }
+        }
+        var checks = 0
+        try {
+            withFreshRestrictedGatewaySocketScope(
+                { if (++checks == 2) throw revoked },
+                { socket },
+            )
+            fail("Revoked scope must abort")
+        } catch (caught: IllegalStateException) {
+            assertTrue(caught === revoked)
+            assertTrue(caught.suppressed.isEmpty())
+        }
+    }
+
     @Test fun acceptsOneExplicitOtherPackage() {
         assertEquals("com.example.browser", requireSelectedPackage("com.example.browser", "io.betternet.next"))
     }

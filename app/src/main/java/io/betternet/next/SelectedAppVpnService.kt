@@ -449,7 +449,9 @@ internal inline fun <T : Closeable> withFreshRestrictedGatewaySocketScope(
         verify()
     } catch (failure: Throwable) {
         try { socket.close() } catch (closeFailure: Throwable) {
-            failure.addSuppressed(closeFailure)
+            // A Closeable may rethrow the same shared cancellation exception.
+            // Java forbids self-suppression; preserve the scope failure.
+            if (closeFailure !== failure) failure.addSuppressed(closeFailure)
         }
         throw failure
     }
