@@ -30,11 +30,11 @@ internal fun <D : Closeable, W> establishRestrictedTunTransaction(
     } catch (failure: Throwable) {
         // Signal the owner first, before any cross-thread descriptor close.
         try { rollback() } catch (rollbackFailure: Throwable) {
-            failure.addSuppressed(rollbackFailure)
+            if (rollbackFailure !== failure) failure.addSuppressed(rollbackFailure)
         }
         if (!transferredToWorker) {
             try { descriptor?.close() } catch (closeFailure: Throwable) {
-                failure.addSuppressed(closeFailure)
+                if (closeFailure !== failure) failure.addSuppressed(closeFailure)
             }
         }
         throw failure

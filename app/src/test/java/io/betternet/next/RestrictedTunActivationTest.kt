@@ -137,6 +137,39 @@ class RestrictedTunActivationTest {
         assertEquals(listOf("rollback", "descriptor.close"), events)
     }
 
+    @Test fun rollbackRethrowingOriginalFailureDoesNotMaskIt() {
+        val revoked = SecurityException("revoked")
+        val caught = assertThrows(SecurityException::class.java) {
+            establishRestrictedTunTransaction(
+                revalidate = { throw revoked },
+                establish = { FakeDescriptor(mutableListOf()) },
+                attach = { "worker" },
+                start = {},
+                rollback = { throw revoked },
+            )
+        }
+        assertSame(revoked, caught)
+        assertTrue(caught.suppressed.isEmpty())
+    }
+
+    @Test fun descriptorCloseRethrowingAttachFailureDoesNotMaskIt() {
+        val events = mutableListOf<String>()
+        val original = IOException("attach failed")
+        val descriptor = Closeable { events += "descriptor.close"; throw original }
+        val caught = assertThrows(IOException::class.java) {
+            establishRestrictedTunTransaction(
+                revalidate = {},
+                establish = { descriptor },
+                attach = { throw original },
+                start = {},
+                rollback = { events += "rollback" },
+            )
+        }
+        assertSame(original, caught)
+        assertTrue(caught.suppressed.isEmpty())
+        assertEquals(listOf("rollback", "descriptor.close"), events)
+    }
+
     @Test fun foregroundPromotionMustPrecedeTunAndRemainOwnedOnSuccess() {
         val events = mutableListOf<String>()
         val result = withRestrictedForegroundOwnership(
