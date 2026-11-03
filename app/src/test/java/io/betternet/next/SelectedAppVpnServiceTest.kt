@@ -314,6 +314,25 @@ class SelectedAppVpnServiceTest {
         }
     }
 
+    @Test fun protectedSocketCloseRethrowingOriginalFailureDoesNotMaskIt() {
+        val revoked = SecurityException("VPN protection revoked")
+        val events = mutableListOf<String>()
+        val socket = object : Socket() {
+            override fun close() { events.add("close"); throw revoked }
+            override fun connect(endpoint: SocketAddress?, timeout: Int) {
+                throw AssertionError("Unprotected socket must never connect")
+            }
+        }
+        try {
+            connectProtectedSocket(resolvedGateway, 500, { throw revoked }, { socket })
+            fail("Revoked VPN protection must abort")
+        } catch (caught: SecurityException) {
+            assertTrue(caught === revoked)
+            assertTrue(caught.suppressed.isEmpty())
+            assertEquals(listOf("close"), events)
+        }
+    }
+
     @Test fun connectFailureClosesProtectedSocket() {
         val events = mutableListOf<String>()
         try {
