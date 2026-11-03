@@ -39,6 +39,9 @@ class AuthenticatedHttpsProbeTest {
             "HTTP/1.1 200 OK\r",
             "HTTP/2 200 OK\r\n",
             "HTTP/1.1 999 Bad\r\n",
+            "HTTP/1.1 100 Continue\r\n",
+            "HTTP/1.1 101 Switching Protocols\r\n",
+            "HTTP/1.1 103 Early Hints\r\n",
             "HTTP/1.1 200 " + "A".repeat(200) + "\r\n",
             "HTTP/1.1 200 \u0000\r\n",
         )) {

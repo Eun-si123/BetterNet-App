@@ -85,8 +85,9 @@ internal fun readBoundedHttpsHeadStatus(
         if (next < 0) throw IOException("HTTPS peer closed before status")
         if (next == 10) {
             if (line.isEmpty() || line.last() != '\r') throw IOException("Invalid HTTPS status terminator")
+            // 1xx is interim, not proof that the origin returned a final response.
             val statusLine = line.dropLast(1).toString()
-            val match = Regex("HTTP/1\\.[01] ([1-5][0-9]{2})(?: [ -~]*)?").matchEntire(statusLine)
+            val match = Regex("HTTP/1\\.[01] ([2-5][0-9]{2})(?: [ -~]*)?").matchEntire(statusLine)
                 ?: throw IOException("Invalid HTTPS status")
             verify()
             return match.groupValues[1].toInt()
