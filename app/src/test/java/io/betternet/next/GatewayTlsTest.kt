@@ -15,14 +15,14 @@ import org.junit.Test
 
 class GatewayTlsTest {
     private val address = InetSocketAddress(InetAddress.getLoopbackAddress(), 443)
-    private class ConnectedSocket : Socket() {
+    private open class ConnectedSocket : Socket() {
         var closed = false
         override fun isConnected() = true
         override fun isClosed() = closed
         override fun close() { closed = true }
     }
 
-    private class TestTlsSocket(
+    private open class TestTlsSocket(
         private val events: MutableList<String>,
         private val failHandshake: Boolean = false,
         private val protocols: Array<String> = arrayOf("TLSv1.3", "TLSv1.2", "TLSv1.1"),
@@ -185,6 +185,25 @@ class GatewayTlsTest {
         } catch (_: IOException) {
             assertTrue(tls.closed)
             assertTrue(raw.closed)
+        }
+    }
+
+    @Test fun sameFailureFromBothSocketClosesPreservesHandshakeFailure() {
+        val events = mutableListOf<String>()
+        val original = IOException("handshake rejected")
+        val tls = object : TestTlsSocket(events) {
+            override fun startHandshake(): Unit = throw original
+            override fun close(): Unit = throw original
+        }
+        val raw = object : ConnectedSocket() {
+            override fun close(): Unit = throw original
+        }
+        try {
+            establishVerifiedGatewayTls(raw, address, "gateway.example", TestFactory(tls, events))
+            fail("TLS handshake failure must propagate unchanged")
+        } catch (failure: IOException) {
+            assertSame(original, failure)
+            assertTrue(failure.suppressed.isEmpty())
         }
     }
 

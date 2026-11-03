@@ -55,11 +55,15 @@ internal fun establishVerifiedGatewayTls(
             tls.startHandshake() // CA trust and hostname verification must succeed
             return tls
         } catch (failure: Throwable) {
-            try { tls.close() } catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
+            try { tls.close() } catch (closeFailure: Throwable) {
+                if (closeFailure !== failure) failure.addSuppressed(closeFailure)
+            }
             throw failure
         }
     } catch (failure: Throwable) {
-        try { protectedSocket.close() } catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
+        try { protectedSocket.close() } catch (closeFailure: Throwable) {
+            if (closeFailure !== failure) failure.addSuppressed(closeFailure)
+        }
         throw failure
     }
 }
