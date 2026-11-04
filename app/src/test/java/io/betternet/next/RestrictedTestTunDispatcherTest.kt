@@ -333,6 +333,42 @@ class RestrictedTestTunDispatcherTest {
         assertEquals(1, calls)
     }
 
+    @Test fun dispatcherPreservesOriginalExceptionWhenBridgeCloseThrowsSameInstance() {
+        // Regression: addSuppressed(original) itself throws IllegalArgumentException.
+        // A failed TUN read must retain the original I/O failure and retire the bridge.
+        for (version in listOf(4, 6)) {
+            val syn = packets.request(version)
+            val p = plan(syn)
+            val failure = IOException("original TUN read failure")
+            var closes = 0
+            val dispatcher = RestrictedTestTunDispatcher(p,
+                { _, _ -> bindings.bindingFor(syn) },
+                { approved, initial, output, time ->
+                    OfflineTcpTunBridge(ByteArrayInputStream(byteArrayOf()),
+                        ByteArrayOutputStream(), p.mtu, 123L,
+                        allowedDestination = approved.address,
+                        onClose = { closes++; throw failure }).also {
+                        assertTrue(it.pumpOneTunPacket(ByteArrayInputStream(initial.bytes), output, time))
+                    }
+                })
+            assertTrue(feed(dispatcher, udp(p)))
+            assertTrue(feed(dispatcher, syn.bytes))
+            val brokenTun = object : java.io.InputStream() {
+                override fun read(): Int = throw failure
+                override fun read(b: ByteArray, off: Int, len: Int): Int = throw failure
+            }
+            try {
+                dispatcher.pumpOneTunPacket(brokenTun, ByteArrayOutputStream(), 102)
+                fail("Original failure must propagate")
+            } catch (actual: IOException) {
+                assertSame(failure, actual)
+                assertEquals(0, actual.suppressed.size)
+            }
+            assertEquals(1, closes)
+            assertFalse(feed(dispatcher, syn.bytes))
+        }
+    }
+
     @Test fun unrelatedUdpStillRetiresExpiredGatewayFlow() {
         for (version in listOf(4, 6)) {
             val syn = packets.request(version)
