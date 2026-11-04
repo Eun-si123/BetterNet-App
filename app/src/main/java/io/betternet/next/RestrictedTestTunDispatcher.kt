@@ -83,7 +83,9 @@ internal class RestrictedTestTunDispatcher(
             }
             return true
         } catch (failure: Exception) {
-            try { close() } catch (closeFailure: Exception) { failure.addSuppressed(closeFailure) }
+            try { close() } catch (closeFailure: Exception) {
+                if (closeFailure !== failure) failure.addSuppressed(closeFailure)
+            }
             throw failure
         }
     }
@@ -95,14 +97,18 @@ internal class RestrictedTestTunDispatcher(
     internal fun pumpOneGatewayReply(output: OutputStream, nowMillis: () -> Long): Boolean = try {
         if (!closed) bridge?.pumpOneGatewayReply(output, nowMillis) ?: false else false
     } catch (failure: Exception) {
-        try { close() } catch (closeFailure: Exception) { failure.addSuppressed(closeFailure) }
+        try { close() } catch (closeFailure: Exception) {
+                if (closeFailure !== failure) failure.addSuppressed(closeFailure)
+            }
         throw failure
     }
 
     fun pumpPendingRetry(output: OutputStream, nowMillis: Long): Boolean = try {
         if (!closed) bridge?.pumpPendingRetry(output, nowMillis) ?: false else false
     } catch (failure: Exception) {
-        try { close() } catch (closeFailure: Exception) { failure.addSuppressed(closeFailure) }
+        try { close() } catch (closeFailure: Exception) {
+                if (closeFailure !== failure) failure.addSuppressed(closeFailure)
+            }
         throw failure
     }
 
