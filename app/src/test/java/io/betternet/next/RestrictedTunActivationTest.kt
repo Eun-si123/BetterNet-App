@@ -80,6 +80,25 @@ class RestrictedTunActivationTest {
         assertEquals(listOf("revalidate", "establish", "attach", "rollback", "descriptor.close"), events)
     }
 
+    @Test fun rejectedAdoptionDoesNotCloseAlreadyReleasedDescriptorTwice() {
+        val events = mutableListOf<String>()
+        val descriptor = FakeDescriptor(events)
+        val caught = assertThrows(RestrictedTunAdoptionRejected::class.java) {
+            establishRestrictedTunTransaction(
+                revalidate = {},
+                establish = { descriptor },
+                attach = {
+                    it.close() // Lifecycle rejection releases its candidate owner.
+                    throw RestrictedTunAdoptionRejected("VPN lifecycle already revoked")
+                },
+                start = { fail("Rejected worker must never start") },
+                rollback = { events += "rollback" },
+            )
+        }
+        assertEquals("VPN lifecycle already revoked", caught.message)
+        assertEquals(listOf("descriptor.close", "rollback"), events)
+    }
+
     @Test fun startFailureCancelsAdoptedWorkerWithoutDoubleClosingItsDescriptor() {
         val events = mutableListOf<String>()
         val descriptor = FakeDescriptor(events)

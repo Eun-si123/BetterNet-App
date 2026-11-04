@@ -7,6 +7,10 @@ package io.betternet.next
  * only signals the worker and closes its owned descriptor; joining remains
  * the responsibility of a background service owner, never on the main thread.
  */
+/** Adoption rejection after the candidate worker has taken descriptor cleanup ownership. */
+internal class RestrictedTunAdoptionRejected(message: String, cause: Throwable? = null) :
+    IllegalStateException(message, cause)
+
 internal class RestrictedTunLifecycle {
     private val lock = Any()
     private var cancelled = false
@@ -24,9 +28,9 @@ internal class RestrictedTunLifecycle {
             // The caller transferred ownership of the descriptor: rejection
             // must release it, including when revoke raced with adoption.
             try { candidate.requestStop() } catch (error: Throwable) {
-                throw IllegalStateException(rejection, error)
+                throw RestrictedTunAdoptionRejected(rejection, error)
             }
-            throw IllegalStateException(rejection)
+            throw RestrictedTunAdoptionRejected(rejection)
         }
         return candidate
     }

@@ -32,7 +32,9 @@ internal fun <D : Closeable, W> establishRestrictedTunTransaction(
         try { rollback() } catch (rollbackFailure: Throwable) {
             if (rollbackFailure !== failure) failure.addSuppressed(rollbackFailure)
         }
-        if (!transferredToWorker) {
+        // A rejected lifecycle adoption has already requested candidate cleanup.
+        // Closing here again can race the worker owner or double-close its fd.
+        if (!transferredToWorker && failure !is RestrictedTunAdoptionRejected) {
             try { descriptor?.close() } catch (closeFailure: Throwable) {
                 if (closeFailure !== failure) failure.addSuppressed(closeFailure)
             }
