@@ -145,7 +145,7 @@ internal class RestrictedTunSession(
                 return false
             }
             try { close() } catch (closeFailure: Exception) {
-                failure.addSuppressed(closeFailure)
+                if (failure !== closeFailure) failure.addSuppressed(closeFailure)
             }
             throw failure
         }
@@ -164,7 +164,7 @@ internal class RestrictedTunSession(
         try { dispatcher.close() } catch (error: Exception) { failure = error }
         try { releaseDescriptorOnce() } catch (error: Exception) {
             if (failure == null) failure = error
-            else failure.addSuppressed(error)
+            else if (failure !== error) failure.addSuppressed(error)
         }
         if (failure != null) throw failure
     }

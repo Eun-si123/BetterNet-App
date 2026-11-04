@@ -238,4 +238,31 @@ class RestrictedTunSessionTest {
         }
     }
 
+
+    @Test fun identicalReadAndDescriptorCloseFailurePreservesOriginalForBothIpFamilies() {
+        for (version in listOf(4, 6)) {
+            val shared = IOException("same failure")
+            var releases = 0
+            val broken = object : InputStream() {
+                override fun read(): Int = throw shared
+                override fun read(b: ByteArray, off: Int, len: Int): Int = read()
+            }
+            val session = RestrictedTunSession(
+                dispatcher(version), broken, ByteArrayOutputStream(),
+                { releases++; throw shared },
+            )
+            try {
+                session.pumpOneTunPacket(100)
+                fail("Original failure must propagate")
+            } catch (expected: IOException) {
+                assertSame(shared, expected)
+                assertEquals(0, expected.suppressed.size)
+            }
+            assertEquals(1, releases)
+            assertFalse(session.pumpOneTunPacket(101))
+            session.close()
+            assertEquals(1, releases)
+        }
+    }
+
 }
