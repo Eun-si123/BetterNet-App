@@ -264,6 +264,29 @@ class RestrictedTunWorkerTest {
         }
     }
 
+    @Test fun failedLaunchPreservesOriginalWhenDescriptorThrowsSameFailure() {
+        val original = IOException("shared launch and cleanup failure")
+        val closes = AtomicInteger()
+        val notices = AtomicInteger()
+        val worker = RestrictedTunWorker(RestrictedTunPump(
+            RestrictedTunSession(dispatcher(), forbiddenInput, ByteArrayOutputStream(), {
+                closes.incrementAndGet()
+                throw original
+            }, waitForReadable = { false })) { 100L },
+            onTerminated = { notices.incrementAndGet() },
+            launchThread = { throw original })
+        try {
+            worker.start()
+            fail("Launch must propagate its original failure")
+        } catch (expected: IOException) {
+            assertSame(original, expected)
+            assertSame(original, worker.failure)
+            assertEquals(0, original.suppressed.size)
+        }
+        assertEquals(1, closes.get())
+        assertEquals(1, notices.get())
+    }
+
     @Test fun failedLaunchCallbackErrorCannotHideLaunchFailure() {
         val closes = AtomicInteger()
         val worker = RestrictedTunWorker(RestrictedTunPump(

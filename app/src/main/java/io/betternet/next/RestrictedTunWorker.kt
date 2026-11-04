@@ -69,7 +69,9 @@ internal class RestrictedTunWorker(
             // still joinable and must finish its own cleanup/notification.
             if (neverLaunched) failure = error else launched = true
             try { pump.requestStop() } catch (closeError: Throwable) {
-                error.addSuppressed(closeError)
+                // A failing launcher and descriptor cleanup can surface the
+                // same Throwable instance; self-suppression must not mask it.
+                if (closeError !== error) error.addSuppressed(closeError)
             }
             // No owner thread exists to call back in this case. Notify only
             // after cancellation/descriptor release, and never twice if a
