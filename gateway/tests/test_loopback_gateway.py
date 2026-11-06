@@ -289,6 +289,10 @@ class GatewayTests(unittest.TestCase):
             GatewayConfig(TOKEN, "not-an-ip", "dns.example", "127.0.0.1")
         with self.assertRaises(ValueError):
             GatewayConfig(TOKEN, "127.0.0.1", "bad_name", "127.0.0.1")
+        for invalid in ("-dns.example", "dns-.example", "a" * 64 + ".example",
+                        "dns.-example", "dns.example-"):
+            with self.subTest(host=invalid), self.assertRaises(ValueError):
+                GatewayConfig(TOKEN, "127.0.0.1", invalid, "127.0.0.1")
 
 
 if __name__ == "__main__":

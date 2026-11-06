@@ -32,7 +32,9 @@ class GatewayConfig:
     def __post_init__(self):
         if not TOKEN_PATTERN.fullmatch(self.token):
             raise ValueError("Invalid bearer token")
-        if not HOST_PATTERN.fullmatch(self.dns_host):
+        if (not HOST_PATTERN.fullmatch(self.dns_host) or
+                any(len(label) > 63 or label.startswith("-") or label.endswith("-")
+                    for label in self.dns_host.split("."))):
             raise ValueError("Invalid DNS TLS hostname")
         ipaddress.ip_address(self.https_ip)
         ipaddress.ip_address(self.dns_ip)
