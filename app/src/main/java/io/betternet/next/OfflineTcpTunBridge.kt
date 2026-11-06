@@ -114,7 +114,9 @@ internal class OfflineTcpTunBridge(
             retireIfFlowEnded(nowMillis)
             return true
         } catch (failure: Exception) {
-            try { close() } catch (closeFailure: Exception) { failure.addSuppressed(closeFailure) }
+            try { close() } catch (closeFailure: Exception) {
+                if (closeFailure !== failure) failure.addSuppressed(closeFailure)
+            }
             throw failure
         }
     }
@@ -222,7 +224,9 @@ internal class OfflineTcpTunBridge(
             writeTun(tunOutput, bytes)
             return true
         } catch (failure: Exception) {
-            try { close() } catch (closeFailure: Exception) { failure.addSuppressed(closeFailure) }
+            try { close() } catch (closeFailure: Exception) {
+                if (closeFailure !== failure) failure.addSuppressed(closeFailure)
+            }
             throw failure
         }
     }
@@ -250,7 +254,7 @@ internal class OfflineTcpTunBridge(
         try { tunnelInput.close() } catch (failure: Exception) { firstFailure = failure }
         try { tunnelOutput.close() } catch (failure: Exception) {
             if (firstFailure == null) firstFailure = failure
-            else firstFailure.addSuppressed(failure)
+            else if (firstFailure !== failure) firstFailure.addSuppressed(failure)
         }
         if (firstFailure != null) throw firstFailure
     }

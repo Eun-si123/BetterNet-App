@@ -41,8 +41,10 @@ internal class RestrictedTunPump(
             try {
                 session.close()
             } catch (closeError: Throwable) {
-                if (failure != null) failure.addSuppressed(closeError)
-                else throw closeError
+                if (failure == null) throw closeError
+                // A cleanup callback may rethrow the very same Throwable.
+                // Java rejects self-suppression and would hide the real cause.
+                if (failure !== closeError) failure.addSuppressed(closeError)
             }
         }
     }
