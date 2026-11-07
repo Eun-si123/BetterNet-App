@@ -4,6 +4,8 @@ This is a PUBLIC user-facing repository. No copying of source, code, logs, secre
 
 Read `docs/MILESTONE_A.md` for the nearest technical acceptance gate **and** `docs/PRODUCT_ROADMAP.md` for owner-confirmed product goals, profiles, volunteer-server rules and still-open policy decisions. Make one selected Android app use a genuine safe BetterNet network path and prove it with honest end-to-end evidence before expanding to whole-device routing, unrelated file transfer or additional protocols. Do not infer approval for optional nodes, experiments or privacy-policy changes from a draft roadmap.
 
+BetterNet is a broad, modular Internet capability product, not only an Internet accelerator or a fixed set of latency presets. The BetterNet-private research workspace may explore similar goals independently, but no private code, tests, credentials or logs may enter this public repository without explicit review. Optional DataNetShare-like sharing belongs after the nearest unmet A1 gate and requires independent public implementation, user consent and integrity tests.
+
 Default to no routing capture and no network requests. New forwarding needs opt-in app selection, OS VPN permissions, authenticated/encrypted transports, bounded gateways, safe DNS/TCP/IPv4/IPv6 behavior, quotas, testable failure/rollback, and exclusion of unrelated apps. No unauthenticated public relays or unintended data disclosure.
 
 PRs must state one acceptance gate, minimal implementation, exact build/test results and pending real-device checks. CI or packet parsing alone isn't proof that Internet access works. No PR churn solely to satisfy an hourly schedule.
