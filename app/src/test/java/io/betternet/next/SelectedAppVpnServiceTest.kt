@@ -231,6 +231,38 @@ class SelectedAppVpnServiceTest {
         assertEquals(listOf("protect", "connect:500"), events)
     }
 
+    @Test fun cancelledBudgetAfterNetworkBindingNeverConnectsAndClosesSocket() {
+        val events = mutableListOf<String>()
+        val socket = RecordingSocket(events)
+        val expired = java.net.SocketTimeoutException("Gateway budget elapsed")
+        try {
+            connectProtectedSocket(resolvedGateway, 500,
+                { events.add("protect"); true }, { socket },
+                { events.add("bind") },
+                connectTimeout = { events.add("deadline"); throw expired },
+            )
+            fail("An expired bound socket must not attempt outbound TCP")
+        } catch (failure: java.net.SocketTimeoutException) {
+            assertSame(expired, failure)
+        }
+        assertEquals(listOf("protect", "bind", "deadline", "close"), events)
+    }
+
+    @Test fun remainingConnectTimeoutIsBoundedByTheOriginalBudget() {
+        val events = mutableListOf<String>()
+        val socket = RecordingSocket(events)
+        connectProtectedSocket(resolvedGateway, 500, { true }, { socket },
+            connectTimeout = { 125 })
+        assertEquals(listOf("connect:125"), events)
+        val refused = RecordingSocket(events)
+        try {
+            connectProtectedSocket(resolvedGateway, 500, { true }, { refused },
+                connectTimeout = { 501 })
+            fail("A caller must not extend the original connect budget")
+        } catch (_: IllegalArgumentException) { }
+        assertEquals(listOf("connect:125", "close"), events)
+    }
+
     @Test fun underlyingBindingRunsAfterProtectionAndBeforeConnect() {
         val events = mutableListOf<String>()
         val socket = RecordingSocket(events)

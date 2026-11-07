@@ -12,13 +12,39 @@ internal fun connectVerifiedGatewayTls(
     socketFactory: () -> Socket = { Socket() },
     tlsFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
     bind: (Socket) -> Unit = {},
+    // A credential-bearing CONNECT can share this absolute deadline with
+    // socket protection/binding, TCP connect and TLS handshake.
+    deadlineNanos: Long? = null,
 ): SSLSocket {
     // Validate identity before even opening a TCP connection.
     require(isValidGatewayName(serverName)) { "Invalid TLS gateway hostname" }
-    return establishVerifiedGatewayTls(
-        connectProtectedSocket(address, timeoutMs, protect, socketFactory, bind),
-        address, serverName, tlsFactory, timeoutMs
-    )
+    require(timeoutMs in 1..10_000) { "Gateway TLS timeout must be bounded" }
+    val deadline = deadlineNanos ?: System.nanoTime() + timeoutMs * 1_000_000L
+    val socket = connectProtectedSocket(address,
+        remainingResponseTimeoutMs(deadline, System.nanoTime()),
+        protect, socketFactory, bind,
+        connectTimeout = { remainingResponseTimeoutMs(deadline, System.nanoTime()) })
+    try {
+        val tls = establishVerifiedGatewayTls(socket, address, serverName,
+            tlsFactory, remainingResponseTimeoutMs(deadline, System.nanoTime()))
+        try {
+            // A slow TLS handshake cannot earn a fresh CONNECT budget or
+            // return a successful credential-ready socket after expiry.
+            remainingResponseTimeoutMs(deadline, System.nanoTime())
+            return tls
+        } catch (failure: Throwable) {
+            try { tls.close() } catch (closeFailure: Throwable) {
+                if (closeFailure !== failure) failure.addSuppressed(closeFailure)
+            }
+            throw failure
+        }
+    } catch (failure: Throwable) {
+        // Includes deadline expiry between TCP connect and TLS creation.
+        try { socket.close() } catch (closeFailure: Throwable) {
+            if (closeFailure !== failure) failure.addSuppressed(closeFailure)
+        }
+        throw failure
+    }
 }
 
 /**

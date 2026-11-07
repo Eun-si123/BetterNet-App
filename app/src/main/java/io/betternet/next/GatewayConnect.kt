@@ -70,6 +70,7 @@ private fun connectAuthenticatedTestTunnelAuthority(
     bind: (Socket) -> Unit,
 ): SSLSocket {
     // Validate all untrusted request fields before opening any socket.
+    require(timeoutMs in 1..10_000) { "Gateway timeout must be bounded" }
     require(destinationPort in 1..65535) { "Invalid test port" }
     // Base64url opaque tokens only; never interpolate untrusted CR/LF into HTTP.
     require(bearerToken.length in 16..256 &&
@@ -77,10 +78,15 @@ private fun connectAuthenticatedTestTunnelAuthority(
             it in '0'..'9' || it == '-' || it == '_' }) {
         "Invalid gateway credential"
     }
+    // One attempt budget, not separate fresh timeouts for TCP, gateway TLS
+    // and CONNECT. Never transmit a bearer after the shared deadline expires.
+    val deadlineNanos = System.nanoTime() + timeoutMs * 1_000_000L
     val gatewayTls = connectVerifiedGatewayTls(
-        gatewayAddress, gatewayName, timeoutMs, protect, tlsFactory = tlsFactory, bind = bind
+        gatewayAddress, gatewayName, timeoutMs, protect, tlsFactory = tlsFactory,
+        bind = bind, deadlineNanos = deadlineNanos,
     )
     try {
+        remainingResponseTimeoutMs(deadlineNanos, System.nanoTime())
         val authority = "$authorityHost:$destinationPort"
         val request = "CONNECT $authority HTTP/1.1\r\n" +
             "Host: $authority\r\n" +
@@ -94,8 +100,7 @@ private fun connectAuthenticatedTestTunnelAuthority(
         val suffix = IntArray(4)
         // A per-read socket timeout alone permits an indefinitely slow response
         // (one byte before every timeout). Bound the *whole* CONNECT header.
-        val responseDeadlineNanos = System.nanoTime() + timeoutMs * 1_000_000L
-        val tunnelReadTimeoutMs = gatewayTls.soTimeout
+        val responseDeadlineNanos = deadlineNanos
         while (header.size() < 8192) {
             gatewayTls.soTimeout = remainingResponseTimeoutMs(responseDeadlineNanos, System.nanoTime())
             val next = gatewayTls.inputStream.read()
@@ -126,22 +131,27 @@ private fun connectAuthenticatedTestTunnelAuthority(
                         throw IOException("Unexpected CONNECT response body")
                     }
                 }
-                // The response deadline must not leak into subsequent tunnel reads.
-                gatewayTls.soTimeout = tunnelReadTimeoutMs
+                // Parsing after a slow final read cannot silently accept an
+                // expired CONNECT. The deadline does not limit subsequent
+                // authenticated tunnel reads after successful establishment.
+                remainingResponseTimeoutMs(deadlineNanos, System.nanoTime())
+                gatewayTls.soTimeout = timeoutMs
                 return gatewayTls
             }
         }
         throw IOException("Gateway CONNECT response exceeds limit")
     } catch (failure: Throwable) {
-        try { gatewayTls.close() } catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
+        try { gatewayTls.close() } catch (closeFailure: Throwable) {
+            if (closeFailure !== failure) failure.addSuppressed(closeFailure)
+        }
         throw failure
     }
 }
 
-/** Monotonic whole-response budget; ceil milliseconds so positive time never becomes zero. */
+/** Monotonic shared gateway budget; ceil milliseconds so positive time never becomes zero. */
 internal fun remainingResponseTimeoutMs(deadlineNanos: Long, nowNanos: Long): Int {
     val remainingNanos = deadlineNanos - nowNanos
-    if (remainingNanos <= 0) throw SocketTimeoutException("Gateway CONNECT response deadline exceeded")
+    if (remainingNanos <= 0) throw SocketTimeoutException("Gateway connection deadline exceeded")
     return (remainingNanos / 1_000_000L + if (remainingNanos % 1_000_000L == 0L) 0L else 1L)
         .coerceIn(1L, 10_000L).toInt()
 }

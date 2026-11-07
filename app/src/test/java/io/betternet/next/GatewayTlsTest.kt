@@ -116,10 +116,16 @@ class GatewayTlsTest {
             { dialEvents.add("protect"); true },
             { dialSocket }, TestFactory(dialTls, dialEvents)
         ))
-        assertEquals(listOf(
-            "protect", "connect:250", "wrap:gateway.example:443:true",
-            "timeout:250", "protocols", "identity:HTTPS", "handshake"
-        ), dialEvents)
+        // Binding, TCP and TLS share a monotonic deadline. A slow runner can
+        // legitimately consume some milliseconds before each next step;
+        // no stage may silently restore a fresh 250ms budget.
+        assertEquals("protect", dialEvents[0])
+        assertEquals("wrap:gateway.example:443:true", dialEvents[2])
+        assertEquals(listOf("protocols", "identity:HTTPS", "handshake"), dialEvents.drop(4))
+        val connectBudget = dialEvents[1].removePrefix("connect:").toInt()
+        val handshakeBudget = dialEvents[3].removePrefix("timeout:").toInt()
+        assertTrue(connectBudget in 1..250)
+        assertTrue(handshakeBudget in 1..connectBudget)
 
         for (invalid in listOf(0, 10_001)) {
             val rejectedEvents = mutableListOf<String>()

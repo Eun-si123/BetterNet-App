@@ -535,6 +535,9 @@ internal fun connectProtectedSocket(
     protect: (Socket) -> Boolean,
     createSocket: () -> Socket = { Socket() },
     bind: (Socket) -> Unit = {},
+    // After protection and Network.bindSocket(), recheck the caller's remaining
+    // budget immediately before the first outbound TCP packet.
+    connectTimeout: () -> Int = { timeoutMs },
 ): Socket {
     require(!address.isUnresolved) { "Gateway address must be resolved on the underlying network" }
     require(timeoutMs in 1..10_000) { "Gateway connect timeout must be bounded" }
@@ -542,8 +545,10 @@ internal fun connectProtectedSocket(
     try {
         check(protect(socket)) { "Gateway socket could not be excluded from the VPN" }
         bind(socket) // Binding failures close the socket, never use default routing.
+        val remaining = connectTimeout()
+        require(remaining in 1..timeoutMs) { "Connect budget must not be extended" }
         try {
-            socket.connect(address, timeoutMs)
+            socket.connect(address, remaining)
         } catch (failure: SocketTimeoutException) {
             // Only failures raised by the actual TCP connect are retryable.
             // The same exception types can occur later, after credentials
