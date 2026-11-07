@@ -343,6 +343,36 @@ class SelectedAppVpnServiceTest {
         }
     }
 
+    @Test fun socketCleanupSameThrowablePreservesOriginalFailure() {
+        val original = IOException("binding and close shared failure")
+        var connected = false
+        val socket = object : Socket() {
+            override fun connect(endpoint: SocketAddress?, timeout: Int) { connected = true }
+            override fun close() { throw original }
+        }
+        try {
+            connectProtectedSocket(resolvedGateway, 500, { true }, { socket }, { throw original })
+            fail("Binding must fail")
+        } catch (caught: IOException) {
+            assertTrue(caught === original)
+            assertEquals(0, caught.suppressed.size)
+            assertTrue(!connected)
+        }
+    }
+
+    @Test fun socketCleanupDistinctThrowableIsSuppressed() {
+        val original = IOException("binding failed")
+        val cleanup = IOException("close failed")
+        val socket = object : Socket() { override fun close() { throw cleanup } }
+        try {
+            connectProtectedSocket(resolvedGateway, 500, { true }, { socket }, { throw original })
+            fail("Binding must fail")
+        } catch (caught: IOException) {
+            assertTrue(caught === original)
+            assertEquals(listOf(cleanup), caught.suppressed.toList())
+        }
+    }
+
     @Test fun unresolvedDnsAndUnboundedTimeoutAreRejectedBeforeSocketCreation() {
         var created = false
         val factory = { created = true; RecordingSocket(mutableListOf()) }
