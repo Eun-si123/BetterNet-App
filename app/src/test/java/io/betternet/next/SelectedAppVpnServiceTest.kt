@@ -1,6 +1,7 @@
 package io.betternet.next
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.fail
 import org.junit.Assert.assertTrue
 import java.io.IOException
