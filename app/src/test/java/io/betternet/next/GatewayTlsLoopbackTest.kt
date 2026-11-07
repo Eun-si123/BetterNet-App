@@ -454,7 +454,13 @@ class GatewayTlsLoopbackTest {
             val tls = contexts()
             val token = "TestOnlyOpaqueToken0123456789"
             val query = dnsQuery()
-            val response = query.clone().apply { this[2] = 0x81.toByte(); this[3] = 0x80.toByte() }
+            val response = query.clone().apply {
+                this[2] = 0x81.toByte(); this[3] = 0x80.toByte()
+                // The real, independently verified inner TLS peer normalizes
+                // QNAME casing. Correlation must not discard this DNS reply.
+                this[13] = 'A'.code.toByte()
+                for (at in 15..18) this[at] = this[at].toInt().toChar().uppercaseChar().code.toByte()
+            }
             val request = tunDnsRequest(ipv6)
             withServer(tls.server, { gateway ->
                 gateway.startHandshake()
@@ -507,6 +513,9 @@ class GatewayTlsLoopbackTest {
                     this[2] = 0x81.toByte()
                     this[3] = 0x80.toByte()
                     this[7] = 1
+                    // Only the approved answer is case-normalized by the
+                    // authenticated resolver; the IP allowlist stays strict.
+                    if (mode == "approved") this[13] = 'A'.code.toByte()
                 } + byteArrayOf(
                     0xc0.toByte(), 0x0c, 0, 1, 0, 1,
                     0, 0, 0, 30, 0, 4,
