@@ -561,7 +561,7 @@ internal fun connectProtectedSocket(
         } catch (closeFailure: Throwable) {
             // A close implementation may rethrow the original cancellation.
             // Self-suppression would mask the protection/binding/connect failure.
-            if (closeFailure !== failure) if (closeFailure !== failure) failure.addSuppressed(closeFailure)
+            if (closeFailure !== failure) failure.addSuppressed(closeFailure)
         }
         throw failure
     }

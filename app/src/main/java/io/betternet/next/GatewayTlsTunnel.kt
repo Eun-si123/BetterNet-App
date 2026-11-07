@@ -65,11 +65,11 @@ internal fun establishVerifiedDestinationTlsOnTunnel(
             inner.startHandshake()
             return inner
         } catch (failure: Throwable) {
-            try { inner.close() } catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
+            try { inner.close() } catch (closeFailure: Throwable) { if (closeFailure !== failure) failure.addSuppressed(closeFailure) }
             throw failure
         }
     } catch (failure: Throwable) {
-        try { tunnel.close() } catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
+        try { tunnel.close() } catch (closeFailure: Throwable) { if (closeFailure !== failure) failure.addSuppressed(closeFailure) }
         throw failure
     }
 }
