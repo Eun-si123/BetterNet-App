@@ -13,6 +13,17 @@ One explicitly selected, consenting Android app completes a genuine HTTPS reques
 - **A2: Measurable value.** Same workload with BetterNet OFF/ON under Linux-host-simulated impairment; compare task success, p50/p95, recovery, overhead, data cost and battery. A direct/no-change choice is valid when the tunnel is worse.
 - **A3: Auto and restricted environments.** Only validated routing, scheduling and transport adaptation; later protocol-blocking and vetted relays, without unsupported anonymity or universal unblockability promises.
 
+## DNS name correlation interoperability
+
+A dormant A1 DNS-over-TLS response may echo the original QNAME with different
+ASCII letter case. RFC 4343 defines such names as equivalent. BetterNet now
+accepts **case-only** differences in a verified, outstanding DNS question while
+continuing to require exact transaction ID, label layout, QTYPE, QCLASS, and
+approved IP address. This avoids discarding valid normalized DNS answers and
+does not permit unrelated questions, unauthenticated DNS, or a new gateway
+route. It is a pure offline correctness test, **not** real selected-app A1
+connectivity proof.
+
 ## Agent work priority
 
 Advance the **nearest unmet gate**, rather than opening unrelated file-transfer/benchmark PRs every hour. Treat urgent, verified security/privacy/integrity defects separately. Reuse existing work, run exact-source CI and label physical tests NOT RUN until completed. Never migrate private source or operational data into this public repo without a separate explicit license/privacy review.

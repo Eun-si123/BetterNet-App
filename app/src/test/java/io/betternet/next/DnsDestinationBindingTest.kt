@@ -50,6 +50,18 @@ class DnsDestinationBindingTest {
         }
     }
 
+    @Test fun correlatedCaseNormalizedAnswerStillGrantsOnlyApprovedDestination() {
+        val syn = TunTcpSynAckTest().request(4)
+        val q = query(1).apply { this[13] = 'D'.code.toByte() }
+        val normalized = query(1)
+        val answer = response(normalized, syn.header.destination.address)
+        assertNotNull(DnsDestinationBinding.fromCorrelatedResponse(
+            q, answer, "dns.example", syn.header.destination, 100))
+        assertNull(DnsDestinationBinding.fromCorrelatedResponse(
+            q, answer.clone().apply { this[13] = 'x'.code.toByte() },
+            "dns.example", syn.header.destination, 100))
+    }
+
     @Test fun dnsGrantAndTunPacketPumpMustUseSameMonotonicClock() {
         val syn = TunTcpSynAckTest().request(4)
         val elapsed = 12_345_678L // Synthetic elapsedRealtime() milliseconds.

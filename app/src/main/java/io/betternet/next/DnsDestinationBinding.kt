@@ -95,7 +95,8 @@ internal class DnsDestinationBinding private constructor(
                     (u16(response, answerEnd + 7) and 0x7fff) != 0 ||
                     u16(response, answerEnd + 9) != 0) return null
             }
-            // The query question was uncompressed and echoed byte-for-byte.
+            // The correlated question was uncompressed with byte-exact
+            // QTYPE/QCLASS; only DNS QNAME ASCII case may differ (RFC 4343).
             if (questionNameEnd < 13) return null
             val resolvedAddress = InetAddress.getByAddress(response.copyOfRange(at, at + length))
             // A compromised or misconfigured resolver must not turn the test

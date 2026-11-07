@@ -31,9 +31,14 @@ class PendingDnsRepliesTest {
         this[3] = 0x80.toByte()
     }
 
-    private fun request(ipv6: Boolean = false): TunIngressResult.Packet {
+    private fun request(ipv6: Boolean = false, uppercaseName: Boolean = false): TunIngressResult.Packet {
         val offset = if (ipv6) 40 else 20
-        val dns = query()
+        val dns = query().apply {
+            if (uppercaseName) {
+                this[13] = 'A'.code.toByte()
+                for (at in 15..18) this[at] = this[at].toInt().toChar().uppercaseChar().code.toByte()
+            }
+        }
         val bytes = ByteArray(offset + 8 + dns.size)
         bytes[0] = if (ipv6) 0x60 else 0x45
         if (ipv6) {
@@ -82,6 +87,53 @@ class PendingDnsRepliesTest {
             assertNull(pending.consume(handle, response(), 1280))
             assertNull(pending.consume(handle + 1, response(), 1280))
         }
+    }
+
+    @Test fun correlatedDnsReplyMayNormalizeQuestionCaseWithoutChangingIdentity() {
+        // RFC 4343: DNS label ASCII case is not significant. A verified DoT
+        // resolver may normalize QNAME case in its echoed question. The same
+        // transaction ID, qtype, class, and name still have to match.
+        for (ipv6 in listOf(false, true)) {
+            val pending = PendingDnsReplies()
+            val original = request(ipv6, uppercaseName = true)
+            assertTrue(isSupportedDnsTunQuery(original))
+            val handle = pending.register(original)
+            assertNotNull("Valid uppercase DNS query must be registered", handle)
+            val normalizedReply = response() // Echoes lowercase a.test.
+            val result = pending.consume(handle!!, normalizedReply, 1280)
+            assertNotNull("Case-only DNS normalization must remain correlated", result)
+            assertNull("Response handle must be single-use", pending.consume(handle, normalizedReply, 1280))
+            // A resolver may also uppercase the echoed question even when the
+            // selected app sent lowercase. Normalization is symmetric.
+            val opposite = pending.register(request(ipv6))!!
+            val uppercaseEcho = response().apply {
+                this[13] = 'A'.code.toByte()
+                for (at in 15..18) this[at] = this[at].toInt().toChar().uppercaseChar().code.toByte()
+            }
+            assertNotNull(pending.consume(opposite, uppercaseEcho, 1280))
+            // Other names, IDs, QTYPE or CLASS must still be rejected.
+            val changes = listOf(
+                normalizedReply.clone().apply { this[13] = 'b'.code.toByte() },
+                normalizedReply.clone().apply { this[1] = 0x35 },
+                normalizedReply.clone().apply { this[lastIndex - 2] = 28 },
+                normalizedReply.clone().apply { this[lastIndex] = 2 },
+            )
+            for (bad in changes) {
+                val other = pending.register(original)!!
+                assertNull("Different query identity must remain blocked", pending.consume(other, bad, 1280))
+            }
+        }
+    }
+
+    @Test fun qtypeBytesNeverCaseFoldEvenWhenTheirNumericValuesLookLikeLetters() {
+        val query = query().apply { this[lastIndex - 2] = 65 } // QTYPE 65
+        val response = query.clone().apply {
+            this[2] = 0x81.toByte()
+            this[3] = 0x80.toByte()
+            this[lastIndex - 2] = 97 // QTYPE 97: different, despite A/a.
+        }
+        assertTrue(isSupportedDnsQueryMessage(query))
+        assertFalse(hasMatchingDnsQuestion(query, 0, query.size, response))
     }
 
     @Test fun malformedOrUnrelatedResponseConsumesSlotWithoutOutput() {

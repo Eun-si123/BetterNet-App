@@ -147,9 +147,11 @@ internal fun writeOneDnsTunReply(
 }
 
 /**
- * Accept only one uncompressed, identical IN question in a standard DNS
- * query/response pair. Reject pointers, malformed labels and truncated
- * questions rather than returning a same-ID answer for a different name/type.
+ * Correlate one uncompressed IN question in a standard DNS query/response pair.
+ * Per RFC 4343 ASCII letters in QNAME are case-insensitive: an authenticated
+ * resolver can normalize their case without changing the question identity.
+ * All length octets, nonletters, QTYPE, QCLASS and transaction ID still match
+ * exactly. Reject compression, malformed/truncated or unrelated questions.
  * This is correlation, not upstream authentication or full DNS validation.
  */
 internal fun hasMatchingDnsQuestion(
@@ -169,10 +171,26 @@ internal fun hasMatchingDnsQuestion(
 
     val queryQuestionEnd = dnsQuestionEnd(queryPacket, queryStart, queryEnd) ?: return false
     val responseQuestionEnd = dnsQuestionEnd(response, 0, response.size) ?: return false
-    val questionLength = queryQuestionEnd - (queryStart + 12)
-    if (questionLength != responseQuestionEnd - 12) return false
-    for (index in 0 until questionLength) {
-        if (queryPacket[queryStart + 12 + index] != response[12 + index]) return false
+    if (queryQuestionEnd - queryStart != responseQuestionEnd) return false
+    val qnameEnd = queryQuestionEnd - 4 // QTYPE and QCLASS remain byte-exact.
+    var at = queryStart + 12
+    while (at < qnameEnd) {
+        val labelSize = queryPacket[at].toInt() and 255
+        if (queryPacket[at] != response[at - queryStart]) return false
+        at++
+        if (labelSize == 0) break
+        for (index in at until at + labelSize) {
+            val original = queryPacket[index].toInt() and 255
+            val echoed = response[index - queryStart].toInt() and 255
+            val lowerOriginal = if (original in 65..90) original + 32 else original
+            val lowerEchoed = if (echoed in 65..90) echoed + 32 else echoed
+            if (lowerOriginal != lowerEchoed) return false
+        }
+        at += labelSize
+    }
+    if (at != qnameEnd) return false
+    for (index in qnameEnd until queryQuestionEnd) {
+        if (queryPacket[index] != response[index - queryStart]) return false
     }
     return true
 }
