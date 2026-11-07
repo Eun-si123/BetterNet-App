@@ -1,6 +1,6 @@
 # Milestone A — authentic selected-app Internet connectivity
 
-Status: **A0 foundation in progress; A1–A3 not proven**. Research phases stay as references rather than blocking all product work.
+Status: **A0 foundation in progress; A1–A3 not proven**. Research phases stay as references rather than blocking all product work. The [Android-first product roadmap](PRODUCT_ROADMAP.md) records owner-confirmed usability, optional optimization, user/server configuration and future volunteer-node direction; those long-term goals do not waive the A1 device-level acceptance gate.
 
 ## User outcome
 

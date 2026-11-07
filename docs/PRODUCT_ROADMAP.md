@@ -4,7 +4,7 @@
 
 **Vision:** Make the *whole experience of everyday Internet use* more dependable under poor Wi-Fi/mobile coverage, congestion, packet loss, long latency, intermittent connectivity and restrictive networks. Include browsing, messaging, video, real-time calls and gaming as long-term workloads—not merely file downloads. Pursue **reliability, meaningful speed, and reachability together**. Do not claim universal acceleration, guaranteed continuity, anonymity, or guaranteed access through every restriction.
 
-**Owner direction:** Android first. Keep the design portable so Windows/Linux and other platforms may follow, without delaying Android. Later support authenticated operator-run Linux/Ubuntu gateways and voluntarily operated relays. Make an experimental APK available to interested testers before the polished public beta, **without silently enabling unfinished VPN routing**. The owner has not yet decided the server enrollment/trust policy, traffic fallback policy, first priority apps, public license, or precise preview distribution rules.
+**Owner direction (confirmed 2026-11-08):** Android first, with later Windows/Linux expansion. Serve ordinary Internet use in unreliable/low-bandwidth/high-cost/restricted environments, not only file-transfer workloads. Reliability, meaningful speed and reachability all matter. Support independently operated authenticated Ubuntu/Linux servers, a vetted server directory **and** self-registered/manual volunteer servers. Let early adopters download a **public, clearly labelled GitHub experimental APK**, without enabling unverified VPN forwarding. Default daily-use mode may fall back to direct Internet on relay failure; an explicit privacy/strict mode blocks instead. Start acceptance workloads with **browsers, messengers and YouTube**. Battery, mobile-data and performance trade-offs are **chosen by each user**. Offer easy automatic setup alongside configurable expert modes. A public license, exact default-relay governance, operator costs, telemetry consent and device support policy remain undecided.
 
 ## Current verified boundary
 
@@ -21,6 +21,37 @@ This roadmap adds product detail to [Milestone A](MILESTONE_A.md). A0–A3 in Mi
 - **Measured resource costs.** Reliability cannot come at unbounded battery, CPU, data or relay costs. Let users choose trade-offs, especially on metered networks.
 - **Independent public development.** Do not copy private BetterNet research source/config/identifiers, or export private logs and credentials into the public app without explicit source, license and privacy review.
 - **Evidence-based phases.** Record every actual test environment, unsupported protocol, known failure, performance baseline and rollback. Successful CI is not device-level acceptance. PR counts are not a progress metric.
+- **Resource-constrained users are first-class.** Keep the Android client lightweight, power and data budgets visible, setup and diagnostics usable on low-end hardware, and essential status usable when offline. Evaluate limited data plans, cheap devices, unstable radio, expensive metered links and low-bandwidth networks. Optional relay capacity cannot guarantee a free or functional Internet connection where no viable physical path exists.
+- **No imaginary zero-latency mode.** A "lowest ping" profile may reduce queueing, select a genuinely shorter route or avoid unnecessary relay hops, but cannot beat propagation distance, radio scheduling or congestion outside our control. A throughput-oriented relay can *increase* ping; use matched OFF/ON measurements and show negative outcomes.
+- **User-selected features, not an unbounded plugin platform.** Ship a small safe automatic core and optional, documented modules/presets. Display dependencies and incompatible settings; disabling a transport, relay or diagnostic must not silently re-enable it or bypass VPN/network/privacy consent.
+
+## User experience and configurable optimization policy
+
+**Default experience:** install → understand what BetterNet can and cannot improve → select supported app(s) and explicitly approve Android VPN permission → choose a verified reachable node or direct mode → start/stop with one clear control. The final automatic node choice may only use a published, reviewed and authenticated directory; when no safe node is available, explain why and stay in direct/diagnostic mode. Installation, server enrollment and VPN permission are never silently assumed. This is a *future design*, not an implemented flow.
+
+**Interface levels:**
+
+| Level | Intended user | Visible controls |
+| --- | --- | --- |
+| Simple / Automatic | First-time users | One connection switch, automatic measured route, current policy, Stop and clear connection status |
+| Guided presets | Anyone with a clear goal | Latency-first, Stability-first, Balanced (recommended), Data-saving, and Custom profiles with simple descriptions |
+| Advanced / Expert | Power users and researchers | Per-app policy, transport and path enable/disable, explicit relay/server choice, health thresholds, timers, battery/data limits, retries, logs export with redaction and rollback |
+
+All presets share the same security and Android-permission gates. They do not claim to fix a particular app until that app/protocol is physically supported. **Latency-first** prioritizes interactive queues and measured RTT/jitter over bulk throughput, but cannot promise faster physical ping. **Stability-first** may trade higher latency and extra transmission for fewer task interruptions. **Data-saving** minimizes probes, duplicate paths and overhead; performance may decrease. **Balanced** applies measured conservative defaults. **Custom** selects individual features only after their prerequisites are satisfied.
+
+**Failure policy:** Daily-use mode can switch back to **direct Internet** when a relay becomes unusable, clearly displaying the change. Privacy / strict mode must **block, not leak via direct fallback**. Make the trade-off visible before the first VPN start, provide session status, and record repeatable no-leak/no-capture tests. Never silently switch a strict user to direct, another volunteer operator, mobile data, or an unknown network. A manual override must be explicit and revocable.
+
+**Mobile resource policy:** Every user can select data/battery/performance preference with safe defaults; advanced controls may permit more battery or metered-data use when allowed by Android and network policy. No unexplained automatic cellular spending. Respect low-power/data-saver constraints unless the user explicitly chooses a supported override; report actual cost rather than claiming "free speed."
+
+## Server installation, selection and volunteer governance
+
+**Two simultaneous routes:** (1) a **curated, verified and signed directory** with operator identity, revocation and health data; (2) **independent community self-registration and manual address entry**. A self-registered node is never *automatically* considered trustworthy or promoted to the curated set. Unreviewed nodes require an explicit warning and opt-in; a self-hosted operator can keep a node private and share its authenticated address directly.
+
+**Server operator UX:** one supported Linux/Ubuntu installation path (e.g. packaged service or container) with a secure default configuration, first-run identity and TLS provisioning, a readable status/check command, safe update/rollback and reversible removal. Offer a guided admin UI/CLI that translates advanced options into understandable labels; an expert configuration file/API can expose bounded port/destination access, user authentication, concurrency, memory/CPU/bandwidth/data quotas, metered-use rules, relay uptime, logging retention, access policy and geographic/abuse limits. All powerful choices require validation and an explainable effective-config preview. Zero-configuration convenience must **not** mean an open proxy.
+
+**Potential node roles (not yet commitments):** authenticated ingress gateway, restricted HTTPS/DNS exit relay, diagnostics/measurement node and later optional volunteer transit/peer assist. Roles may share software but must have independent permissions, credentials and quotas. Do not assume all roles require storing traffic, decrypting HTTPS, publishing a public IP, or exposing a home network. Operators select which roles and destinations to support; default role is narrow, inbound private/unexposed unless deliberately enabled, with explicit operator consent and abuse safeguards.
+
+**Network limitations:** If the phone has no working physical link to a node, the app cannot generate connectivity from nothing. Some restrictive networks block the protocol or destination; the program should identify the failure, avoid infinite reconnect/data burn, and choose only authorized fallback options. Relays can change routing/queueing and improve effective task success in some conditions; they may also add expense, delay and privacy risk.
 
 ## Phase 0 — foundation and safe developer preview
 
@@ -28,8 +59,8 @@ This roadmap adds product detail to [Milestone A](MILESTONE_A.md). A0–A3 in Mi
 
 - Android package, platform network information, selected-app UI, user-controlled diagnostic actions, VPN coexistence/readiness, safe consent flow, clear Stop affordance.
 - Testable platform boundaries, deterministic Kotlin/Android unit tests, isolated loopback gateway tests, Android Lint and APK checksum/provenance from CI.
-- English/Korean basics, accessibility, useful error messages, visible limitations and an easy way to report redacted diagnostics.
-- Decide an open-source license and contribution/security process before describing the repository as OSS. Public visibility by itself is not a reuse license.
+- English/Korean basics with future low-bandwidth-country localization needs, accessibility, low-end-Android performance budgets, useful error messages, visible limitations and an easy way to report redacted, opt-in diagnostics.
+- Decide an open-source license and contribution/security process before describing the repository as OSS. Public visibility by itself is not a reuse license; decide independently whether the volunteer server software uses the same license.
 - **Early preview lane:** offer opt-in, explicitly labelled experimental/diagnostic APKs with reproducible source SHA and known risks. No auto-activation of unfinished VPN functions.
 
 **Exit:** Clean build and install/upgrade/rollback checks on actual Android; no implicit VPN capture, unselected-app capture or secret leakage; CI identifies exact source of APK. Physical checks remain **NOT RUN** until performed.
@@ -53,10 +84,10 @@ This roadmap adds product detail to [Milestone A](MILESTONE_A.md). A0–A3 in Mi
 **Goal:** Demonstrate that BetterNet can improve success and reduce real interruptions, and correctly decline to intervene when direct service is better.
 
 - Run matched ON vs OFF/direct experiments with jitter, packet loss (burst and random), bandwidth limits, congestion, high RTT, brief outages and Wi-Fi/cellular changes; randomize order and repeat.
-- First measure browsing, messaging and uploads; then video stalls/start time and latency-sensitive calls/games after UDP support exists. Test actual app compatibility rather than generalizing from a synthetic benchmark.
+- First measure **browsers and messengers**; add **YouTube video playback** as the early explicit target with realistic streaming protocols/quality adaptation, then latency-sensitive calls/games after the required UDP/QUIC support exists. Test actual app compatibility rather than generalizing from a synthetic benchmark.
 - Track task success, p50/p95/p99 stalls and latency, recovery time, retransmissions, traffic overhead, CPU, battery and metered-data cost. Measure adverse outcomes and show confidence/variation.
 - Validate no needlessly long service wake locks, crash loops, connection leaks or costly probes; enforce stop/rollback.
-- Release narrowly scoped **opt-in technical previews** where the specific supported flows pass physical tests. Clearly mark unsupported cases.
+- Release narrowly scoped **public GitHub experimental APK previews** where the specific supported flows pass physical tests. Clearly mark unsupported cases, provenance and known risks. Developer-only diagnostic builds may be shared earlier but must leave incomplete VPN forwarding disabled.
 
 **Exit:** Reproducible repeat-run results and physical observations showing at least one real benefit; honest no-benefit/direct cases and regressions documented. No broad speed-up claims without evidence.
 
@@ -64,7 +95,7 @@ This roadmap adds product detail to [Milestone A](MILESTONE_A.md). A0–A3 in Mi
 
 **Goal:** Automatically improve reliability where measurements justify it, while minimizing surprise and wasted resources.
 
-- Per-path health, hysteresis, retry/backoff and circuit breaking, safe handover, resumable application operations where possible, and no accidental duplicate writes.
+- Per-path health, hysteresis, retry/backoff and circuit breaking, safe handover, resumable application operations where possible, and no accidental duplicate writes. Users can select Balanced, Stability-first, Latency-first, Data-saving or a documented Custom profile.
 - Android Wi-Fi/mobile analysis; optional multi-network/multipath usage if platform permits, with selectable battery and metered-data preferences.
 - Verified alternative transports (TCP/TLS, HTTP CONNECT and QUIC/HTTP3 where useful), UDP and HTTP/3 compatibility, and real-time application support through separate tests.
 - Restricted-network handling based on measured connectivity, available paths and applicable laws/policies. No claim that every firewall or network block is bypassable.
@@ -77,7 +108,7 @@ This roadmap adds product detail to [Milestone A](MILESTONE_A.md). A0–A3 in Mi
 
 - Container/service-managed Linux gateway with clear permissions, limited file/network access, dedicated service account, explicit bind, quotas, concurrency limits, health checks, logs with short retention, updates and safe restart.
 - Node operator consent, verified node identity and signed metadata, token/key rotation and revocation, abuse reporting, authenticated clients and restrictive port/destination policy. **No unauthenticated public open proxy.**
-- Initial user experience: manually added operator-controlled servers or a vetted signed directory (pending owner decision). Display operator/trust level, fees/data rules, region and recent health in an honest way; distinguish authenticated identity from assurance of good behavior.
+- Initial user experience: **both** a vetted/signed directory and self-registered or manually added operators, with unverified operator nodes opt-in only. Display operator/trust level, fees/data rules, region and recent health in an honest way; distinguish authenticated identity from assurance of good behavior.
 - Threat-model malicious exits, impersonation/Sybil nodes, correlated traffic, DNS/TLS manipulation, traffic logs, replay, abuse, resource exhaustion and censorship-network uncertainty. Design credential compromise recovery and removal of unsafe nodes.
 - Volunteer opt-in is explicit. An exit node can attract abuse and network/hosting complaints; operators must be able to cap usage, stop participation and rotate identities. Multi-hop or P2P are future research candidates, not first-release requirements.
 
@@ -87,7 +118,7 @@ This roadmap adds product detail to [Milestone A](MILESTONE_A.md). A0–A3 in Mi
 
 **Goal:** Ordinary Android users understand, use and stop BetterNet without a developer, and its public claims match independent evidence.
 
-- Simple onboarding, app/server/path selection, battery/metered presets, clear notifications, incident/status UX, accessible UI, safe fallback choice and readable diagnostics.
+- Simple one-control onboarding, app/server/path selection, selectable battery/metered presets, clear notifications, incident/status UX, accessible UI, visible daily/direct versus strict/block fallback, and readable redacted diagnostics. Guided versus expert UIs expose the same validated engine.
 - Android version/OEM, background/reboot/permission/revoke, captive portal, dual-SIM/metered, TUN and other-VPN compatibility matrix.
 - Release signing, dependency/security reviews, provenance, privacy/data policy, public license, documented support contact, repeatable regression and rollback procedure.
 - Gradual **preview → limited beta → stable** rollout; keep debug APKs separate from signed beta/stable builds.
@@ -109,12 +140,20 @@ Windows/Linux clients, user-selected multiple apps or whole-device mode, advance
 
 For each APK document source SHA, signed/unsigned status, Android version, test device, checked route/protocol, known failures, potential data charges and what is **not** implemented. Never describe developer CI alone as proof of a working accelerator.
 
-## Owner decisions not yet locked in
+## Confirmed product decisions
 
-1. **Traffic fallback:** server/network drop should (a) connect directly, (b) block until recovered, or (c) ask/show a selectable policy. Direct fallback may defeat a privacy expectation, so never silently impose it.
-2. **Node trust and selection:** manual servers, an audited/approved signed directory, or both; acceptance/revocation criteria for volunteer operators; how to identify unverified nodes.
-3. **First workloads and devices:** Android apps/categories for A1/A2 acceptance; Android minimum OS and supported devices; whether browser, messenger, video or game tests come first.
-4. **Early APK distribution:** public GitHub prerelease or invite-only track, warning copy and tester feedback scope. Owner also needs to choose a public license and server software openness policy.
-5. **Trade-offs:** allowed extra mobile data/battery for reliability and how to handle metered networks, cellular background traffic and battery saver.
+1. **Connection fallback:** automatic/direct recovery for everyday use, but a separate explicit strict/privacy mode **blocks instead of silently using direct Internet**. The user can choose modes; detailed on-device copy and the default consent wording still need review.
+2. **Server ecosystem:** both a curated verified/signed directory **and** independent self-registration/manual servers. Unverified nodes never inherit verified trust automatically; individual user/host consent remains mandatory.
+3. **Initial apps:** browsers, messengers and YouTube/video are the first real-world categories. Support must still be proven separately for HTTP/3, QUIC, UDP, DRM and each Android app. Games/real-time calls remain long-term goals.
+4. **Distribution:** interested users may publicly download experimental APK builds from GitHub, with clear test-only/unsupported labels. No unfinished network capture is implicitly enabled.
+5. **User choice:** selectable battery, metered-data and speed/reliability/latency policies, with a low-effort automatic interface and separately guided and expert configuration. Operator software also offers both simple secure defaults and explicit advanced configuration.
 
-These questions are open design decisions. They do **not** authorize activating a VPN, deploying a remote relay, using a home server, publishing personal details, transmitting telemetry or selecting a license.
+## Owner decisions still open
+
+1. **Volunteer economics:** free-only relays, optional donations, optional paid nodes, or a combination; fair-use resource limits and operator cost disclosures.
+2. **Node moderation and governance:** who verifies/promotes/revokes curated nodes, directory hosting approach and how community nodes are displayed without misleading users into trusting unknown operators.
+3. **Privacy and diagnostics:** whether to offer strictly opt-in redacted performance/incident reports, what metadata volunteer node operators may retain, and the maximum retention period.
+4. **First concrete A1 test environment:** which safe Android test browser/messenger, gateway provider and independently controlled endpoint, plus Android min-version and inexpensive-device budget. Do not use a personal/home server without explicit consent.
+5. **License/maintainership:** public client and volunteer gateway licenses, security reporting, community responsibility and whether optional server fees are allowed. No license has been granted yet.
+
+Unresolved policies do **not** authorize activating a VPN, deploying a remote relay, using a home server, publishing personal details, transmitting telemetry or selecting a license.

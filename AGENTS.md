@@ -2,7 +2,7 @@
 
 This is a PUBLIC user-facing repository. No copying of source, code, logs, secrets, configuration, private research findings or personal identities from any private repository without explicit source/license/privacy review.
 
-Read docs/MILESTONE_A.md before work. Make one selected Android app use a genuine safe BetterNet network path and prove it with honest end-to-end evidence before expanding to whole-device routing, unrelated file transfer or additional protocols.
+Read `docs/MILESTONE_A.md` for the nearest technical acceptance gate **and** `docs/PRODUCT_ROADMAP.md` for owner-confirmed product goals, profiles, volunteer-server rules and still-open policy decisions. Make one selected Android app use a genuine safe BetterNet network path and prove it with honest end-to-end evidence before expanding to whole-device routing, unrelated file transfer or additional protocols. Do not infer approval for optional nodes, experiments or privacy-policy changes from a draft roadmap.
 
 Default to no routing capture and no network requests. New forwarding needs opt-in app selection, OS VPN permissions, authenticated/encrypted transports, bounded gateways, safe DNS/TCP/IPv4/IPv6 behavior, quotas, testable failure/rollback, and exclusion of unrelated apps. No unauthenticated public relays or unintended data disclosure.
 
