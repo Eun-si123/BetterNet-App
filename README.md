@@ -14,6 +14,6 @@ Requires JDK 17 and Android SDK 36.
 
 The new package is `io.betternet.next`, separate from existing BetterNet Developer installations. Never install a debug build over a previously signed release.
 
-Read [Milestone A](docs/MILESTONE_A.md) before proposing work. The previous private BetterNet research repository stays private; this is an independent implementation, not a public mirror.
+Read the [product roadmap](docs/PRODUCT_ROADMAP.md) for the Android-first product phases, preview plan and unresolved owner decisions. Read [Milestone A](docs/MILESTONE_A.md) before proposing work. The previous private BetterNet research repository stays private; this is an independent implementation, not a public mirror.
 
 No license has been selected yet. Public visibility does not grant reuse rights automatically.
