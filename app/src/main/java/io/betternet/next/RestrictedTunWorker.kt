@@ -88,8 +88,26 @@ internal class RestrictedTunWorker(
     /** Request cancellation, then wait for owner-thread cleanup. */
     fun stopAndJoin(timeoutMs: Long): Boolean {
         validateJoin(timeoutMs)
-        requestStop()
-        return awaitStopped(timeoutMs)
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        // Descriptor cancellation can fail after the stop flag was already set.
+        // The worker may still be blocked in a poll/gateway callback; never
+        // skip the bounded owner join merely because fd closure threw.
+        var stopFailure: Throwable? = null
+        try { requestStop() } catch (error: Throwable) { stopFailure = error }
+        val remaining = deadline - System.nanoTime()
+        val joined = try {
+            if (remaining <= 0) false else {
+                val millis = TimeUnit.NANOSECONDS.toMillis(remaining) +
+                    if (remaining % 1_000_000L == 0L) 0L else 1L
+                awaitStopped(millis)
+            }
+        } catch (joinFailure: Throwable) {
+            val original = stopFailure ?: throw joinFailure
+            if (joinFailure !== original) original.addSuppressed(joinFailure)
+            throw original
+        }
+        if (stopFailure != null) throw stopFailure
+        return joined
     }
 
     /** Observe natural completion/failure without cancelling an active worker. */

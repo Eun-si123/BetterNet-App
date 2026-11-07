@@ -7,6 +7,7 @@ import java.net.InetAddress
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -68,6 +69,57 @@ class RestrictedTunWorkerTest {
         } catch (expected: IllegalStateException) {
             assertEquals("TUN worker already started", expected.message)
         }
+    }
+
+    @Test fun failedDescriptorCloseStillWaitsForOwnerBeforeReportingStopFailure() {
+        val enteredPoll = CountDownLatch(1)
+        val releaseOwner = CountDownLatch(1)
+        val closeAttempted = CountDownLatch(1)
+        val stopReturned = CountDownLatch(1)
+        val closes = AtomicInteger()
+        val observed = AtomicReference<Throwable?>()
+        val closeFailure = IOException("TUN descriptor close failed")
+        val session = RestrictedTunSession(dispatcher(), forbiddenInput,
+            ByteArrayOutputStream(), {
+                closes.incrementAndGet()
+                closeAttempted.countDown()
+                throw closeFailure
+            }, waitForReadable = {
+                enteredPoll.countDown()
+                assertTrue("Owner remained blocked past the test deadline",
+                    releaseOwner.await(3, TimeUnit.SECONDS))
+                false
+            })
+        val worker = RestrictedTunWorker(RestrictedTunPump(session) { 100L })
+        worker.start()
+        assertTrue(enteredPoll.await(3, TimeUnit.SECONDS))
+        val stopper = Thread {
+            try {
+                worker.stopAndJoin(2_000)
+            } catch (error: Throwable) {
+                observed.set(error)
+            } finally {
+                stopReturned.countDown()
+            }
+        }
+        stopper.start()
+        try {
+            assertTrue("Cancellation did not attempt to close the descriptor",
+                closeAttempted.await(2, TimeUnit.SECONDS))
+            // Even when the close callback fails immediately, the owner thread
+            // still holds the session and must finish before we report stop.
+            assertFalse("Cancellation failure skipped joining the live owner",
+                stopReturned.await(100, TimeUnit.MILLISECONDS))
+        } finally {
+            releaseOwner.countDown()
+            stopper.join(3_000)
+        }
+        assertFalse("Stopper must not leak a thread", stopper.isAlive)
+        assertTrue(stopReturned.await(0, TimeUnit.MILLISECONDS))
+        assertSame("First cancellation failure must remain observable", closeFailure, observed.get())
+        assertTrue("Worker must be completely terminated", worker.awaitStopped(100))
+        assertNull(worker.failure)
+        assertEquals("Never close the fd twice after an exception", 1, closes.get())
     }
 
     @Test fun boundedJoinDoesNotPretendBlockedOwnerHasStopped() {
