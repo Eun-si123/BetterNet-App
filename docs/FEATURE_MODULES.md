@@ -11,6 +11,28 @@
 - Versioned internal module contracts need to state capabilities, Android permissions, stored data, background/network work, resource budget, cancellation, effects on routing and tests. Do **not** invent a dynamic plugin runtime before there is a demonstrated need.
 - Shared security is mandatory, not an optional toggle: OS permissions, source/receiver identity, network trust, quota and no secret logging apply to every profile.
 
+## User control: installed size **and** enabled state
+
+**Owner-confirmed requirement:** users can activate or deactivate individual optional features **and avoid unwanted app-size growth**. A switch by itself does **not** shrink an already installed APK or delete compiled code. Design and label these as distinct operations:
+
+| State/action | What the user gets | Storage implication |
+| --- | --- | --- |
+| Not installed | Capability unavailable; show its purpose and approximate package size | Optional code/assets must be absent from the installed distribution for genuine savings |
+| Installed, disabled | No sessions, background probes, listeners or permission request for that feature | Installed code may still occupy space; clearly say `Disabled`, **not** `Removed` |
+| Installed, enabled | Feature usable after explicit consent/dependency checks | Explain data, battery and storage cost; security gates remain |
+| Remove optional component | Stop, revoke grants, delete permitted downloaded component/cache and show retained settings/data separately | Free removable bytes only where packaging truly supports it; report actual result |
+
+**Small core rule:** start with a safe base app (status, configuration, consent/safety controls, essential connectivity) and avoid bundling rarely used large features, translation/model assets or diagnostics data into every installation. The storage UI eventually shows base app size, optional component sizes, locally retained cache/log data, dependencies and expected removal savings. Do not introduce a heavy dependency for a tiny setting or claim that static Kotlin packages are uninstallable merely because they live in separate source modules.
+
+**Distribution-dependent implementation:**
+
+- **Public GitHub APK / sideload previews:** a normal single APK contains its packaged compiled features. Runtime OFF conserves background resources, **not** its APK bytes. At first use a lightweight base and optional user-fetched **signed/hash-verified non-executable data/resources** if genuinely needed. If later significant executable features must be omit-able, evaluate explicit, consistently signed **Lite/Full APK variants** or audited bundle/split-APK distribution with a clear upgrade/migration and uninstall path; do not invent a remote DEX/plugin loader or silently download executable code.
+- **Possible future Google Play distribution:** Android App Bundles / Play Feature Delivery support on-demand and removable dynamic feature modules, with store-specific installation and removal APIs. This is **not automatically available to someone installing a single GitHub APK**. The feature architecture should not depend on Google Play services to perform essential core functions. Official guidance: [Play Feature Delivery](https://developer.android.com/guide/playcore/feature-delivery), [on-demand features](https://developer.android.com/guide/playcore/feature-delivery/on-demand), and [AAB vs APK](https://developer.android.com/guide/app-bundle/faq).
+
+**Lifecycle and safety:** dependency resolution must show why a prerequisite is required, without auto-enabling unrelated optional modules. Turning a feature OFF cancels its jobs and closes its sessions; removal cannot leave active VPN/TUN traffic, downloaded executables, credentials, privileged grants, receiver advertisements or partial transfers. Define whether cached user files/settings are preserved or securely removed **before** deletion; never delete personal shared files just to free app space. For each platform/channel, validate fresh install, offline/metered download denial, interrupted install, failed integrity verification, disable during transfer, forced stop, reinstall, removal, rollback and user data retention. Only display actual **measured** footprint savings.
+
+These controls are a **planned product capability**, not a claim that BetterNet-App currently supports feature download, module removal or fine-grained active VPN toggling.
+
 ## Candidate module matrix (all `PLANNED` unless explicitly verified elsewhere)
 
 | Capability | Scope and dependencies | Independent pass/fail |

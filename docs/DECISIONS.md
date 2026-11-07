@@ -18,6 +18,7 @@
 | DEC-010 | Initial real-world Android workloads: browsers, messengers, YouTube | HTTP/3/UDP/DRM/other protocols require independent tests |
 | DEC-011 | **Built-in optional sharing/transfer inside BetterNet** | No separate DataNetShare app/server dependency; maintain independent public implementation and modular boundaries |
 | DEC-012 | BetterNet-private = separate research/experiments; BetterNet-App = public product | Similar broad purpose; no automatic copying private code, settings, identities, logs, protocols or test evidence |
+| DEC-013 | **User-controlled feature enable/disable and storage footprint** | Do not force everyone to install or run every optional capability. Separate runtime OFF from physical component removal; only promise space savings when delivery can actually omit/remove installed bytes |
 
 ## Recommended engineering defaults (not owner approvals to deploy)
 

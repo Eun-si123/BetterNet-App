@@ -40,12 +40,14 @@ The TUN controller must *never* connect its own gateway through its own VPN recu
 | Boundary | Responsibility | Safeguard / failure behavior |
 | --- | --- | --- |
 | Android UI and consent | App selection, profile, operator/cost display, Stop, log review | Never infer OS VPN approval; no one-click hidden full-device interception |
-| Capability registry (internal, static/versioned) | Enable supported built-in modules after dependency checks | No arbitrary third-party code loading, no implicit permission escalation |
+| Capability registry (internal, static/versioned) | Track **installed/available** separately from **enabled/disabled** and enforce dependencies before any optional task | No arbitrary third-party code loading, no implicit permission escalation, no false APK-size claims |
 | Route policy | Evaluate direct vs authenticated relay, battery/data budgets, configured strictness | Strict block policy is never silently downgraded; direct fallback clearly surfaced |
 | Path adapter | Android protected/bound sockets, TCP/UDP where actually supported | Respect chosen non-VPN underlying network; changes revalidated |
 | Gateway/volunteer client | Authenticate selected operator, authorize destination, quotas and protocol | Fail on invalid trust, expired credentials, quota, or host mismatch; don't use unknown fallback |
 | Optional sharing feature | Built-in send/receive with independent sessions and integrity | Explicit peer/recipient, grants, revocation, consent, no broad access to local storage |
 | Telemetry/reporting | Local bounded diagnostic stream and opt-in preview/export | No remote collector by default; scrub and separate explicit send confirmation |
+
+The default APK should remain small. Future installation/removal strategies must be designed for the actual channel: GitHub APKs lack automatic Play Feature Delivery; possible future Play App Bundles can use audited on-demand dynamic modules. See [feature packaging and lifecycle](FEATURE_MODULES.md). This is a **design** and does not mean modules can currently be removed.
 
 Avoid a universal packet/plugin interface until an actual accepted feature requires one. Modules may share a small validated transport/identity API, but package and permission boundaries must follow the actual implementation and Android restrictions.
 

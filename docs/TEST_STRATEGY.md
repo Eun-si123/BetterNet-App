@@ -23,6 +23,7 @@
 | A2 | Same browser/message/video task with BetterNet OFF vs ON over controlled impairment and ordinary network | Tunnel worse than direct; battery/data cost, packet loss burst, path switching; no fabricated speedup | `NOT RUN` |
 | A3 | Auto route/transport choices recover better when justified | Flapping, direct fallback violating strict policy, user data cap, unknown relay, QUIC/UDP failure | `PLANNED` |
 | Built-in sharing | Send/accept/verify a selected file inside two compatible BetterNet installs | No DataNetShare install, unauthorized receiver, wrong hash, interrupted/duplicate/resume, path traversal, no port exposure | `PLANNED` |
+| User-controlled optional features | Enable/disable each feature and measure core-only vs installed footprint for the **actual distribution channel** | OFF must stop background work; invalid dependency, interrupted install, false space saving, uninstall during transfer, retained user files and reinstallation | `PLANNED` |
 | Diagnostics | User chooses log → sees exact redacted payload and recipient → sends or declines | No upload on open/cancel/crash, removal of sensitive fields, retention limits and recipient mismatch | `PLANNED` |
 | Community nodes | Signed verified list + manually added unverified node; operator permission and quotas | Forged directory, revoked node, unpaid surprise fees, abuse, resource exhaustion and expired identity | `PLANNED` |
 
@@ -45,6 +46,10 @@ These are criteria, **not a claim that tests currently exist**. Do not infer any
 - Include good networks, ordinary mobile, constrained rate, jitter, random and burst losses, high RTT, mid-session outage and route switching. An unavailable physical Internet path is a separately classified failure, not proof of a magical fallback.
 - Report task success, p50/p95/p99 completion/stalls, jitter/RTT, time-to-recovery, video rebuffering, bytes overhead, CPU/wake time, energy and data cost. Include worsened cases and confidence/uncertainty; pre-define workload and success condition before testing.
 - A latency-first profile should show lower **avoidable** delay without claiming to defeat propagation; a stability profile may trade throughput/energy for successful task completion. No single headline percent can substitute for per-condition evidence.
+
+## APK footprint and user-choice evidence
+
+For each future optional component measure **baseline signed APK/download size, on-device installed code/resources, cache/log/data, and peak install/update storage**, not just the build file size. Compare fresh core-only vs option installed on representative low-end Android and the chosen distribution channel. Verify each user-visible toggle only enables supported behavior and OFF stops its network/CPU/battery usage. On-demand downloadable files must have explicit consent, integrity/signature verification and an offline failure path. If a GitHub universal APK embeds optional code, label OFF accurately and do not count any reclaimed APK bytes until a real uninstaller/distribution demonstrates it. Validate preserving user-created files/settings on removal according to an explicit policy; never silently erase them.
 
 ## CI and change management
 
