@@ -1,6 +1,6 @@
 # Milestone A — authentic selected-app Internet connectivity
 
-Status: **A0 foundation in progress; A1–A3 not proven**. Research phases stay as references rather than blocking all product work. The [Android-first product roadmap](PRODUCT_ROADMAP.md) records owner-confirmed usability, optional optimization, user/server configuration and future volunteer-node direction; those long-term goals do not waive the A1 device-level acceptance gate.
+Status: **A0 foundation in progress; A1–A3 not proven**. Research phases stay as references rather than blocking all product work.
 
 ## User outcome
 
@@ -12,10 +12,6 @@ One explicitly selected, consenting Android app completes a genuine HTTPS reques
 - **A1: Real selected-app forwarding.** Select one test app and restricted test destination; verify real TCP, DNS and response delivery through a protected authenticated/encrypted transport to a secure, bounded gateway. Account for IPv4/IPv6, MTU, fragmentation, socket recursion, consent, VPN coexistence, failures and resource limits. No synthetic UDP echo counts as proof.
 - **A2: Measurable value.** Same workload with BetterNet OFF/ON under Linux-host-simulated impairment; compare task success, p50/p95, recovery, overhead, data cost and battery. A direct/no-change choice is valid when the tunnel is worse.
 - **A3: Auto and restricted environments.** Only validated routing, scheduling and transport adaptation; later protocol-blocking and vetted relays, without unsupported anonymity or universal unblockability promises.
-
-## Documentation and acceptance evidence
-
-See the [documentation hub](README.md) for sources of truth, [current implementation status](STATUS.md) for `main` vs Draft PR vs real-device evidence, and [test strategy](TEST_STRATEGY.md) for repeatable acceptance and negative cases. Optional in-app sharing is [planned independently](FEATURE_MODULES.md) and **must not** be mistaken for current A1 forwarding or a runtime dependency on DataNetShare.
 
 ## Agent work priority
 
