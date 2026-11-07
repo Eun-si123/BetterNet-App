@@ -13,6 +13,10 @@ One explicitly selected, consenting Android app completes a genuine HTTPS reques
 - **A2: Measurable value.** Same workload with BetterNet OFF/ON under Linux-host-simulated impairment; compare task success, p50/p95, recovery, overhead, data cost and battery. A direct/no-change choice is valid when the tunnel is worse.
 - **A3: Auto and restricted environments.** Only validated routing, scheduling and transport adaptation; later protocol-blocking and vetted relays, without unsupported anonymity or universal unblockability promises.
 
+## Documentation and acceptance evidence
+
+See the [documentation hub](README.md) for sources of truth, [current implementation status](STATUS.md) for `main` vs Draft PR vs real-device evidence, and [test strategy](TEST_STRATEGY.md) for repeatable acceptance and negative cases. Optional in-app sharing is [planned independently](FEATURE_MODULES.md) and **must not** be mistaken for current A1 forwarding or a runtime dependency on DataNetShare.
+
 ## Agent work priority
 
 Advance the **nearest unmet gate**, rather than opening unrelated file-transfer/benchmark PRs every hour. Treat urgent, verified security/privacy/integrity defects separately. Reuse existing work, run exact-source CI and label physical tests NOT RUN until completed. Never migrate private source or operational data into this public repo without a separate explicit license/privacy review.

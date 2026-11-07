@@ -10,6 +10,8 @@
 
 The repository's default branch remains **pre-alpha**. Draft [PR #7](https://github.com/Eun-si123/BetterNet-App/pull/7) has substantial dormant single-app VPN, TLS/CONNECT, DNS/TCP, lifecycle and isolated gateway test development. Successful CI and localhost TLS tests do **not** prove that an Android app can browse through BetterNet. No physical A1 selected-app HTTPS completion, production relay deployment or general-purpose acceleration is verified. Do not count those as complete.
 
+For implementation versus plans, use the [documentation hub](README.md) and [dated status ledger](STATUS.md). The [built-in sharing capability](FEATURE_MODULES.md) is an optional first-party BetterNet feature, **not** a separate DataNetShare install, mandatory API integration or currently implemented transfer. The [decision register](DECISIONS.md) distinguishes user-confirmed product choices from unresolved operational policy.
+
 This roadmap adds product detail to [Milestone A](MILESTONE_A.md). A0–A3 in Milestone A remain the *immediate technical acceptance gates*. Later phases below are candidates, not commitments to expose server infrastructure or roll out traffic interception.
 
 ## Product rules

@@ -10,3 +10,4 @@ local.properties
 *.keystore
 *.log
 .DS_Store
+__pycache__/
