@@ -108,22 +108,22 @@ private fun hasValidTransportChecksum(
     packet: ByteArray, offset: Int, length: Int,
     sourceOffset: Int, destinationOffset: Int, addressBytes: Int, protocol: Int,
 ): Boolean {
-    fun sumWords(start: Int, count: Int): Int {
-        var sum = 0
+    fun sumWords(start: Int, count: Int): Long {
+        var sum = 0L
         var at = start
         val end = start + count
         while (at + 1 < end) {
-            sum += ((packet[at].toInt() and 0xff) shl 8) or (packet[at + 1].toInt() and 0xff)
+            sum += ((packet[at].toLong() and 0xff) shl 8) or (packet[at + 1].toLong() and 0xff)
             at += 2
         }
-        if (at < end) sum += (packet[at].toInt() and 0xff) shl 8
+        if (at < end) sum += (packet[at].toLong() and 0xff) shl 8
         return sum
     }
-    // Both pseudo-header formats contribute the segment length and protocol.
-    // The IPv6 32-bit length's high half is zero (jumbograms unsupported).
+    // A maximum-size datagram can exceed Int.MAX_VALUE before folding.
+    // Accumulate in Long so a valid high-density payload is not rejected.
     var sum = sumWords(sourceOffset, addressBytes) +
-        sumWords(destinationOffset, addressBytes) + length + protocol +
+        sumWords(destinationOffset, addressBytes) + length.toLong() + protocol.toLong() +
         sumWords(offset, length)
-    while (sum > 0xffff) sum = (sum and 0xffff) + (sum ushr 16)
-    return sum == 0xffff
+    while (sum > 0xffffL) sum = (sum and 0xffffL) + (sum ushr 16)
+    return sum == 0xffffL
 }

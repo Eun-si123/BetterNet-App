@@ -84,6 +84,36 @@ class TunPacketHeaderTest {
         sealUdpChecksum(this, true)
     }
 
+    @Test fun acceptsMaximumDensityIpv6UdpPayloadWithoutChecksumOverflow() {
+        // 65534-byte UDP segment: 32767 nearly maximal 16-bit words.
+        // The checksum sum exceeds signed Int range before carry folding.
+        val packet = ByteArray(40 + 65534) { 0xff.toByte() }
+        packet[0] = 0x60
+        set16(packet, 4, 65534)
+        packet[6] = 17
+        packet[7] = 64
+        set16(packet, 40, 12345)
+        set16(packet, 42, 53)
+        set16(packet, 44, 65534)
+        set16(packet, 46, 0)
+        fun sumWords(start: Int, length: Int): Long {
+            var result = 0L
+            for (at in start until start + length step 2) {
+                result += ((packet[at].toLong() and 255) shl 8) or
+                    (packet[at + 1].toLong() and 255)
+            }
+            return result
+        }
+        var sum = sumWords(8, 32) + sumWords(40, 65534) + 65534L + 17L
+        assertTrue(sum > Int.MAX_VALUE.toLong())
+        while (sum > 65535L) sum = (sum and 65535L) + (sum ushr 16)
+        val checksum = sum.inv().toInt() and 65535
+        set16(packet, 46, if (checksum == 0) 65535 else checksum)
+        assertNotNull(parseTunPacketHeader(packet, packet.size))
+        packet[packet.lastIndex] = (packet.last().toInt() xor 1).toByte()
+        assertNull(parseTunPacketHeader(packet, packet.size))
+    }
+
     @Test fun recognizesIpv4TcpWithoutSendingAnything() {
         val result = parseTunPacketHeader(ipv4Tcp(), 40)!!
         assertEquals(4, result.ipVersion)
