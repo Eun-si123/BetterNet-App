@@ -37,7 +37,7 @@ internal fun exchangeOneDnsMessageOverTls(
         if (size !in 17..1232) throw IOException("DNS-over-TLS response outside size budget")
         return ByteArray(size).also { readExactDnsTls(tls, it, deadline) }
     } catch (failure: Throwable) {
-        try { tls.close() } catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
+        try { tls.close() } catch (closeFailure: Throwable) { if (closeFailure !== failure) failure.addSuppressed(closeFailure) }
         throw failure
     }
 }

@@ -186,7 +186,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         } catch (failure: Exception) {
             close()
             try { tunnelOutput.close() } catch (closeFailure: Exception) {
-                failure.addSuppressed(closeFailure)
+                if (closeFailure !== failure) failure.addSuppressed(closeFailure)
             }
             throw failure
         }
@@ -334,7 +334,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         } catch (failure: IOException) {
             close()
             try { tunnelInput.close() } catch (closeFailure: IOException) {
-                failure.addSuppressed(closeFailure)
+                if (closeFailure !== failure) failure.addSuppressed(closeFailure)
             }
             throw failure
         }
@@ -369,7 +369,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
             val failure = IOException("Gateway stream returned zero bytes")
             close()
             try { tunnelInput.close() } catch (closeFailure: IOException) {
-                failure.addSuppressed(closeFailure)
+                if (closeFailure !== failure) failure.addSuppressed(closeFailure)
             }
             throw failure
         }

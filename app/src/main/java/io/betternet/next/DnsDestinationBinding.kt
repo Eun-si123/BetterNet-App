@@ -190,7 +190,7 @@ internal fun connectDnsBoundTestTcpBridge(
         }
         bridge
     } catch (failure: Throwable) {
-        try { tunnel.close() } catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
+        try { tunnel.close() } catch (closeFailure: Throwable) { if (closeFailure !== failure) failure.addSuppressed(closeFailure) }
         throw failure
     }
 }
