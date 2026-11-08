@@ -15,7 +15,7 @@ from urllib.parse import unquote, urlsplit
 
 # Markdown links; ignore fenced source code. Angle-wrapped destinations and
 # external web anchors are supported; dynamic/reference-style links are not.
-LINK = re.compile(r"(?<!!)\[[^\]\n]+\]\((<?[^)\s>]+>?)(?:\s+['\"][^\n]*['\"])?\)")
+LINK = re.compile(r"(?<!!)\[[^\]\n]+\]\((<[^>\n]+>|[^\s)>]+)(?:\s+[\x27\x22][^\n]*[\x27\x22])?\)")
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 
 
@@ -37,7 +37,9 @@ def check(root: Path) -> list[str]:
                 marker = opening.group(1)
                 if active_fence is None:
                     active_fence = marker
-                elif marker[0] == active_fence[0] and len(marker) >= len(active_fence):
+                elif (marker[0] == active_fence[0] and len(marker) >= len(active_fence)
+                      and not line[opening.end(1):].strip()):
+                    # A language tag after the marker is not a closing fence.
                     active_fence = None
                 continue
             if active_fence is not None:

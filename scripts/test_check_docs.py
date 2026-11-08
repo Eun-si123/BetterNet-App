@@ -35,6 +35,30 @@ class MarkdownLinkChecks(unittest.TestCase):
         )
         self.assertEqual([], check(self.root))
 
+    def test_broken_angle_wrapped_link_with_spaces_is_rejected(self):
+        (self.root / "docs" / "plan.md").write_text(
+            "[missing](<missing local file.md>)\n"
+        )
+        self.assertTrue(any("broken local link" in x for x in check(self.root)))
+
+    def test_existing_angle_wrapped_link_with_spaces_is_valid(self):
+        (self.root / "docs" / "existing local file.md").write_text("OK\n")
+        (self.root / "docs" / "plan.md").write_text(
+            "[present](<existing local file.md>)\n"
+        )
+        self.assertEqual([], check(self.root))
+
+    def test_backtick_language_tag_cannot_close_code_fence(self):
+        fence = chr(96) * 3
+        (self.root / "docs" / "plan.md").write_text(
+            f"{fence}text\n[illustration](fake1.md)\n"
+            f"{fence}python\n[illustration](fake2.md)\n"
+            f"{fence}\n[missing](real-missing.md)\n"
+        )
+        problems = check(self.root)
+        self.assertEqual(1, len(problems))
+        self.assertIn("real-missing.md", problems[0])
+
     def test_percent_encoded_nonexistent_target_is_rejected(self):
         (self.root / "docs" / "plan.md").write_text("[bad](missing%20file.md)\n")
         self.assertTrue(any("broken local link" in x for x in check(self.root)))
