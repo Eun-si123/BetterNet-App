@@ -42,10 +42,10 @@ class RestrictedTestConfigurationTest {
         // These are not ordinary public Internet destinations even though
         // InetAddress.isSiteLocalAddress may return false for them.
         for (ip in listOf("0.0.0.1", "100.64.0.1", "100.127.255.254",
-            "192.0.0.1", "192.0.2.1", "192.88.99.1", "198.18.0.1",
+            "192.0.0.1", "192.0.0.8", "192.0.2.1", "192.88.99.1", "198.18.0.1",
             "198.19.255.254", "198.51.100.7", "203.0.113.10",
             "240.0.0.1", "255.255.255.255", "2001:db8::1",
-            "2002:c0a8:101::1", "2001:0::1")) {
+            "2002:c0a8:101::1", "2001:0::1", "2001:10::1", "2001:20::1")) {
             assertThrows("Unexpectedly approved $ip", IllegalArgumentException::class.java) {
                 config(ip)
             }

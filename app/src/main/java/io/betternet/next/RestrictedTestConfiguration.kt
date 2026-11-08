@@ -109,6 +109,8 @@ private fun isPublicTestDestination(address: InetAddress): Boolean {
     return when {
         octet(0) == 0x20 && octet(1) == 0x01 &&
             octet(2) == 0x0d && octet(3) == 0xb8 -> false // documentation
+        octet(0) == 0x20 && octet(1) == 0x01 && octet(2) == 0x00 &&
+            (octet(3) and 0xf0) in listOf(0x10, 0x20) -> false // ORCHID / ORCHIDv2, not Internet-routable
         octet(0) == 0x20 && octet(1) == 0x02 -> false // 6to4 embeds IPv4
         octet(0) == 0x20 && octet(1) == 0x01 &&
             octet(2) == 0 && octet(3) == 0 -> false // Teredo embeds IPv4
