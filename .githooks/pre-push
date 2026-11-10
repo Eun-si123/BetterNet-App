@@ -1,10 +1,34 @@
 #!/bin/sh
 # Opt-in only: git config --local core.hooksPath .githooks
-# Scan history (including commits deleted from the working tree) before pushing.
+# Git's pre-push input includes commits that may not be reachable via --all.
 set -eu
 if ! command -v gitleaks >/dev/null 2>&1; then
-  echo "Gitleaks is required by the opted-in pre-push hook; install it or remove the local core.hooksPath setting." >&2
+  echo "Gitleaks is required by this opt-in pre-push hook." >&2
   exit 1
 fi
+
 repository_root=$(git rev-parse --show-toplevel)
-gitleaks git "$repository_root" --log-opts="--all" --redact=100 --no-banner
+revisions="--all"
+while read -r local_ref local_oid remote_ref remote_oid; do
+  case "$local_oid" in
+    ""|*[!0-9a-fA-F]*)
+      echo "Cannot verify the commit ID sent to pre-push; refusing to push." >&2
+      exit 1
+      ;;
+  esac
+  case "$local_oid" in
+    *[!0]*)
+      case ${#local_oid} in
+        40|64) ;;
+        *) echo "Invalid pre-push object ID length." >&2; exit 1 ;;
+      esac
+      if ! git cat-file -e "${local_oid}^{commit}" 2>/dev/null; then
+        echo "Cannot verify a pushed Git commit object." >&2
+        exit 1
+      fi
+      revisions="$revisions $local_oid"
+      ;;
+  esac
+done
+
+gitleaks git "$repository_root" --log-opts="$revisions" --redact=100 --no-banner
