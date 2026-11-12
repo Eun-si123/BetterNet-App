@@ -2,6 +2,10 @@ package io.betternet.next
 
 import org.junit.Assert.*
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class RestrictedActivationTicketTest {
     // These tests exercise the one-shot primitive without creating a VPN,
@@ -25,6 +29,39 @@ class RestrictedActivationTicketTest {
         val ticket = RestrictedActivationTicket.forFutureExplicitConfirmation(app, config)
         assertThrows(IllegalStateException::class.java) { ticket.consume(app, config()) }
         assertThrows(IllegalStateException::class.java) { ticket.consume(app, config) }
+    }
+
+    @Test fun simultaneousConsumersOnlyOneSucceeds() {
+        val app = AppChoice("com.example.test", "Test", 123, "signer")
+        val config = config()
+        val ticket = RestrictedActivationTicket.forFutureExplicitConfirmation(app, config)
+        val ready = CountDownLatch(2)
+        val release = CountDownLatch(1)
+        val successes = AtomicInteger()
+        val rejected = AtomicInteger()
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val tasks = (1..2).map {
+                pool.submit {
+                    ready.countDown()
+                    check(release.await(5, TimeUnit.SECONDS))
+                    try {
+                        ticket.consume(app, config)
+                        successes.incrementAndGet()
+                    } catch (_: IllegalStateException) {
+                        rejected.incrementAndGet()
+                    }
+                }
+            }
+            assertTrue("both consumers should be ready", ready.await(5, TimeUnit.SECONDS))
+            release.countDown()
+            tasks.forEach { it.get(5, TimeUnit.SECONDS) }
+            assertEquals(1, successes.get())
+            assertEquals(1, rejected.get())
+        } finally {
+            release.countDown()
+            pool.shutdownNow()
+        }
     }
 
     @Test fun missingAppBurnsTicket() {
