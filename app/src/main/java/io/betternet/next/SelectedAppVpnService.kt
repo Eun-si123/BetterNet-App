@@ -118,12 +118,16 @@ class SelectedAppVpnService : VpnService() {
      * stop/join on shutdown, and handle Android network/permission changes.
      */
     internal fun activateExplicitRestrictedTestTun(
+        ticket: RestrictedActivationTicket,
         manager: ConnectivityManager,
         underlyingNetwork: Network,
         selectedApp: AppChoice?,
         configuration: RestrictedTestConfiguration,
         timeoutMs: Int,
     ): RestrictedTunWorker {
+        // One-time, exact-session handoff before any builder/foreground work.
+        // This is NOT a substitute for the fresh Android permission checks below.
+        ticket.consume(selectedApp, configuration)
         val prepared = prepareDormantRestrictedTestActivation(
             manager, underlyingNetwork, selectedApp, configuration, timeoutMs,
         )
