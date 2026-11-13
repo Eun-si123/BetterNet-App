@@ -172,8 +172,7 @@ class MainActivity : Activity() {
                     .setMessage(R.string.gateway_probe_warning)
                     .setNegativeButton(android.R.string.cancel, null)
                     .setPositiveButton(R.string.gateway_probe_confirm) { _, _ ->
-                        startGatewayTlsProbe(selected, config.gatewayName, config.gatewayPort,
-                            probeStatus, this)
+                        startGatewayTlsProbe(selected, config, probeStatus, this)
                     }.show()
             }
         }
@@ -329,12 +328,11 @@ class MainActivity : Activity() {
 
     /** One user-confirmed TLS handshake on a pinned non-VPN network, never a VPN start. */
     private fun startGatewayTlsProbe(
-        selected: AppChoice, gatewayName: String, gatewayPort: Int,
+        selected: AppChoice, config: RestrictedTestConfiguration,
         status: TextView, button: Button,
     ) {
         if (gatewayProbeRunning || selectedApp != selected ||
-            testConfiguration?.gatewayName != gatewayName ||
-            testConfiguration?.gatewayPort != gatewayPort ||
+            testConfiguration !== config ||
             observeVpnReadiness() !in listOf(VpnReadiness.NEEDS_CONSENT, VpnReadiness.PREPARED)) {
             checkVpnReadiness()
             return
@@ -351,7 +349,7 @@ class MainActivity : Activity() {
         Thread({
             val success = try {
                 probeGatewayTlsWithoutVpn(manager, network, packageManager, packageName,
-                    selected, gatewayName, gatewayPort) { gatewayProbeGeneration.get() == generation }
+                    selected, config.gatewayName, config.gatewayPort) { gatewayProbeGeneration.get() == generation }
                 true
             } catch (_: Exception) {
                 // Never expose DNS, credentials, endpoint details or exception text in UI/logs.
