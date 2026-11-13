@@ -64,6 +64,26 @@ class RestrictedActivationTicketTest {
         }
     }
 
+    @Test fun staleConfirmationCannotActivateAndCannotBeReused() {
+        val app = AppChoice("com.example.test", "Test", 123, "signer")
+        val config = config()
+        var now = TimeUnit.SECONDS.toNanos(10)
+        val ticket = RestrictedActivationTicket.forFutureExplicitConfirmation(app, config) { now }
+        now += TimeUnit.SECONDS.toNanos(61)
+        assertThrows(IllegalStateException::class.java) { ticket.consume(app, config) }
+        now = TimeUnit.SECONDS.toNanos(11)
+        assertThrows(IllegalStateException::class.java) { ticket.consume(app, config) }
+    }
+
+    @Test fun monotonicClockRollbackRejectsActivation() {
+        val app = AppChoice("com.example.test", "Test", 123, "signer")
+        val config = config()
+        var now = TimeUnit.SECONDS.toNanos(10)
+        val ticket = RestrictedActivationTicket.forFutureExplicitConfirmation(app, config) { now }
+        now--
+        assertThrows(IllegalStateException::class.java) { ticket.consume(app, config) }
+    }
+
     @Test fun missingAppBurnsTicket() {
         val app = AppChoice("com.example.test", "Test", 123, "signer")
         val config = config()
