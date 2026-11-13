@@ -286,7 +286,9 @@ class MainActivity : Activity() {
      * The user must confirm both our explanation and Android's system dialog.
      */
     private fun requestVpnConsent() {
-        if (!canRequestVpnConsent(selectedApp != null, testConfiguration != null, observeVpnReadiness())) {
+        val consentApp = selectedApp
+        val consentConfig = testConfiguration
+        if (!canRequestVpnConsent(consentApp != null, consentConfig != null, observeVpnReadiness())) {
             checkVpnReadiness()
             return
         }
@@ -297,7 +299,8 @@ class MainActivity : Activity() {
             .setPositiveButton(R.string.continue_to_system_consent) { _, _ ->
                 // Recheck immediately: network/VPN ownership can change while
                 // the confirmation dialog is visible.
-                if (!canRequestVpnConsent(selectedApp != null, testConfiguration != null, observeVpnReadiness())) {
+                if (selectedApp != consentApp || testConfiguration !== consentConfig ||
+                    !canRequestVpnConsent(selectedApp != null, testConfiguration != null, observeVpnReadiness())) {
                     checkVpnReadiness()
                     return@setPositiveButton
                 }
