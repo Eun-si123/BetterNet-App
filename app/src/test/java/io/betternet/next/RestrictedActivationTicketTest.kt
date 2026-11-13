@@ -75,6 +75,18 @@ class RestrictedActivationTicketTest {
         assertThrows(IllegalStateException::class.java) { ticket.consume(app, config) }
     }
 
+    @Test fun ticketExpiresImmediatelyAfterSixtySecondBoundary() {
+        val app = AppChoice("com.example.test", "Test", 123, "signer")
+        val config = config()
+        var now = TimeUnit.SECONDS.toNanos(10)
+        val onBoundary = RestrictedActivationTicket.forFutureExplicitConfirmation(app, config) { now }
+        val afterBoundary = RestrictedActivationTicket.forFutureExplicitConfirmation(app, config) { now }
+        now += TimeUnit.SECONDS.toNanos(60)
+        onBoundary.consume(app, config)
+        now++
+        assertThrows(IllegalStateException::class.java) { afterBoundary.consume(app, config) }
+    }
+
     @Test fun monotonicClockRollbackRejectsActivation() {
         val app = AppChoice("com.example.test", "Test", 123, "signer")
         val config = config()
