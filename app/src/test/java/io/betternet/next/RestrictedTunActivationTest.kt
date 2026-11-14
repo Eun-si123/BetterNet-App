@@ -282,6 +282,22 @@ class RestrictedTunActivationTest {
         assertEquals(listOf("cancel", "stop"), events)
     }
 
+    @Test fun serviceStopSharedFailureDoesNotSelfSuppress() {
+        val shared = IOException("shared cancellation and stop failure")
+        val events = mutableListOf<String>()
+        try {
+            stopRestrictedServiceFailClosed(
+                cancel = { events += "cancel"; throw shared },
+                stop = { events += "stop"; throw shared },
+            )
+            fail("Original failure must survive cleanup")
+        } catch (caught: IOException) {
+            assertSame(shared, caught)
+            assertTrue(caught.suppressed.isEmpty())
+        }
+        assertEquals(listOf("cancel", "stop"), events)
+    }
+
     @Test fun revokeDuringForegroundPromotionCannotEstablishTun() {
         val lifecycle = RestrictedTunLifecycle()
         val events = mutableListOf<String>()
