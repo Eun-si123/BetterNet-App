@@ -413,7 +413,10 @@ class SelectedAppVpnService : VpnService() {
         try {
             stopRestrictedServiceFailClosed(
                 cancel = { tunLifecycle.cancel() },
-                stop = { stopSelf(startId); Unit },
+                // Cancellation is global to this service owner. stopSelf(startId)
+                // may refuse to stop when a newer start arrived concurrently,
+                // leaving a cancelled foreground service orphaned.
+                stop = { stopSelf(); Unit },
             )
         } catch (_: Exception) {
             // stopSelf was still requested. Avoid crashing the main thread
