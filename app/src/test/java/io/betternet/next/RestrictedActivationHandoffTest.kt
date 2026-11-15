@@ -1,0 +1,67 @@
+package io.betternet.next
+
+import org.junit.Assert.*
+import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+
+class RestrictedActivationHandoffTest {
+    private fun session(): Triple<RestrictedActivationTicket, AppChoice, RestrictedTestConfiguration> {
+        val app = AppChoice("com.example.test", "Test", 123, "signer")
+        val config = RestrictedTestConfiguration("gateway.example.com", 443,
+            "dns.example.com", "example.com", "1.1.1.1", "abcdefghijklmnop")
+        return Triple(RestrictedActivationTicket.forFutureExplicitConfirmation(app, config), app, config)
+    }
+
+    @Test fun handleIsOpaqueOneUseAndDoesNotExposeCredential() {
+        val registry = RestrictedActivationHandoff()
+        val (ticket, app, config) = session()
+        val handle = registry.stage(ticket, app, config)
+        assertEquals(64, handle.length)
+        assertFalse(handle.contains("abcdefghijklmnop"))
+        assertNull(registry.take(null))
+        assertNull(registry.take("bad"))
+        val taken = registry.take(handle)!!
+        assertSame(ticket, taken.ticket)
+        assertSame(app, taken.app)
+        assertSame(config, taken.configuration)
+        assertNull(registry.take(handle))
+    }
+
+    @Test fun replacementCancellationAndProcessRestartInvalidateOldHandles() {
+        val registry = RestrictedActivationHandoff()
+        val (firstTicket, firstApp, firstConfig) = session()
+        val first = registry.stage(firstTicket, firstApp, firstConfig)
+        val (secondTicket, secondApp, secondConfig) = session()
+        val second = registry.stage(secondTicket, secondApp, secondConfig)
+        assertNotEquals(first, second)
+        assertNull(registry.take(first))
+        registry.clear()
+        assertNull(registry.take(second))
+        val third = registry.stage(secondTicket, secondApp, secondConfig)
+        assertNull(RestrictedActivationHandoff().take(third))
+    }
+
+    @Test fun simultaneousConsumersCannotBothClaimSession() {
+        val registry = RestrictedActivationHandoff()
+        val (ticket, app, config) = session()
+        val handle = registry.stage(ticket, app, config)
+        val ready = CountDownLatch(2)
+        val go = CountDownLatch(1)
+        val claimed = AtomicInteger()
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val jobs = (1..2).map { pool.submit {
+                ready.countDown()
+                check(go.await(5, TimeUnit.SECONDS))
+                if (registry.take(handle) != null) claimed.incrementAndGet()
+            } }
+            assertTrue(ready.await(5, TimeUnit.SECONDS))
+            go.countDown()
+            jobs.forEach { it.get(5, TimeUnit.SECONDS) }
+            assertEquals(1, claimed.get())
+        } finally { go.countDown(); pool.shutdownNow() }
+    }
+}
