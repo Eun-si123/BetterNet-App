@@ -44,6 +44,29 @@ class RestrictedActivationHandoffTest {
         assertNull(RestrictedActivationHandoff().take(third))
     }
 
+    @Test fun expiredOrClockReversedSessionCannotBeTaken() {
+        var now = 1_000_000_000_000L
+        val registry = RestrictedActivationHandoff(monotonicNanos = { now })
+        val (ticket, app, config) = session()
+        val expired = registry.stage(ticket, app, config)
+        now += TimeUnit.SECONDS.toNanos(61)
+        assertNull(registry.take(expired))
+        now -= TimeUnit.SECONDS.toNanos(61)
+        assertNull(registry.take(expired))
+        val reversed = registry.stage(ticket, app, config)
+        now--
+        assertNull(registry.take(reversed))
+    }
+
+    @Test fun pendingSessionStillValidAtSixtySeconds() {
+        var now = 10_000_000_000L
+        val registry = RestrictedActivationHandoff(monotonicNanos = { now })
+        val (ticket, app, config) = session()
+        val handle = registry.stage(ticket, app, config)
+        now += TimeUnit.SECONDS.toNanos(60)
+        assertSame(ticket, registry.take(handle)?.ticket)
+    }
+
     @Test fun simultaneousConsumersCannotBothClaimSession() {
         val registry = RestrictedActivationHandoff()
         val (ticket, app, config) = session()

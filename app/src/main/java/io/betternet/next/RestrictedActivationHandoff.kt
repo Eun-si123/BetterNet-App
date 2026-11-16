@@ -1,6 +1,7 @@
 package io.betternet.next
 
 import java.security.SecureRandom
+import java.util.concurrent.TimeUnit
 
 /**
  * Process-local, single-pending-session handoff for a future explicit UI ->
@@ -10,6 +11,7 @@ import java.security.SecureRandom
  */
 internal class RestrictedActivationHandoff(
     private val random: SecureRandom = SecureRandom(),
+    private val monotonicNanos: () -> Long = System::nanoTime,
 ) {
     internal class Session(
         val ticket: RestrictedActivationTicket,
@@ -17,7 +19,8 @@ internal class RestrictedActivationHandoff(
         val configuration: RestrictedTestConfiguration,
     )
 
-    private var pending: Pair<String, Session>? = null
+    private data class Pending(val handle: String, val session: Session, val issuedAt: Long)
+    private var pending: Pending? = null
 
     @Synchronized
     fun stage(ticket: RestrictedActivationTicket, app: AppChoice,
@@ -26,7 +29,7 @@ internal class RestrictedActivationHandoff(
         random.nextBytes(bytes)
         val handle = bytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
         // Replacing an outstanding session invalidates its old handle.
-        pending = handle to Session(ticket, app, configuration)
+        pending = Pending(handle, Session(ticket, app, configuration), monotonicNanos())
         return handle
     }
 
@@ -34,9 +37,14 @@ internal class RestrictedActivationHandoff(
     fun take(handle: String?): Session? {
         val current = pending ?: return null
         // A malformed or mismatched start is not allowed to steal the session.
-        if (handle == null || handle != current.first) return null
+        val age = monotonicNanos() - current.issuedAt
+        if (age < 0 || age > TimeUnit.SECONDS.toNanos(60)) {
+            pending = null
+            return null
+        }
+        if (handle == null || handle != current.handle) return null
         pending = null
-        return current.second
+        return current.session
     }
 
     @Synchronized
