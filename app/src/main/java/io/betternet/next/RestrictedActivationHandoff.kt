@@ -21,24 +21,23 @@ internal class RestrictedActivationHandoff(
 
     private data class Pending(val handle: String, val session: Session, val issuedAt: Long)
     private var pending: Pending? = null
-    // Never reissue the last handle after clear/take/expiry: an old Intent
-    // must not authorize a newly staged session if randomness repeats.
-    private var lastIssuedHandle: String? = null
+    // An instance-local sequence prevents replay even when SecureRandom repeats
+    // an older output (A, B, A). Process death discards the registry and all
+    // tickets; 192 random bits also distinguish independent instances.
+    private var nextSequence = 0L
 
     @Synchronized
     fun stage(ticket: RestrictedActivationTicket, app: AppChoice,
               configuration: RestrictedTestConfiguration): String {
+        check(nextSequence != Long.MAX_VALUE) { "Activation handle sequence exhausted" }
+        nextSequence++
         val bytes = ByteArray(32)
-        var handle: String
-        var attempts = 0
-        do {
-            check(attempts++ < 3) { "Could not create a distinct activation handle" }
-            random.nextBytes(bytes)
-            handle = bytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
-        } while (handle == lastIssuedHandle)
-        // Replacing an outstanding session invalidates its old handle.
+        random.nextBytes(bytes)
+        for (i in 0 until 8) {
+            bytes[i] = (nextSequence ushr (56 - i * 8)).toByte()
+        }
+        val handle = bytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
         pending = Pending(handle, Session(ticket, app, configuration), monotonicNanos())
-        lastIssuedHandle = handle
         return handle
     }
 

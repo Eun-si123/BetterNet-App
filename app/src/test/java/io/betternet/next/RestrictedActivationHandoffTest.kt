@@ -59,34 +59,24 @@ class RestrictedActivationHandoffTest {
         assertNull(registry.take(reversed))
     }
 
-    @Test fun repeatedRandomHandleCannotAuthorizeReplacementSession() {
+    @Test fun repeatingRandomAcrossMultipleSessionsNeverReissuesOldHandle() {
         val repeatingRandom = object : SecureRandom() {
             override fun nextBytes(bytes: ByteArray) { bytes.fill(7) }
         }
         val registry = RestrictedActivationHandoff(random = repeatingRandom)
-        val (firstTicket, app, config) = session()
-        val oldHandle = registry.stage(firstTicket, app, config)
-        val (newTicket, _, _) = session()
-        try {
-            registry.stage(newTicket, app, config)
-            fail("Repeated handle must fail closed")
-        } catch (_: IllegalStateException) { }
-        assertSame(firstTicket, registry.take(oldHandle)?.ticket)
-    }
-
-    @Test fun oldHandleCannotAuthorizeNewSessionAfterClearOrConsume() {
-        val repeatingRandom = object : SecureRandom() {
-            override fun nextBytes(bytes: ByteArray) { bytes.fill(9) }
-        }
-        val registry = RestrictedActivationHandoff(random = repeatingRandom)
         val (ticket, app, config) = session()
-        val oldHandle = registry.stage(ticket, app, config)
+        val first = registry.stage(ticket, app, config)
         registry.clear()
-        try {
-            registry.stage(session().first, app, config)
-            fail("Cleared handle must never be reissued")
-        } catch (_: IllegalStateException) { }
-        assertNull(registry.take(oldHandle))
+        val second = registry.stage(ticket, app, config)
+        assertNotEquals(first, second)
+        assertNull(registry.take(first))
+        assertSame(ticket, registry.take(second)?.ticket)
+        val third = registry.stage(ticket, app, config)
+        assertNotEquals(first, third)
+        assertNotEquals(second, third)
+        assertNull(registry.take(first))
+        assertNull(registry.take(second))
+        assertSame(ticket, registry.take(third)?.ticket)
     }
 
     @Test fun pendingSessionStillValidAtSixtySeconds() {
