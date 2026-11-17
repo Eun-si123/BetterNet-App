@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "features": [
+    {
+      "id": "app-choice",
+      "source": [
+        "app/src/main/java/io/betternet/next/AppChoice.kt"
+      ],
+      "regressions": [
+        "app/src/test/java/io/betternet/next/AppChoiceTest.kt"
+      ],
+      "fieldEvidence": [
+        "docs/TEST_STRATEGY.md"
+      ]
+    },
+    {
+      "id": "vpn-readiness",
+      "source": [
+        "app/src/main/java/io/betternet/next/VpnReadiness.kt"
+      ],
+      "regressions": [
+        "app/src/test/java/io/betternet/next/VpnReadinessTest.kt"
+      ],
+      "fieldEvidence": [
+        "docs/TEST_STRATEGY.md"
+      ]
+    },
+    {
+      "id": "connection-state",
+      "source": [
+        "app/src/main/java/io/betternet/next/ConnectionState.kt"
+      ],
+      "regressions": [
+        "app/src/test/java/io/betternet/next/ConnectionStateTest.kt"
+      ],
+      "fieldEvidence": [
+        "docs/TEST_STRATEGY.md"
+      ]
+    }
+  ]
+}
