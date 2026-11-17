@@ -1,0 +1,47 @@
+name: Cross-agent feature contract
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cross-agent-contract-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  feature-contract:
+    name: Cross-agent feature contract and regression leads
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate feature map and negative regression guards
+        run: |
+          python3 scripts/agent_feature_map.py validate
+          python3 -m unittest discover -s scripts -p test_agent_feature_map.py -v
+
+      - name: Report impacted features without claiming unrun evidence
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 scripts/agent_feature_map.py impact --base "$BASE_SHA" --head "$HEAD_SHA" > "$RUNNER_TEMP/feature-impact.json"
+          python3 - "$RUNNER_TEMP/feature-impact.json" <<'PY'
+          import json, os, sys
+          report = json.load(open(sys.argv[1], encoding="utf-8"))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              print("## Cross-agent feature map (advisory)", file=summary)
+              for item in report["affectedFeatures"]:
+                  print("- " + item["feature"] + ": " + item["review"] +
+                        " — test execution not asserted", file=summary)
+              print("Unmapped source paths:", len(report["unmappedSourceFiles"]), file=summary)
+              print("CI and physical field evidence remain separate.", file=summary)
+          PY
