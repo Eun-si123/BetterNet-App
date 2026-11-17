@@ -21,6 +21,9 @@ internal class RestrictedActivationHandoff(
 
     private data class Pending(val handle: String, val session: Session, val issuedAt: Long)
     private var pending: Pending? = null
+    // Never reissue the last handle after clear/take/expiry: an old Intent
+    // must not authorize a newly staged session if randomness repeats.
+    private var lastIssuedHandle: String? = null
 
     @Synchronized
     fun stage(ticket: RestrictedActivationTicket, app: AppChoice,
@@ -32,9 +35,10 @@ internal class RestrictedActivationHandoff(
             check(attempts++ < 3) { "Could not create a distinct activation handle" }
             random.nextBytes(bytes)
             handle = bytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
-        } while (handle == pending?.handle)
+        } while (handle == lastIssuedHandle)
         // Replacing an outstanding session invalidates its old handle.
         pending = Pending(handle, Session(ticket, app, configuration), monotonicNanos())
+        lastIssuedHandle = handle
         return handle
     }
 

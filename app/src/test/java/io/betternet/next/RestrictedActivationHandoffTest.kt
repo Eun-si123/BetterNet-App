@@ -74,6 +74,21 @@ class RestrictedActivationHandoffTest {
         assertSame(firstTicket, registry.take(oldHandle)?.ticket)
     }
 
+    @Test fun oldHandleCannotAuthorizeNewSessionAfterClearOrConsume() {
+        val repeatingRandom = object : SecureRandom() {
+            override fun nextBytes(bytes: ByteArray) { bytes.fill(9) }
+        }
+        val registry = RestrictedActivationHandoff(random = repeatingRandom)
+        val (ticket, app, config) = session()
+        val oldHandle = registry.stage(ticket, app, config)
+        registry.clear()
+        try {
+            registry.stage(session().first, app, config)
+            fail("Cleared handle must never be reissued")
+        } catch (_: IllegalStateException) { }
+        assertNull(registry.take(oldHandle))
+    }
+
     @Test fun pendingSessionStillValidAtSixtySeconds() {
         var now = 10_000_000_000L
         val registry = RestrictedActivationHandoff(monotonicNanos = { now })
