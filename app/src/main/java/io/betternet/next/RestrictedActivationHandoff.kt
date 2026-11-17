@@ -26,8 +26,13 @@ internal class RestrictedActivationHandoff(
     fun stage(ticket: RestrictedActivationTicket, app: AppChoice,
               configuration: RestrictedTestConfiguration): String {
         val bytes = ByteArray(32)
-        random.nextBytes(bytes)
-        val handle = bytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        var handle: String
+        var attempts = 0
+        do {
+            check(attempts++ < 3) { "Could not create a distinct activation handle" }
+            random.nextBytes(bytes)
+            handle = bytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        } while (handle == pending?.handle)
         // Replacing an outstanding session invalidates its old handle.
         pending = Pending(handle, Session(ticket, app, configuration), monotonicNanos())
         return handle

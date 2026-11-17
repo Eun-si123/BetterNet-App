@@ -2,6 +2,7 @@ package io.betternet.next
 
 import org.junit.Assert.*
 import org.junit.Test
+import java.security.SecureRandom
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -56,6 +57,21 @@ class RestrictedActivationHandoffTest {
         val reversed = registry.stage(ticket, app, config)
         now--
         assertNull(registry.take(reversed))
+    }
+
+    @Test fun repeatedRandomHandleCannotAuthorizeReplacementSession() {
+        val repeatingRandom = object : SecureRandom() {
+            override fun nextBytes(bytes: ByteArray) { bytes.fill(7) }
+        }
+        val registry = RestrictedActivationHandoff(random = repeatingRandom)
+        val (firstTicket, app, config) = session()
+        val oldHandle = registry.stage(firstTicket, app, config)
+        val (newTicket, _, _) = session()
+        try {
+            registry.stage(newTicket, app, config)
+            fail("Repeated handle must fail closed")
+        } catch (_: IllegalStateException) { }
+        assertSame(firstTicket, registry.take(oldHandle)?.ticket)
     }
 
     @Test fun pendingSessionStillValidAtSixtySeconds() {
