@@ -8,6 +8,8 @@ BetterNet is a broad, modular Internet capability product, not only an Internet 
 
 Default to no routing capture and no network requests. New forwarding needs opt-in app selection, OS VPN permissions, authenticated/encrypted transports, bounded gateways, safe DNS/TCP/IPv4/IPv6 behavior, quotas, testable failure/rollback, and exclusion of unrelated apps. No unauthenticated public relays or unintended data disclosure.
 
+When changing a mapped feature, consult `agent-evals/feature-contracts.json` and run the feature-map impact command for relevant regressions; this is advisory, not executed-test or device proof. Unmapped code still requires project-specific verification.
+
 PRs must state one acceptance gate, minimal implementation, exact build/test results and pending real-device checks. Documentation links must pass `python3 scripts/check_docs.py`; design edits update the one authoritative source and any affected status/test/decision references. CI or packet parsing alone isn't proof that Internet access works. No PR churn solely to satisfy an hourly schedule.
 
 Owner-directed Agent commits: public username Eun-si123, official GitHub no-reply email, and a Co-authored-by trailer for the named contributing Agent (name must end in Agent). Preserve independent contributors' own identities. No force pushes, unapproved releases, or unverified optimization claims.
