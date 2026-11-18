@@ -79,6 +79,27 @@ class RestrictedActivationHandoffTest {
         assertSame(ticket, registry.take(third)?.ticket)
     }
 
+    @Test fun failedReplacementDoesNotLeaveOldSessionClaimable() {
+        var fail = false
+        val random = object : SecureRandom() {
+            override fun nextBytes(bytes: ByteArray) {
+                if (fail) throw IllegalStateException("random unavailable")
+                bytes.fill(42)
+            }
+        }
+        val registry = RestrictedActivationHandoff(random = random)
+        val (ticket, app, config) = session()
+        val previous = registry.stage(ticket, app, config)
+        fail = true
+        try {
+            registry.stage(ticket, app, config)
+            fail("Expected random failure")
+        } catch (expected: IllegalStateException) {
+            assertEquals("random unavailable", expected.message)
+        }
+        assertNull(registry.take(previous))
+    }
+
     @Test fun pendingSessionStillValidAtSixtySeconds() {
         var now = 10_000_000_000L
         val registry = RestrictedActivationHandoff(monotonicNanos = { now })

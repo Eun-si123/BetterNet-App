@@ -29,6 +29,8 @@ internal class RestrictedActivationHandoff(
     @Synchronized
     fun stage(ticket: RestrictedActivationTicket, app: AppChoice,
               configuration: RestrictedTestConfiguration): String {
+        // A failed replacement must not leave an older consent session claimable.
+        pending = null
         check(nextSequence != Long.MAX_VALUE) { "Activation handle sequence exhausted" }
         nextSequence++
         val bytes = ByteArray(32)
