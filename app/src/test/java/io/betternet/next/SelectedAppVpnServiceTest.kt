@@ -155,6 +155,16 @@ class SelectedAppVpnServiceTest {
         assertRejected("com.example.browser ")
     }
 
+    @Test fun refusesMalformedPackageNamesBeforeVpnBuilder() {
+        for (value in listOf("notapackage", "com..browser", ".com.browser",
+            "com.browser.", "1com.browser", "com.2browser", "com.browser/other",
+            "com.browser\u0000", "com.browser\nother", "com." + "a".repeat(253))) {
+            assertRejected(value)
+        }
+        assertEquals("com.example_app.browser2",
+            requireSelectedPackage("com.example_app.browser2", "io.betternet.next"))
+    }
+
     @Test fun addsExactlyOneAppAndNeverAddsSelf() {
         val allowed = mutableListOf<String>()
         addOnlySelectedApplication("com.example.browser", "io.betternet.next", { allowed.add(it); Unit })

@@ -519,6 +519,13 @@ internal fun requireSelectedPackage(selectedPackage: String?, ownPackage: String
     require(!selectedPackage.isNullOrBlank()) { "A selected app is required" }
     require(selectedPackage == selectedPackage.trim()) { "Invalid selected app" }
     require(selectedPackage != ownPackage) { "Cannot route BetterNet through itself" }
+    // PackageManager normally supplies canonical names, but this boundary is
+    // also called with staged input. Reject malformed names before lookup.
+    require(selectedPackage.length <= 255 && selectedPackage.split(".").size >= 2 &&
+        selectedPackage.split(".").all { segment ->
+            segment.isNotEmpty() && (segment[0] in 'a'..'z' || segment[0] in 'A'..'Z' || segment[0] == '_') &&
+                segment.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '_' }
+        }) { "Invalid Android package name" }
     return selectedPackage
 }
 
