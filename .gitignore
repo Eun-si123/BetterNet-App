@@ -10,3 +10,14 @@ local.properties
 *.keystore
 *.log
 .DS_Store
+
+# Locally held API credentials and private keys
+.env
+.env.*
+!.env.example
+*.secret
+*.token
+*.pem
+*.p12
+*.pfx
+.npmrc
