@@ -32,7 +32,7 @@ class ApkSecretScanTest(unittest.TestCase):
         self.assertEqual(main(["check_apk_secrets.py", str(self.apk)]), 1)
 
     def test_secret_split_across_read_boundary(self):
-        prefix = b"_" * (1024 * 1024 - 5)
+        prefix = b"." * (1024 * 1024 - 5)
         self.make_apk(prefix + b"sk-proj-" + b"Q" * 40 + b" ")
         self.assertIn(
             ("assets/config.json", "OpenAI private token"), inspect_apk(self.apk)
