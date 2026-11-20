@@ -11,6 +11,8 @@ local.properties
 *.log
 .DS_Store
 
+__pycache__/
+*.pyc
 # Locally held API credentials and private keys
 .env
 .env.*
