@@ -211,6 +211,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        // Invalidate in-flight diagnostics before the Activity is discarded.
+        // Network probes must not continue on a stale screen or selection.
         gatewayProbeGeneration.incrementAndGet()
         super.onDestroy()
     }
@@ -349,7 +351,7 @@ class MainActivity : Activity() {
         Thread({
             val success = try {
                 probeGatewayTlsWithoutVpn(manager, network, packageManager, packageName,
-                    selected, config.gatewayName, config.gatewayPort) { gatewayProbeGeneration.get() == generation }
+                    selected, config.gatewayName, config.gatewayPort) { probeStillCurrent(generation, gatewayProbeGeneration.get(), isDestroyed) }
                 true
             } catch (_: Exception) {
                 // Never expose DNS, credentials, endpoint details or exception text in UI/logs.
@@ -389,7 +391,7 @@ class MainActivity : Activity() {
             val result = try {
                 probeApprovedHttpsThroughGatewayWithoutVpn(
                     manager, network, packageManager, packageName, selected, config
-                ) { gatewayProbeGeneration.get() == generation }
+                ) { probeStillCurrent(generation, gatewayProbeGeneration.get(), isDestroyed) }
             } catch (_: Exception) {
                 // Never display/log credentials, hostnames or exception details.
                 null
