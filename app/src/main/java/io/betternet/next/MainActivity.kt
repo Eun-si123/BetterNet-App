@@ -359,9 +359,9 @@ class MainActivity : Activity() {
             }
             Handler(Looper.getMainLooper()).post {
                 gatewayProbeRunning = false
-                if (!isDestroyed) {
+                if (probeStillCurrent(generation, gatewayProbeGeneration.get(), isDestroyed)) {
                     button.isEnabled = true
-                    if (gatewayProbeGeneration.get() == generation) status.setText(if (success) R.string.gateway_probe_success
+                    status.setText(if (success) R.string.gateway_probe_success
                         else R.string.gateway_probe_failed)
                 }
             }
@@ -398,12 +398,10 @@ class MainActivity : Activity() {
             }
             Handler(Looper.getMainLooper()).post {
                 gatewayProbeRunning = false
-                if (!isDestroyed) {
+                if (probeStillCurrent(generation, gatewayProbeGeneration.get(), isDestroyed)) {
                     button.isEnabled = true
-                    if (gatewayProbeGeneration.get() == generation) {
-                        status.text = if (result == null) getString(R.string.authenticated_probe_failed)
-                            else getString(R.string.authenticated_probe_response, result)
-                    }
+                    status.text = if (result == null) getString(R.string.authenticated_probe_failed)
+                        else getString(R.string.authenticated_probe_response, result)
                 }
             }
         }, "BetterNet-AuthenticatedHttpsProbe").start()
