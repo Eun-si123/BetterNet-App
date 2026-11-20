@@ -15,6 +15,10 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Validate local documentation and checker regressions
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_check_docs.py' -v
+          python3 scripts/check_docs.py
       - uses: gradle/actions/wrapper-validation@v4
       - uses: actions/setup-java@v4
         with:
@@ -39,6 +43,10 @@ jobs:
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
       - name: Verify merged VPN manifest is not eligible for always-on
         run: python3 scripts/verify-vpn-manifest.py app/build/intermediates
+      - name: Test APK secret scanner fixtures and inspect built artifact
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_check_apk_secrets.py' -v
+          python3 scripts/check_apk_secrets.py app/build/outputs/apk/debug/app-debug.apk
       # A0 manual testing: keep a short-lived, SHA-bound debug build accessible.
       # Never treat this as a signed release or an A1 connectivity result.
       - name: Record debug APK provenance and checksums
