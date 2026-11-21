@@ -201,6 +201,30 @@ class RestrictedTunWorkerTest {
         }
     }
 
+    @Test fun terminationCallbackCannotJoinItsOwnWorker() {
+        val callbackCompleted = CountDownLatch(1)
+        val closes = AtomicInteger()
+        lateinit var worker: RestrictedTunWorker
+        worker = RestrictedTunWorker(RestrictedTunPump(
+            RestrictedTunSession(dispatcher(), forbiddenInput, ByteArrayOutputStream(),
+                { closes.incrementAndGet() }, waitForReadable = { false })) { 100L },
+            onTerminated = {
+                // Android service shutdown callbacks run on the owner thread.
+                // Joining here would deadlock; it must fail immediately.
+                val error = assertThrows(IllegalStateException::class.java) {
+                    worker.stopAndJoin(1000)
+                }
+                assertEquals("TUN worker cannot join itself", error.message)
+                callbackCompleted.countDown()
+            })
+        worker.requestStop() // Complete normally without entering a perpetual poll loop.
+        worker.start()
+        assertTrue("Termination callback must not deadlock", callbackCompleted.await(3, TimeUnit.SECONDS))
+        assertTrue(worker.awaitStopped(3000))
+        assertNull(worker.failure)
+        assertEquals(1, closes.get())
+    }
+
     @Test fun callbackFailureDoesNotHideOriginalPumpFailureOrCrashOwner() {
         val session = RestrictedTunSession(dispatcher(), forbiddenInput,
             ByteArrayOutputStream(), {}, waitForReadable = { throw IOException("poll failed") })
