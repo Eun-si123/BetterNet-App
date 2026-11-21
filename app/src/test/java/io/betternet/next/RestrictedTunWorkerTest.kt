@@ -245,6 +245,18 @@ class RestrictedTunWorkerTest {
         assertEquals("monitor failed", (normal.failure as IllegalStateException).message)
     }
 
+    @Test fun callbackRethrowingSamePumpFailureDoesNotSelfSuppress() {
+        val original = IOException("shared failure")
+        val session = RestrictedTunSession(dispatcher(), forbiddenInput,
+            ByteArrayOutputStream(), {}, waitForReadable = { throw original })
+        val worker = RestrictedTunWorker(RestrictedTunPump(session) { 100L },
+            onTerminated = { throw original })
+        worker.start()
+        assertTrue(worker.awaitStopped(3000))
+        assertSame(original, worker.failure)
+        assertTrue("Original failure must not be self-suppressed", original.suppressed.isEmpty())
+    }
+
     @Test fun joinCannotReportStoppedWhileThreadLaunchIsPending() {
         val launchEntered = CountDownLatch(1)
         val allowLaunch = CountDownLatch(1)
