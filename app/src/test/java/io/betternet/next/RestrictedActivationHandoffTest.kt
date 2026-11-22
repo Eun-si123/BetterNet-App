@@ -111,8 +111,12 @@ class RestrictedActivationHandoffTest {
         val registry = RestrictedActivationHandoff(
             random = slowRandom, monotonicNanos = { now })
         val (ticket, app, config) = session()
-        val handle = registry.stage(ticket, app, config)
-        assertNull(registry.take(handle))
+        try {
+            registry.stage(ticket, app, config)
+            fail("Expired handle must not be issued")
+        } catch (expected: IllegalStateException) {
+            assertEquals("Activation handoff expired before issuance", expected.message)
+        }
     }
 
     @Test fun pendingSessionStillValidAtSixtySeconds() {

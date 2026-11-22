@@ -38,6 +38,12 @@ internal class RestrictedActivationHandoff(
         val issuedAt = monotonicNanos()
         val bytes = ByteArray(32)
         random.nextBytes(bytes)
+        // Do not hand the caller an already-expired authorization handle.
+        // The monotonic clock can also wrap or move in injected tests.
+        val elapsed = monotonicNanos() - issuedAt
+        check(elapsed >= 0 && elapsed <= TimeUnit.SECONDS.toNanos(60)) {
+            "Activation handoff expired before issuance"
+        }
         for (i in 0 until 8) {
             bytes[i] = (nextSequence ushr (56 - i * 8)).toByte()
         }
