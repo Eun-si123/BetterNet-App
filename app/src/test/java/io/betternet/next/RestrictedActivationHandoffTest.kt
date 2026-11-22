@@ -100,6 +100,21 @@ class RestrictedActivationHandoffTest {
         assertNull(registry.take(previous))
     }
 
+    @Test fun slowEntropyAcquisitionDoesNotExtendConsentLifetime() {
+        var now = 10_000_000_000L
+        val slowRandom = object : SecureRandom() {
+            override fun nextBytes(bytes: ByteArray) {
+                now += TimeUnit.SECONDS.toNanos(61)
+                bytes.fill(7)
+            }
+        }
+        val registry = RestrictedActivationHandoff(
+            random = slowRandom, monotonicNanos = { now })
+        val (ticket, app, config) = session()
+        val handle = registry.stage(ticket, app, config)
+        assertNull(registry.take(handle))
+    }
+
     @Test fun pendingSessionStillValidAtSixtySeconds() {
         var now = 10_000_000_000L
         val registry = RestrictedActivationHandoff(monotonicNanos = { now })

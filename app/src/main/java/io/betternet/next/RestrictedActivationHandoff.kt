@@ -33,13 +33,16 @@ internal class RestrictedActivationHandoff(
         pending = null
         check(nextSequence != Long.MAX_VALUE) { "Activation handle sequence exhausted" }
         nextSequence++
+        // Consent lifetime starts before entropy acquisition: a slow random
+        // source must not silently extend the user-confirmed handoff window.
+        val issuedAt = monotonicNanos()
         val bytes = ByteArray(32)
         random.nextBytes(bytes)
         for (i in 0 until 8) {
             bytes[i] = (nextSequence ushr (56 - i * 8)).toByte()
         }
         val handle = bytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
-        pending = Pending(handle, Session(ticket, app, configuration), monotonicNanos())
+        pending = Pending(handle, Session(ticket, app, configuration), issuedAt)
         return handle
     }
 
