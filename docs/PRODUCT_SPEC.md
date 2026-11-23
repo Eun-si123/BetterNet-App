@@ -8,6 +8,12 @@ People should use ordinary Internet services more dependably whether their netwo
 
 **Prioritize Android first.** Make the default configuration simple, lightweight, and friendly to low-end phones and costly mobile-data plans. Advanced users may opt into individually measured capabilities. Longer-term Windows/Linux remains aspirational and cannot block an Android usable release.
 
+## Owner interview refinement — 2026-11-24
+
+The [23-question owner interview](spec-betternet-owner-interview-2026-11-24.md) confirms that BetterNet's desired long-run reach is **worldwide**, including severely constrained connectivity and low-resource devices. The top priority is still an **actual online Android browser HTTPS result** followed by matched real-world evidence. Customizable dashboards and safety-preserving user overrides, small GitHub-distributed APKs, and optional capability removal are important product directions; do **not** assume full module uninstallation is available through a single APK. Other VPNs should keep compatible non-VPN functions, with no silent takeover. Official volunteer-node verification is opt-in and graded, not proof of no malware; Tor-like/privacy approaches remain separate, unverified research proposals.
+
+The owner's frequent “all options” choices indicate **eventual coverage or user-selectable alternatives**, not mandatory simultaneous feature activation. A working, explainable, reliably stoppable core precedes broad feature expansion. Existing [Milestone A](MILESTONE_A.md), [status](STATUS.md), [security](SECURITY_PRIVACY.md) and [decision register](DECISIONS.md) remain authoritative for engineering gates and actual evidence.
+
 ## User journeys
 
 | Persona/use | Desired outcome | Non-negotiable constraint |
