@@ -546,6 +546,25 @@ class RestrictedTunWorkerTest {
         assertEquals(1, closes.get())
     }
 
+    @Test fun duplicateAdoptionCannotCloseTheAlreadyOwnedDescriptor() {
+        val lifecycle = RestrictedTunLifecycle()
+        val closes = AtomicInteger()
+        val worker = RestrictedTunWorker(RestrictedTunPump(
+            RestrictedTunSession(dispatcher(), forbiddenInput, ByteArrayOutputStream(),
+                { closes.incrementAndGet() }, waitForReadable = { false })) { 100L })
+        assertSame(worker, lifecycle.adopt(worker))
+        try {
+            lifecycle.adopt(worker)
+            fail("Duplicate adoption must be rejected")
+        } catch (expected: RestrictedTunAdoptionRejected) {
+            assertEquals("TUN worker already owned", expected.message)
+        }
+        assertEquals("Duplicate adoption must not close the live owner", 0, closes.get())
+        lifecycle.requireNotCancelled()
+        lifecycle.cancel()
+        assertEquals(1, closes.get())
+    }
+
     @Test fun lifecycleRejectsSecondWorkerAndClosesOnlyRejectedDescriptor() {
         val lifecycle = RestrictedTunLifecycle()
         val firstCloses = AtomicInteger()

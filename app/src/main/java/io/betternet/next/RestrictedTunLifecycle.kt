@@ -17,18 +17,23 @@ internal class RestrictedTunLifecycle {
     private var worker: RestrictedTunWorker? = null
 
     fun adopt(candidate: RestrictedTunWorker): RestrictedTunWorker {
-        val rejection = synchronized(lock) {
+        val (rejection, alreadyOwned) = synchronized(lock) {
             when {
-                cancelled -> "VPN lifecycle already revoked"
-                worker != null -> "TUN worker already owned"
-                else -> { worker = candidate; null }
+                cancelled -> "VPN lifecycle already revoked" to (worker === candidate)
+                worker != null -> "TUN worker already owned" to (worker === candidate)
+                else -> { worker = candidate; null to false }
             }
         }
         if (rejection != null) {
             // The caller transferred ownership of the descriptor: rejection
             // must release it, including when revoke raced with adoption.
-            try { candidate.requestStop() } catch (error: Throwable) {
-                throw RestrictedTunAdoptionRejected(rejection, error)
+            // A duplicate adoption of the SAME object must not close the
+            // descriptor already owned by this lifecycle. Cancellation owns
+            // its teardown; only genuinely rejected candidates are stopped.
+            if (!alreadyOwned) {
+                try { candidate.requestStop() } catch (error: Throwable) {
+                    throw RestrictedTunAdoptionRejected(rejection, error)
+                }
             }
             throw RestrictedTunAdoptionRejected(rejection)
         }
