@@ -35,8 +35,14 @@ jobs:
           done
           echo "::error::Android command-line SDK tools are missing"
           exit 1
+      - name: Verify isolated loopback gateway
+        run: python3 -m unittest discover -s gateway/tests -v
+      - name: Verify isolated Linux netem gateway regression
+        run: sudo -n bash scripts/verify-loopback-netem.sh
       - name: Test and build
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Verify merged VPN manifest is not eligible for always-on
+        run: python3 scripts/verify-vpn-manifest.py app/build/intermediates
       - name: Test APK secret scanner fixtures and inspect built artifact
         run: |
           python3 -m unittest discover -s scripts -p 'test_check_apk_secrets.py' -v
