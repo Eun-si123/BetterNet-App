@@ -1,0 +1,391 @@
+{
+  "specName": "betternet-owner-interview-2026-11-24",
+  "timestamp": "2026-11-24",
+  "status": "interview-complete-spec-drafted",
+  "sourceIssue": null,
+  "qaLog": [
+    {
+      "id": "Q1",
+      "area": "Product identity",
+      "questionTopic": "Product identity",
+      "answer": "D — 사용자 맞춤형 조합",
+      "additionalOpinion": "사용자가 원하는 인터넷 관련 기능을 구성하는 범용 플랫폼"
+    },
+    {
+      "id": "Q2",
+      "area": "Onboarding",
+      "questionTopic": "Onboarding",
+      "answer": "B — 추천 구성 + 사용자 선택",
+      "additionalOpinion": "기본 추천을 제공하고 선택형 기능 추가/제거"
+    },
+    {
+      "id": "Q3",
+      "area": "Initial value",
+      "questionTopic": "Initial value",
+      "answer": "A + C — 실제 연결 최적화와 분석·제어",
+      "additionalOpinion": "실제 인터넷 사용과 설명 가능한 제어"
+    },
+    {
+      "id": "Q4",
+      "area": "Dashboard",
+      "questionTopic": "Dashboard",
+      "answer": "D — 사용자가 메인 화면을 직접 구성",
+      "additionalOpinion": "사용자마다 선호가 다름"
+    },
+    {
+      "id": "Q5",
+      "area": "Adaptive cost",
+      "questionTopic": "Adaptive cost",
+      "answer": "B — 사전 동의한 범위에서 자동 전환",
+      "additionalOpinion": "자유로운 설정과 불필요한 모듈 실제 제거로 저장 공간 절약"
+    },
+    {
+      "id": "Q6",
+      "area": "Module packaging",
+      "questionTopic": "Module packaging",
+      "answer": "C — 초기 경량 APK, 이후 진짜 모듈화",
+      "additionalOpinion": "현재는 GitHub만 사용, 기술적 배포 방식은 미확정"
+    },
+    {
+      "id": "Q7",
+      "area": "Servers",
+      "questionTopic": "Servers",
+      "answer": "C — 자가 서버 + 공용 서버",
+      "additionalOpinion": "구체적인 운영 방식은 잘 모르겠음"
+    },
+    {
+      "id": "Q8",
+      "area": "VPN coexistence",
+      "questionTopic": "VPN coexistence",
+      "answer": "C — 가능한 기능 함께 사용",
+      "additionalOpinion": "A~D의 유용한 방향 모두 고려"
+    },
+    {
+      "id": "Q9",
+      "area": "First workload",
+      "questionTopic": "First workload",
+      "answer": "A — 웹 브라우저",
+      "additionalOpinion": "궁극적으로 극도로 불량한 인터넷과 개발도상국 등에서도 실제 사용"
+    },
+    {
+      "id": "Q10",
+      "area": "Poor network coverage",
+      "questionTopic": "Poor network coverage",
+      "answer": "A+B+C+D — 저속·끊김·고손실/고지연·제한 환경",
+      "additionalOpinion": "모두 중요"
+    },
+    {
+      "id": "Q11",
+      "area": "Offline strategy",
+      "questionTopic": "Offline strategy",
+      "answer": "D — 가능한 범위에서 전부 지원",
+      "additionalOpinion": "오프라인보다 온라인 구현 우선"
+    },
+    {
+      "id": "Q12",
+      "area": "Resource profiles",
+      "questionTopic": "Resource profiles",
+      "answer": "A+B+C+D — 절약형·균형형·적극형·앱별 사용자 설정",
+      "additionalOpinion": "공존하되 선택된 정책으로 동작"
+    },
+    {
+      "id": "Q13",
+      "area": "Node trust",
+      "questionTopic": "Node trust",
+      "answer": "B 중심, C+D 추가",
+      "additionalOpinion": "공식 검사 도구로 변조 및 악성 징후 검증 희망, 백도어 우려"
+    },
+    {
+      "id": "Q14",
+      "area": "Node verification",
+      "questionTopic": "Node verification",
+      "answer": "D — 단계별 검증",
+      "additionalOpinion": "외부 검사, 운영자 실행, 선택적 상시 검사"
+    },
+    {
+      "id": "Q15",
+      "area": "Operator scopes",
+      "questionTopic": "Operator scopes",
+      "answer": "C 중심 + A~D",
+      "additionalOpinion": "서버 운영자가 범위 결정, 안전한 기본값, 역할별 권한"
+    },
+    {
+      "id": "Q16",
+      "area": "Logging",
+      "questionTopic": "Logging",
+      "answer": "A+B+C+D",
+      "additionalOpinion": "개인정보 보호를 원하면 Tor 유사 기술을 선택형으로 검토"
+    },
+    {
+      "id": "Q17",
+      "area": "Threat models",
+      "questionTopic": "Threat models",
+      "answer": "A+B+C+D",
+      "additionalOpinion": "서버 운영자, ISP, 사이트, 접속 제한"
+    },
+    {
+      "id": "Q18",
+      "area": "Lightweight web",
+      "questionTopic": "Lightweight web",
+      "answer": "D — 상황에 따라 모든 방식",
+      "additionalOpinion": "쉬운 것부터 구현"
+    },
+    {
+      "id": "Q19",
+      "area": "Scheduling",
+      "questionTopic": "Scheduling",
+      "answer": "D — 자동 적응 + 사용자 지정",
+      "additionalOpinion": "사용자 설정의 우선순위 보장"
+    },
+    {
+      "id": "Q20",
+      "area": "Risk tolerance",
+      "questionTopic": "Risk tolerance",
+      "answer": "D 중심 + A~C",
+      "additionalOpinion": "모드별 선택·복구를 모두 고려"
+    },
+    {
+      "id": "Q21",
+      "area": "Economics",
+      "questionTopic": "Economics",
+      "answer": "D — 여러 운영 모델 공존",
+      "additionalOpinion": "무료, 기부, 유료, 자가 운영 선택"
+    },
+    {
+      "id": "Q22",
+      "area": "Release",
+      "questionTopic": "Release",
+      "answer": "A 중심 + B~D",
+      "additionalOpinion": "핵심 완성도 우선, 실험·단계·기능별 공개 검토"
+    },
+    {
+      "id": "Q23",
+      "area": "Success",
+      "questionTopic": "Success",
+      "answer": "A+B+C+D",
+      "additionalOpinion": "BetterNet을 이름 그대로 세상에 펼치고 싶음"
+    }
+  ],
+  "coverageMap": {
+    "Problem": "done",
+    "Users": "done",
+    "Technical Approach": "done",
+    "Adaptive Policy": "done",
+    "Modularity": "done",
+    "Privacy": "done",
+    "Server Governance": "done",
+    "Risks": "done",
+    "Constraints": "done",
+    "Release": "done",
+    "Success Metrics": "done"
+  },
+  "capturedAtCommit": "cdf4257fbf2007b9fc928d6957c943b933a7f56b",
+  "baseline": {
+    "derivedFrom": "public repository source and owner interview",
+    "capturedAtCommit": "cdf4257fbf2007b9fc928d6957c943b933a7f56b",
+    "claims": [
+      {
+        "id": "B1",
+        "area": "Release",
+        "subject": "main implementation",
+        "evidence": [
+          "README.md",
+          "docs/STATUS.md"
+        ],
+        "claim": "Main is pre-alpha, no verified physical selected-app HTTPS completion",
+        "verification": "check current code/status and physical evidence"
+      },
+      {
+        "id": "B2",
+        "area": "Technical Approach",
+        "subject": "current next gate",
+        "evidence": [
+          "docs/MILESTONE_A.md"
+        ],
+        "claim": "A1 real selected-app HTTPS is nearest missing gate",
+        "verification": "check gate state and A1 physical evidence"
+      },
+      {
+        "id": "B3",
+        "area": "Modularity",
+        "subject": "GitHub APK limitations",
+        "evidence": [
+          "docs/FEATURE_MODULES.md"
+        ],
+        "claim": "Runtime OFF does not physically remove APK executable code",
+        "verification": "check packaging strategy and installed-byte measurement"
+      },
+      {
+        "id": "B4",
+        "area": "Privacy",
+        "subject": "strict mode",
+        "evidence": [
+          "docs/ARCHITECTURE.md",
+          "docs/SECURITY_PRIVACY.md"
+        ],
+        "claim": "Strict no-leak not device-proven; requires OS policy verification",
+        "verification": "check device matrix and evidence"
+      }
+    ]
+  },
+  "decisionsLog": [
+    {
+      "id": "D1",
+      "sourceQuestion": "Q1",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D2",
+      "sourceQuestion": "Q2",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D3",
+      "sourceQuestion": "Q3",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D4",
+      "sourceQuestion": "Q4",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D5",
+      "sourceQuestion": "Q5",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D6",
+      "sourceQuestion": "Q6",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D7",
+      "sourceQuestion": "Q7",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D8",
+      "sourceQuestion": "Q8",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D9",
+      "sourceQuestion": "Q9",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D10",
+      "sourceQuestion": "Q10",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D11",
+      "sourceQuestion": "Q11",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D12",
+      "sourceQuestion": "Q12",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D13",
+      "sourceQuestion": "Q13",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D14",
+      "sourceQuestion": "Q14",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D15",
+      "sourceQuestion": "Q15",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D16",
+      "sourceQuestion": "Q16",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D17",
+      "sourceQuestion": "Q17",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D18",
+      "sourceQuestion": "Q18",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D19",
+      "sourceQuestion": "Q19",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D20",
+      "sourceQuestion": "Q20",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D21",
+      "sourceQuestion": "Q21",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D22",
+      "sourceQuestion": "Q22",
+      "source": "Interview",
+      "date": "2026-11-24"
+    },
+    {
+      "id": "D23",
+      "sourceQuestion": "Q23",
+      "source": "Interview",
+      "date": "2026-11-24"
+    }
+  ],
+  "driftLedger": [],
+  "previewUrl": null,
+  "feedbackRounds": [],
+  "redTeamStatus": "pending",
+  "redTeamFindings": null,
+  "pendingGovernanceDecisions": [
+    "OPEN-001",
+    "OPEN-002",
+    "OPEN-003",
+    "OPEN-004",
+    "OPEN-005",
+    "OPEN-006",
+    "GitHub executable modular delivery",
+    "Tor-like mode threat model"
+  ],
+  "notes": [
+    "Q7 operational details explicitly uncertain; do not turn preference for both node classes into permission to deploy.",
+    "Answers containing 'all' denote coverage/choice rather than simultaneous enablement.",
+    "No independent red-team agent or physical Android test was run as part of this specification."
+  ]
+}
