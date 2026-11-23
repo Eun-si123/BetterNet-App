@@ -58,7 +58,6 @@ Selections of A+B+C+D in the interview describe **available choices, future scop
 | OPEN-004 | Diagnostics schema, maximum on-device/remote retention and exact optional recipient/collector; owner + privacy review | Any telemetry receiving endpoint or automatic upload |
 | OPEN-005 | Approved actual Android test devices, separate non-personal test gateway, first browser/app/test host and OS support; owner/testers | A1 device PASS, live relay deployment or public active VPN preview |
 | OPEN-006 | Prioritized sharing first release: same-LAN, authenticated remote relay, or both; owner/user research | First sharing transfer protocol design and network privileges |
-
 | OPEN-007 | GitHub-native executable feature packaging/removal strategy and migration path; product/Android maintainer | Claims that optional code can be individually uninstalled or genuinely free installed APK bytes |
 | OPEN-008 | Privacy-routing/Tor-like module threat model, supported OS/protocol matrix, risk disclosure; privacy/security reviewer | Public anonymity, censorship-avoidance, or no-metadata claims |
 
