@@ -7,6 +7,7 @@
 | Question | Authoritative document | Audience |
 | --- | --- | --- |
 | What does BetterNet aim to solve, and why? | [Product specification](PRODUCT_SPEC.md) | Users, contributors, product |
+| What did the owner confirm in the 23-question interview? | [Interview specification + decisions](spec-betternet-owner-interview-2026-11-24.md) | Product, roadmap reviewers |
 | Which phases and future capabilities are intended? | [Product roadmap](PRODUCT_ROADMAP.md) | Everyone |
 | What must work **next**? | [Milestone A acceptance gates](MILESTONE_A.md) | Implementers |
 | What is **actually implemented and verified**? | [Status and evidence](STATUS.md) | Testers, reviewers |
