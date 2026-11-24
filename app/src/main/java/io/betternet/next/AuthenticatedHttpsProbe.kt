@@ -28,10 +28,10 @@ internal fun probeApprovedHttpsThroughGatewayWithoutVpn(
         manager, network, packages, ownPackage, selectedApp, stillAuthorized
     )
     verify()
-    return connectWithGatewayAddressFallback(
+    return connectWithGatewayTcpFallback(
         configuration.gatewayName, configuration.gatewayPort, 3_000,
         lookup = { host -> withFreshRestrictedGatewayScope(verify) { network.getAllByName(host) } },
-        dial = { address: InetSocketAddress, remaining: Int ->
+        dial = { address: InetSocketAddress, remaining: Int, tcpBudget: Int ->
             withFreshRestrictedGatewaySocketScope(verify) {
                 // No VPN is active in this diagnostic. Pin the raw socket to
                 // the inspected non-VPN Network; reject any visible VPN.
@@ -42,6 +42,7 @@ internal fun probeApprovedHttpsThroughGatewayWithoutVpn(
                     destinationPort = 443,
                     bearerToken = configuration.bearerToken,
                     bind = { socket -> verify(); network.bindSocket(socket); verify() },
+                    tcpConnectBudgetMs = tcpBudget,
                 )
                 establishVerifiedDestinationTlsOnTunnel(
                     tunnel, configuration.approvedHost, 443, remaining

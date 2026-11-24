@@ -52,6 +52,41 @@ class GatewayReadinessProbeTest {
         assertTrue("Scope must be rechecked around DNS, dial and close", checks >= 6)
     }
 
+    @Test fun readOnlyProbeUsesTcpOnlyTimeoutForBlackholedFirstAddress() {
+        val first = InetAddress.getByName("2001:db8::2")
+        val second = InetAddress.getByName("192.0.2.2")
+        val budgets = mutableListOf<Pair<Int, Int>>()
+        var checks = 0
+        var closed = 0
+        probePinnedGatewayTlsWithTcpBudget("gateway.example", 443,
+            verify = { checks++ },
+            lookup = { arrayOf(first, second) },
+            dial = { address, transaction, tcp ->
+                budgets += transaction to tcp
+                connectProtectedSocket(address, transaction,
+                    { true },
+                    createSocket = { object : Socket() {
+                        override fun connect(endpoint: SocketAddress?, timeout: Int) {
+                            if (address.address == first) {
+                                throw java.net.SocketTimeoutException("blackhole")
+                            }
+                        }
+                        override fun close() { closed++ }
+                    } },
+                    connectTimeout = { tcp },
+                )
+            },
+        )
+        assertEquals(2, budgets.size)
+        assertTrue("First address must leave time for an alternate",
+            budgets[0].first in 1..3000 && budgets[0].second in 250..1500 &&
+                budgets[0].second <= budgets[0].first)
+        assertEquals("Last address can use the entire remaining TCP budget",
+            budgets[1].first, budgets[1].second)
+        assertEquals(2, closed)
+        assertTrue(checks >= 6)
+    }
+
     @Test fun gatewayProbeNeverRetriesTlsIdentityFailure() {
         val attempted = mutableListOf<InetAddress>()
         val addresses = arrayOf(InetAddress.getByName("2001:db8::2"),

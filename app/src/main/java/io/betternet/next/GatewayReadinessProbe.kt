@@ -27,9 +27,9 @@ internal fun probeGatewayTlsWithoutVpn(
     val verify = readOnlyGatewayProbeVerifier(
         manager, network, packages, ownPackage, selectedApp, stillAuthorized
     )
-    probePinnedGatewayTls(gatewayName, gatewayPort, verify,
+    probePinnedGatewayTlsWithTcpBudget(gatewayName, gatewayPort, verify,
         lookup = { host -> network.getAllByName(host) },
-        dial = { address, remaining ->
+        dial = { address, remaining, tcpBudget ->
             // This is a VPN-free, read-only probe. No VpnService exists to
             // protect a socket; instead pin it to the inspected Network and
             // reject any changed/hidden VPN state before and after each step.
@@ -38,7 +38,10 @@ internal fun probeGatewayTlsWithoutVpn(
             val attemptDeadline = System.nanoTime() + remaining.toLong() * 1_000_000L
             val socket = connectProtectedSocket(address, remaining,
                 protect = { verify(); true },
-                bind = { raw -> verify(); network.bindSocket(raw); verify() })
+                bind = { raw -> verify(); network.bindSocket(raw); verify() },
+                connectTimeout = {
+                    minOf(remainingResponseTimeoutMs(attemptDeadline, System.nanoTime()), tcpBudget)
+                })
             try {
                 verify()
                 // TCP and TLS share the remaining per-attempt deadline; a
@@ -67,13 +70,27 @@ internal fun probePinnedGatewayTls(
     verify: () -> Unit,
     lookup: (String) -> Array<InetAddress>,
     dial: (InetSocketAddress, Int) -> Closeable,
+) = probePinnedGatewayTlsWithTcpBudget(
+    gatewayName, gatewayPort, verify, lookup,
+    { address, remaining, _ -> dial(address, remaining) }
+)
+
+/** Alternate-address probe with its own TCP-only cap but a shared TLS deadline. */
+internal fun probePinnedGatewayTlsWithTcpBudget(
+    gatewayName: String,
+    gatewayPort: Int,
+    verify: () -> Unit,
+    lookup: (String) -> Array<InetAddress>,
+    dial: (InetSocketAddress, Int, Int) -> Closeable,
 ) {
     verify()
-    connectWithGatewayAddressFallback(
+    connectWithGatewayTcpFallback(
         gatewayName, gatewayPort, 3_000,
         lookup = { host -> withFreshRestrictedGatewayScope(verify) { lookup(host) } },
-        dial = { address, remaining ->
-            withFreshRestrictedGatewaySocketScope(verify) { dial(address, remaining) }
+        dial = { address, remaining, tcpBudget ->
+            withFreshRestrictedGatewaySocketScope(verify) {
+                dial(address, remaining, tcpBudget)
+            }
         },
     ).use { verify() }
 }
