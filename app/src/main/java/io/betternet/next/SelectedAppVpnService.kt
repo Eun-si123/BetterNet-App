@@ -1,6 +1,7 @@
 package io.betternet.next
 
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -28,8 +29,9 @@ import java.net.Socket
 import javax.net.ssl.SSLSocket
 
 /**
- * A deliberately inactive A1 boundary. No code starts this service, asks for
- * consent, establishes a TUN, or forwards packets until a safe gateway exists.
+ * Debug-only, explicit and bounded restricted A1 activation. Production builds
+ * must still refuse all start commands. This is a test path, not a VPN product
+ * or evidence of selected-app Internet success.
  */
 class SelectedAppVpnService : VpnService() {
     private companion object { const val ACTION_STOP_RESTRICTED_TEST = "io.betternet.next.STOP_RESTRICTED_TEST" }
@@ -39,6 +41,7 @@ class SelectedAppVpnService : VpnService() {
         // Even if closing the TUN descriptor fails, Android's revocation
         // callback must still run; otherwise the service can remain alive.
         try {
+            RestrictedDebugActivationRegistry.handoff.clear()
             tunLifecycle.cancel()
         } finally {
             // Revocation may occur before a worker was started. Never leave
@@ -49,6 +52,7 @@ class SelectedAppVpnService : VpnService() {
 
     override fun onDestroy() {
         try {
+            RestrictedDebugActivationRegistry.handoff.clear()
             tunLifecycle.cancel()
         } finally {
             super.onDestroy()
@@ -110,12 +114,10 @@ class SelectedAppVpnService : VpnService() {
     }
 
     /**
-     * Dormant activation boundary, deliberately NOT called by the Activity or
-     * onStartCommand. A future user-confirmed service start may invoke this only
-     * after explicit OS consent and foreground-service/lifecycle review.
-     * No background, implicit, or whole-device activation path is provided.
-     * A worker returned here still needs a background owner to monitor failure,
-     * stop/join on shutdown, and handle Android network/permission changes.
+     * Explicit debug-only activation boundary. The caller must consume the
+     * memory-only handoff, verify the OS VPN grant, pinned app and non-VPN
+     * underlying Network before foreground promotion and TUN establishment.
+     * The worker is strictly time-bounded; there is no always-on/implicit start.
      */
     internal fun activateExplicitRestrictedTestTun(
         ticket: RestrictedActivationTicket,
@@ -131,9 +133,8 @@ class SelectedAppVpnService : VpnService() {
         val prepared = prepareDormantRestrictedTestActivation(
             manager, underlyingNetwork, selectedApp, configuration, timeoutMs,
         )
-        // A future explicit service start must promote before establishing
-        // a TUN, and remove the notification if activation fails. This method
-        // remains unreachable from onStartCommand and the Activity.
+        // Promotion precedes TUN establishment. A failure tears down both
+        // worker/descriptor and foreground notification without fallback.
         return withRestrictedForegroundOwnership(
             revalidate = {
                 requireFreshRestrictedTestPrerequisites(manager, underlyingNetwork, selectedApp)
@@ -271,6 +272,7 @@ class SelectedAppVpnService : VpnService() {
                 requireActiveRestrictedTestPrerequisites(manager, underlyingNetwork, selectedApp)
             },
             nowMillis = SystemClock::elapsedRealtime,
+            maxRunMillis = 120_000L, // Debug safety ceiling; no permanent capture.
         ),
         onTerminated = {
             // Even an unexpected pump failure must not leave a future
@@ -406,21 +408,44 @@ class SelectedAppVpnService : VpnService() {
         )
     }
 
-    // STOP is the only supported notification command. Unknown or null
-    // starts (including Android process recreation) also fail closed; none
-    // may establish a TUN or reach the network. Cancellation precedes stop.
+    // Only an exact, in-process, single-use debug handoff may start this VPN.
+    // OS-initiated starts, process recreation, all release builds, and unknown
+    // intents remain fail-closed. No credential is ever in the Intent extras.
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val debugBuild = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+        val handle = try {
+            if (intent?.action == ACTION_START_RESTRICTED_DEBUG)
+                intent.getStringExtra(EXTRA_RESTRICTED_HANDLE) else null
+        } catch (_: RuntimeException) { null }
+        val session = claimRestrictedDebugSession(
+            intent?.action, handle, debugBuild, RestrictedDebugActivationRegistry.handoff
+        )
+        if (session != null) {
+            try {
+                val manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+                val underlying = manager.activeNetwork
+                    ?: throw IllegalStateException("No underlying Internet Network")
+                // This revalidates Android preparation, selected UID/signers,
+                // other VPN visibility and the selected network, then promotes
+                // foreground before opening any restricted selected-app TUN.
+                activateExplicitRestrictedTestTun(
+                    session.ticket, manager, underlying,
+                    session.app, session.configuration, timeoutMs = 3_000,
+                )
+                return START_NOT_STICKY
+            } catch (_: Exception) {
+                // No token, selected package, destination or exception is logged.
+                android.util.Log.w("BetterNet", "Restricted debug activation refused")
+            }
+        }
         try {
             stopRestrictedServiceFailClosed(
                 cancel = { tunLifecycle.cancel() },
-                // Cancellation is global to this service owner. stopSelf(startId)
-                // may refuse to stop when a newer start arrived concurrently,
-                // leaving a cancelled foreground service orphaned.
+                // stopSelf(startId) can lose a race with a newer start. Always
+                // stop the cancelled foreground owner rather than orphan it.
                 stop = { stopSelf(); Unit },
             )
         } catch (_: Exception) {
-            // stopSelf was still requested. Avoid crashing the main thread
-            // if Android already closed the descriptor during revocation.
             android.util.Log.w("BetterNet", "Restricted VPN shutdown cleanup failed")
         }
         return START_NOT_STICKY

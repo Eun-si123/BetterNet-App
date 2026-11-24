@@ -118,6 +118,44 @@ class RestrictedTunPumpTest {
         assertEquals(1, closes.get())
     }
 
+    @Test fun debugSessionAutomaticallyStopsAtFixedMonotonicDeadline() {
+        val closes = AtomicInteger()
+        var clock = 100L
+        var polls = 0
+        val session = RestrictedTunSession(dispatcher(), forbiddenInput(),
+            ByteArrayOutputStream(), { closes.incrementAndGet() },
+            waitForReadable = { polls++; clock += 60L; false })
+        val pump = RestrictedTunPump(session, nowMillis = { clock }, maxRunMillis = 120L)
+        pump.runUntilStopped()
+        assertEquals(2, polls)
+        assertEquals(1, closes.get())
+        assertFalse(session.pumpOneTunPacket(500))
+    }
+
+    @Test fun timeReversalAlsoStopsDebugSessionRatherThanExtendingCapture() {
+        var clock = 100L
+        var polls = 0
+        val closes = AtomicInteger()
+        val session = RestrictedTunSession(dispatcher(), forbiddenInput(),
+            ByteArrayOutputStream(), { closes.incrementAndGet() },
+            waitForReadable = { polls++; clock -= 1L; false })
+        RestrictedTunPump(session, nowMillis = { clock }, maxRunMillis = 120L)
+            .runUntilStopped()
+        assertEquals(1, polls)
+        assertEquals(1, closes.get())
+    }
+
+    @Test fun invalidDebugSessionDurationIsRefusedBeforeAnyWork() {
+        val session = RestrictedTunSession(dispatcher(), forbiddenInput(),
+            ByteArrayOutputStream(), {})
+        try {
+            RestrictedTunPump(session, nowMillis = { 0L }, maxRunMillis = 0)
+            fail("Zero duration would create unbounded capture")
+        } catch (_: IllegalArgumentException) {
+            session.close()
+        }
+    }
+
     @Test fun pollFailurePropagatesAndClosesOwnedDescriptor() {
         val releases = AtomicInteger()
         val session = RestrictedTunSession(dispatcher(), forbiddenInput(),

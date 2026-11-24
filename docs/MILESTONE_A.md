@@ -25,6 +25,30 @@ by a slow network bind and TLS handshake. This limits successful connection
 acceptance; underlying OS blocking calls and TLS writes are not a hard
 wall-clock cancellation guarantee. No gateway is deployed or VPN activated.
 
+## Restricted debug-only user-confirmed activation (draft, A1 NOT PROVEN)
+
+An additional proposed Android debug path can **request** a temporary test
+VPN only after all of: explicitly selected launcher app with current pinned
+UID/signing identity; memory-only validated destination/gateway/token; user
+approved authenticated HTTPS HEAD probe **within 60 seconds on the same Android
+Network**; Android OS VPN preparation; a separate warning and positive button.
+The Intent carries a 64-character opaque, one-use, process-local handoff handle
+and **never** a credential, address list or user-selected app. The service
+rechecks Android permission, installed-app identity and network scope before
+foreground promotion and establishing exactly two host routes: virtual DNS and
+the independently approved public HTTPS IP. The TUN owner stops after about
+two minutes of monotonic runtime; notification Stop, app clear, revoke, network
+loss and service destruction request cancellation. No arbitrary destination,
+full-device route, on-demand module or persistent server is enabled.
+
+This debug path **must refuse every production/release-build start**, unknown
+actions, missing/expired/replayed handles, stale gateway tests and non-approved
+VPN/network states. It is source-level/JVM evidence only until tested on Android
+hardware. Running a debug build, showing a foreground notice or obtaining
+the OS grant is **not** proof of A1 Internet forwarding or unrelated-app
+exclusion. Test only an authorized gateway and independent HTTPS endpoint; the
+repository's reference gateway still binds loopback only and is not deployed.
+
 ## DNS name correlation interoperability
 
 A dormant A1 DNS-over-TLS response may echo the original QNAME with different
