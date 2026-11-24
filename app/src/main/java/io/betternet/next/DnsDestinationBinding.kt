@@ -140,9 +140,18 @@ internal fun isComplementaryAddressDnsQuery(
     val query = request.bytes.copyOfRange(
         request.header.transportOffset + 8, request.bytes.size
     )
-    val otherType = if (approved.address.address.size == 4) 28 else 1
-    return isApprovedTestDnsQuestionOfType(query, approved.hostname, otherType)
+    return isComplementaryTestDnsQuestion(query, approved.hostname, approved.address)
 }
+
+/** The user-approved A1 test route has exactly one IP family. A valid
+ * query for the opposite family is a policy-filtered *same-host* request,
+ * not another authenticated DNS address grant.
+ */
+internal fun isComplementaryTestDnsQuestion(
+    query: ByteArray, approvedHost: String, approvedAddress: InetAddress,
+): Boolean = isApprovedTestDnsQuestionOfType(
+    query, approvedHost, if (approvedAddress.address.size == 4) 28 else 1
+)
 
 private fun isApprovedTestDnsQuestionOfType(
     query: ByteArray, expectedHost: String, expectedType: Int,

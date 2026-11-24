@@ -44,7 +44,18 @@ internal fun newDormantRestrictedGatewayDispatcher(
                 val question = header?.let {
                     packet.bytes.copyOfRange(it.transportOffset + 8, packet.bytes.size)
                 }
-                if (question == null || !isApprovedTestDnsQuestion(
+                if (question == null) null
+                else if (isComplementaryTestDnsQuestion(
+                        question, approvedHost, plan.allowedHttpsAddress
+                    )) {
+                    // Only the explicitly approved debug-test hostname gets
+                    // local NODATA for the unavailable family. No network,
+                    // token, fresh grant or cross-family route is involved.
+                    buildRestrictedTestOtherFamilyNodata(
+                        packet, approvedHost, plan.allowedHttpsAddress, plan.mtu
+                    )?.let { output.write(it) }
+                    null
+                } else if (!isApprovedTestDnsQuestion(
                         question, approvedHost, plan.allowedHttpsAddress
                     )) null
                 else connectWithGatewayTcpFallback(

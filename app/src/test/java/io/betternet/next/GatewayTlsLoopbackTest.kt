@@ -1301,6 +1301,20 @@ class GatewayTlsLoopbackTest {
                 )
                 try {
                     val tunOut = java.io.ByteArrayOutputStream()
+                    // Real local gateway composition: a valid alternate-family
+                    // lookup is answered locally, not sent to the authenticated
+                    // gateway, and cannot grant the unapproved IP family.
+                    val auxiliaryQuery = dnsFixtures.query(if (version == 4) 28 else 1)
+                    val auxiliaryPacket = packetFixtures.udp(plan, payload = auxiliaryQuery)
+                    val auxiliaryIngress = TunIngressResult.Packet(auxiliaryPacket,
+                        parseTunPacketHeader(auxiliaryPacket, auxiliaryPacket.size)!!)
+                    val expectedFiltered = buildRestrictedTestOtherFamilyNodata(
+                        auxiliaryIngress, "dns.example", plan.allowedHttpsAddress, 1280)!!
+                    assertTrue(dispatcher.pumpOneTunPacket(
+                        java.io.ByteArrayInputStream(auxiliaryPacket), tunOut, 99))
+                    assertArrayEquals(expectedFiltered, tunOut.toByteArray())
+                    assertTrue(events.isEmpty()) // no socket/protection/credential
+                    tunOut.reset()
                     val dnsPacket = packetFixtures.udp(plan, payload = question)
                     assertTrue(dispatcher.pumpOneTunPacket(
                         java.io.ByteArrayInputStream(dnsPacket), tunOut, 100))
@@ -1309,8 +1323,16 @@ class GatewayTlsLoopbackTest {
                             parseTunPacketHeader(dnsPacket, dnsPacket.size)!!),
                         answer, 1280), tunOut.toByteArray())
                     tunOut.reset()
+                    // Parallel AAAA/A request after the authenticated approved
+                    // answer must retain its one-use grant and return NODATA
+                    // without opening a second gateway connection.
                     assertTrue(dispatcher.pumpOneTunPacket(
-                        java.io.ByteArrayInputStream(syn.bytes), tunOut, 101))
+                        java.io.ByteArrayInputStream(auxiliaryPacket), tunOut, 101))
+                    assertArrayEquals(expectedFiltered, tunOut.toByteArray())
+                    assertEquals(listOf("protect", "bind"), events)
+                    tunOut.reset()
+                    assertTrue(dispatcher.pumpOneTunPacket(
+                        java.io.ByteArrayInputStream(syn.bytes), tunOut, 102))
                     val synAck = tunOut.toByteArray()
                     assertEquals(0x12, synAck[if (version == 4) 33 else 53].toInt() and 255)
                     tunOut.reset()

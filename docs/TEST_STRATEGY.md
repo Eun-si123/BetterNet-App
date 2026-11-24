@@ -92,9 +92,14 @@ sequences through the same restricted dispatcher. The second query must
 neither spend a new bearer credential nor erase the first, still-fresh
 one-use grant. Check mismatched domain/QTYPE, expired grant, case-normalized
 hostname and a retransmitted SYN; no arbitrary address may be authorized
-and a grant must never be renewed. A suppressed alternate-family DNS
-request is not proof that the Android resolver proceeds promptly: the real
-selected-browser DNS/TCP/HTTPS result is still NOT RUN on a device.
+and a grant must never be renewed. For *only* the approved hostname,
+verify a locally synthesized NOERROR/NODATA response to the unsupported family,
+with the original transaction ID and question, no resource records, no EDNS
+echo, correct IPv4/IPv6 UDP/IP checksums, and **zero gateway socket/token use**.
+Reject any other host, malformed packet, unsupported QTYPE or stale grant.
+This deliberately filtered test answer must be disclosed to users; it is
+not a real upstream DNS record assertion. The selected-browser DNS/TCP/HTTPS
+result is still NOT RUN on a physical Android device.
 
 ## A2 performance design
 

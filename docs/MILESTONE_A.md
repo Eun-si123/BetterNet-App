@@ -89,10 +89,13 @@ unsupported family must not revoke the already authenticated, unconsumed
 grant while it is still fresh. It may not create a new authorization, renew
 the TTL or cause a credential-bearing gateway dial. Any failed approved-family
 lookup, malformed query, different hostname, unexpected QTYPE or expired grant
-retains fail-closed behavior. This is a bounded *authorization preservation*
-fix; it does not manufacture a DNS answer or claim support for the other IP
-family. A browser may still wait for its unanswered supplementary query, so
-real Android A1 validation remains necessary.
+retains fail-closed behavior. The explicitly approved *debug test hostname*
+now gets a **local policy-filtered NOERROR/NODATA response** for the unsupported
+A/AAAA family, with no gateway contact, new IP authorization or TTL renewal.
+This is **not a claim about the authoritative upstream DNS records**; it
+only describes the currently permitted test routing scope. No general
+DNS rewriting, content interception or new route is enabled. Real Android
+A1 validation remains necessary to check browser resolver interoperability.
 
 ## DNS name correlation interoperability
 

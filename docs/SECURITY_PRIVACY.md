@@ -50,6 +50,19 @@ Exit nodes and network providers can still observe IP addresses, DNS metadata, c
 This is a reviewable code path, not permission to route user traffic on any
 physical phone or deploy a gateway without an explicit test environment.
 
+## Debug test-only local DNS address-family policy
+
+The explicit, selected-app A1 test routes **only one independently approved
+destination IP**. For that exact approved hostname alone, the unsupported
+A/AAAA query gets a synthetic local **NOERROR/NODATA** reply so parallel
+browser DNS queries need not wait for a non-routed family. This is a
+**local policy decision**, not an assertion that the upstream authoritative
+DNS has no records. The virtual DNS endpoint never returns a second IP grant
+or contacts a gateway for that negative response. All unrelated, malformed
+or non-approved name/type queries remain rejected without DNS modification.
+Do not describe this as a general-purpose DNS resolver, an anonymity feature
+or a physical Android A1 PASS.
+
 ## Diagnostic data: preview-before-send contract
 
 **Default:** no upload, no centrally hosted collector and no network-activity recording unless a bounded local diagnostic is user-enabled. When enabled, show the user the contents and recipients **before** any optional send.
