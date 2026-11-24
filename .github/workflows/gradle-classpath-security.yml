@@ -1,0 +1,55 @@
+name: Verify vulnerable Gradle plugin classpath versions
+
+on:
+  pull_request:
+    paths:
+      - 'build.gradle.kts'
+      - '.github/workflows/gradle-classpath-security.yml'
+      - 'scripts/check_gradle_classpath.py'
+      - 'scripts/test_check_gradle_classpath.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gradle-classpath-security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Gradle plugin Netty patched classpath
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/wrapper-validation@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
+      - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
+        with:
+          cache-read-only: true
+      - name: Verify parser detects unpatched and missing classpath dependencies
+        run: python3 -m unittest scripts.test_check_gradle_classpath -v
+      - name: Configure SDK 36 for Android Gradle plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+          for cli in "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager; do
+            if [[ -x "$cli" ]]; then
+              "$cli" --install 'platforms;android-36' 'build-tools;35.0.0'
+              exit $?
+            fi
+          done
+          echo "::error::Android SDK tools missing"
+          exit 1
+      - name: Resolve plugin classpaths (never upload credentials or caches)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --max-workers=2 buildEnvironment :app:buildEnvironment > "$RUNNER_TEMP/gradle-build-environment.txt"
+          python3 scripts/check_gradle_classpath.py < "$RUNNER_TEMP/gradle-build-environment.txt"
