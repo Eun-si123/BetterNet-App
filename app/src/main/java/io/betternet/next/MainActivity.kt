@@ -4,7 +4,9 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Handler
@@ -27,6 +29,8 @@ class MainActivity : Activity() {
     private var testConfiguration: RestrictedTestConfiguration? = null
     private var vpnStatus: TextView? = null
     private var consentButton: Button? = null
+    private val verifiedGateway = VerifiedGatewayTestLease()
+    private var debugStartButton: Button? = null
     private var gatewayProbeRunning = false
     private val gatewayProbeGeneration = AtomicInteger(0)
 
@@ -77,6 +81,8 @@ class MainActivity : Activity() {
                 if (selectedApp != null) {
                     showRestrictedTestConfigurationDialog { configuration ->
                         gatewayProbeGeneration.incrementAndGet()
+                        verifiedGateway.clear()
+                        updateDebugStartAvailability()
                         testConfiguration = configuration
                         consentButton?.isEnabled = true
                         configurationStatus.text = getString(R.string.test_config_summary,
@@ -102,6 +108,10 @@ class MainActivity : Activity() {
             isEnabled = false
             setOnClickListener {
                 gatewayProbeGeneration.incrementAndGet()
+                verifiedGateway.clear()
+                RestrictedDebugActivationRegistry.handoff.clear()
+                stopService(Intent(this@MainActivity, SelectedAppVpnService::class.java))
+                updateDebugStartAvailability()
                 selectedApp = null
                 testConfiguration = null
                 requestConsentButton.isEnabled = false
@@ -130,6 +140,10 @@ class MainActivity : Activity() {
                             // Reject an unobservable signer rather than silently
                             // downgrading to package-name/UID-only consent.
                             gatewayProbeGeneration.incrementAndGet()
+                            verifiedGateway.clear()
+                            RestrictedDebugActivationRegistry.handoff.clear()
+                            stopService(Intent(this@MainActivity, SelectedAppVpnService::class.java))
+                            updateDebugStartAvailability()
                             selectedApp = readInstalledAppIdentity(packageManager, choices[index].packageName)
                                 ?.takeIf { it.uid == choices[index].uid }
                                 ?.let { choices[index].copy(signerFingerprint = it.signerFingerprint) }
@@ -202,6 +216,45 @@ class MainActivity : Activity() {
         }
         root.addView(authenticatedButton)
         root.addView(authenticatedStatus)
+        if (isDebugActivationBuild()) {
+            val testStatus = TextView(this).apply { setText(R.string.debug_test_not_started) }
+            val startButton = Button(this).apply {
+                setText(R.string.debug_start_button)
+                isEnabled = false
+                setOnClickListener {
+                    val selected = selectedApp ?: return@setOnClickListener
+                    val config = testConfiguration ?: return@setOnClickListener
+                    val manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+                    val network = manager.activeNetwork ?: return@setOnClickListener
+                    if (!verifiedGateway.validFor(selected, config, network) ||
+                        observeVpnReadiness() != VpnReadiness.PREPARED || gatewayProbeRunning) {
+                        testStatus.setText(R.string.debug_test_not_ready)
+                        updateDebugStartAvailability()
+                        return@setOnClickListener
+                    }
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle(R.string.debug_start_button)
+                        .setMessage(R.string.debug_test_warning)
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .setPositiveButton(R.string.debug_start_confirm) { _, _ ->
+                            startRestrictedDebugTest(selected, config, network, testStatus)
+                        }.show()
+                }
+            }
+            debugStartButton = startButton
+            root.addView(startButton)
+            root.addView(Button(this).apply {
+                setText(R.string.stop_restricted_vpn_test)
+                setOnClickListener {
+                    RestrictedDebugActivationRegistry.handoff.clear()
+                    verifiedGateway.clear()
+                    updateDebugStartAvailability()
+                    stopService(Intent(this@MainActivity, SelectedAppVpnService::class.java))
+                    testStatus.setText(R.string.debug_test_stop_requested)
+                }
+            })
+            root.addView(testStatus)
+        }
         // Keep the selection and clear controls reachable on small screens or large fonts.
         setContentView(ScrollView(this).apply {
             fitsSystemWindows = true
@@ -214,6 +267,8 @@ class MainActivity : Activity() {
         // Invalidate in-flight diagnostics before the Activity is discarded.
         // Network probes must not continue on a stale screen or selection.
         gatewayProbeGeneration.incrementAndGet()
+        verifiedGateway.clear()
+        RestrictedDebugActivationRegistry.handoff.clear()
         super.onDestroy()
     }
 
@@ -222,6 +277,7 @@ class MainActivity : Activity() {
         // Consent may have changed in the system dialog or while backgrounded.
         if (selectedApp != null && testConfiguration != null) checkVpnReadiness()
         else vpnStatus?.setText(R.string.vpn_readiness_not_checked)
+        updateDebugStartAvailability()
     }
 
     /**
@@ -328,6 +384,52 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun isDebugActivationBuild(): Boolean =
+        applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+
+    private fun updateDebugStartAvailability() {
+        val manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        val ready = observeVpnReadiness() == VpnReadiness.PREPARED
+        val approved = verifiedGateway.validFor(
+            selectedApp, testConfiguration, manager.activeNetwork
+        )
+        debugStartButton?.isEnabled = canOfferRestrictedDebugStart(
+            isDebugActivationBuild(), ready && !gatewayProbeRunning, approved,
+        )
+    }
+
+    /** This is the only user-driven debug VPN start path. Consent and the
+     * previously verified HTTPS gateway are necessary, but not sufficient:
+     * the Service validates all mutable Android state again before its TUN.
+     */
+    private fun startRestrictedDebugTest(
+        selected: AppChoice, config: RestrictedTestConfiguration,
+        network: Network, status: TextView,
+    ) {
+        val manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        if (!isDebugActivationBuild() || selectedApp !== selected ||
+            testConfiguration !== config || manager.activeNetwork != network ||
+            !verifiedGateway.validFor(selected, config, network) ||
+            observeVpnReadiness() != VpnReadiness.PREPARED || gatewayProbeRunning) {
+            status.setText(R.string.debug_test_not_ready)
+            updateDebugStartAvailability()
+            return
+        }
+        verifiedGateway.clear() // One successful preflight authorizes at most one start attempt.
+        updateDebugStartAvailability()
+        try {
+            val ticket = RestrictedActivationTicket.forFutureExplicitConfirmation(selected, config)
+            val handle = RestrictedDebugActivationRegistry.handoff.stage(ticket, selected, config)
+            startForegroundService(Intent(this, SelectedAppVpnService::class.java)
+                .setAction(ACTION_START_RESTRICTED_DEBUG)
+                .putExtra(EXTRA_RESTRICTED_HANDLE, handle))
+            status.setText(R.string.debug_test_start_requested)
+        } catch (_: RuntimeException) {
+            RestrictedDebugActivationRegistry.handoff.clear()
+            status.setText(R.string.debug_test_start_failed)
+        }
+    }
+
     /** One user-confirmed TLS handshake on a pinned non-VPN network, never a VPN start. */
     private fun startGatewayTlsProbe(
         selected: AppChoice, config: RestrictedTestConfiguration,
@@ -384,7 +486,9 @@ class MainActivity : Activity() {
             return
         }
         val generation = gatewayProbeGeneration.get()
+        verifiedGateway.clear()
         gatewayProbeRunning = true
+        updateDebugStartAvailability()
         button.isEnabled = false
         status.setText(R.string.authenticated_probe_running)
         Thread({
@@ -400,8 +504,11 @@ class MainActivity : Activity() {
                 gatewayProbeRunning = false
                 if (probeStillCurrent(generation, gatewayProbeGeneration.get(), isDestroyed)) {
                     button.isEnabled = true
+                    if (result != null && selectedApp === selected && testConfiguration === config)
+                        verifiedGateway.approve(selected, config, network)
                     status.text = if (result == null) getString(R.string.authenticated_probe_failed)
                         else getString(R.string.authenticated_probe_response, result)
+                    updateDebugStartAvailability()
                 }
             }
         }, "BetterNet-AuthenticatedHttpsProbe").start()
@@ -417,6 +524,7 @@ class MainActivity : Activity() {
             VpnReadiness.NEEDS_CONSENT -> R.string.vpn_readiness_consent_required
             VpnReadiness.PREPARED -> R.string.vpn_readiness_prepared
         })
+        updateDebugStartAvailability()
     }
 
     /** Snapshot only; absence of a visible VPN is not proof of coexistence. */

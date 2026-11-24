@@ -40,6 +40,28 @@ These are criteria, **not a claim that tests currently exist**. Do not infer any
 
 **First workload candidates:** controlled HTTPS browser (A1); browser and messenger actions next; YouTube playback, QUIC/UDP, DRM and adaptive bitrate separately, never assumed from a TCP-only success. No claim about unsupported games/voice.
 
+## Experimental debug A1 activation gate (not yet DEVICE PASS)
+
+JVM checks on a never-started service seam: only an exact one-use in-memory
+handle can claim a session, release builds and unknown actions refuse all
+starts, no user credential is carried in the Intent, the recently verified
+gateway lease is bound to exact app/config and underlying Network, stale/
+reversed time invalidates the lease, and the TUN pump automatically exits after
+the configured monotonic test duration. Verify English/Korean warnings and the
+non-debug UI exclusion in the APK. JVM success cannot establish Android
+foreground-service legality, OEM permission behavior or actual routing.
+
+On an explicitly approved test Android device (and **only** after an authorized
+independent gateway/HTTPS endpoint exists): exercise a chosen disposable app
+and another unrelated app. Verify permission refusal leaves both untouched;
+verified gateway HEAD does not start a VPN; time-limited debug start enables
+only the two host routes; correct DNS→TCP→HTTPS response reaches the selected
+app; the other app never enters the tunnel. Revoke/Stop/timeout/background
+and OS process kill must tear down TUN and sockets and permit returning to
+direct Internet. Repeat on dual-stack and loss/delay, record Android version,
+SHA, exact expected/observed behavior and failure logs **without tokens**.
+If the test cannot run, report A1 as `NOT RUN (DEVICE)`, not `PASS`.
+
 ## A2 performance design
 
 - Record baseline network/path, geography, device/OS, selected app, server trust, Wi-Fi/mobile and cost constraints. Compare BetterNet OFF/direct vs ON using **same task** and network impairment; randomize AB/BA order and repeat enough to show variability.

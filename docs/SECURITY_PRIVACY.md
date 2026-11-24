@@ -26,6 +26,30 @@ Exit nodes and network providers can still observe IP addresses, DNS metadata, c
 4. No blanket bypass of other VPNs. Unexpected starts/restarts, revoke, stopped app, stale server trust and failed cleanup must not leave a hidden forwarding session active.
 5. Network probes can cost money and leak destination metadata. Require explicit request for optional external probes and show the affected network and endpoint category.
 
+## Experimental debug VPN handoff (unmerged A1 prototype)
+
+- **Release builds stay closed:** the service accepts explicit restricted
+  start only in debuggable builds. An unrecognized, duplicated, stale or
+  reconstructed Intent cannot initiate capture; Android and service STOP,
+  process recreation, and permission revoke must fail closed.
+- **Two separate approvals:** OS VPN permission and explicit debug-test warning
+  are independent. A successful user-triggered authenticated HTTPS gateway
+  diagnostic is required on the same Network within 60 seconds before the UI
+  can offer an activation. It does not prove the gateway will remain reachable.
+- **No bearer credential in Intent:** an opaque, single-use process-memory
+  handle retrieves the already chosen app and configuration. No token is
+  logged or written to preferences; process death invalidates the grant.
+- **Exact scope:** the app's current UID/signers, absence of another visible
+  VPN, non-VPN network, approved public HTTPS IP and virtual DNS host routes
+  are rechecked in the service. Android VPN consent is always revocable.
+- **Bounded rollback:** user Stop, selection clear, revoke, network loss,
+  worker failure and a monotonic ~2-minute runtime cap request shutdown.
+  Exact wall-clock cutoff, cleanup races and unselected-app isolation require
+  device verification. No strict lockdown/zero-leak promise is made.
+
+This is a reviewable code path, not permission to route user traffic on any
+physical phone or deploy a gateway without an explicit test environment.
+
 ## Diagnostic data: preview-before-send contract
 
 **Default:** no upload, no centrally hosted collector and no network-activity recording unless a bounded local diagnostic is user-enabled. When enabled, show the user the contents and recipients **before** any optional send.

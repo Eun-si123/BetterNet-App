@@ -16,8 +16,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal class RestrictedTunPump(
     private val session: RestrictedTunSession,
     private val revalidate: () -> Unit = {},
+    private val maxRunMillis: Long = Long.MAX_VALUE,
     private val nowMillis: () -> Long,
 ) {
+    init { require(maxRunMillis > 0) }
     private val started = AtomicBoolean(false)
     private val stopRequested = AtomicBoolean(false)
 
@@ -26,7 +28,16 @@ internal class RestrictedTunPump(
         check(started.compareAndSet(false, true)) { "TUN pump already started" }
         var failure: Throwable? = null
         try {
+            var startedAt = -1L
             while (!stopRequested.get()) {
+                if (maxRunMillis != Long.MAX_VALUE) {
+                    val now = nowMillis()
+                    if (startedAt < 0) startedAt = now
+                    val elapsed = now - startedAt
+                    // A debug test must release the selected app's route after
+                    // a fixed interval; rollback or clock changes end it too.
+                    if (now < 0 || elapsed < 0 || elapsed >= maxRunMillis) break
+                }
                 // An established TUN can outlive the original app identity,
                 // OS permission or underlying network. Fail before the next
                 // packet/gateway cycle rather than trusting activation-time state.

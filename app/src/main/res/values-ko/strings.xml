@@ -1,6 +1,6 @@
 <resources>
   <string name="app_name">BetterNet</string>
-  <string name="preview_scope">새 공개 앱의 초기 버전입니다. 네트워크 상태 확인과 선택적 Android VPN 권한 준비만 지원하며, VPN 연결·트래픽 중계·속도 최적화는 아직 구현되지 않았습니다.</string>
+  <string name="preview_scope">초기 개발 버전입니다. 네트워크 진단과 게이트웨이 검사를 지원하며, 디버그 빌드에서는 별도 동의·HTTPS 검사 이후 2분 제한 단일 앱 VPN 테스트만 가능합니다. 일반 인터넷 가속 및 안정판 VPN은 제공하지 않습니다.</string>
   <string name="not_checked">아직 연결 상태를 확인하지 않았습니다</string>
   <string name="refresh_network">현재 연결 상태 확인</string>
   <string name="state_disconnected">활성 네트워크 없음</string>
@@ -17,10 +17,10 @@
   <string name="metered_no">종량제로 보고되지 않음</string>
   <string name="network_summary">상태: %1$s\n네트워크: %2$s\n데이터 비용: %3$s</string>
   <string name="no_app_selected">선택한 테스트 앱이 없습니다. 트래픽은 라우팅되지 않습니다.</string>
-  <string name="select_test_app">테스트 앱 선택 (라우팅 없음)</string>
+  <string name="select_test_app">테스트 앱 선택 (선택만으로 라우팅 안 함)</string>
   <string name="clear_app_selection">테스트 앱 선택 해제</string>
   <string name="no_selectable_apps">표시할 수 있는 다른 앱이 없습니다. 선택되지 않았습니다.</string>
-  <string name="selected_app_summary">향후 테스트용 선택: %1$s (%2$s). 트래픽은 라우팅되지 않습니다.</string>
+  <string name="selected_app_summary">선택한 테스트 앱: %1$s (%2$s). 별도의 디버그 테스트에 동의한 경우에만 트래픽이 전달됩니다.</string>
   <string name="vpn_readiness_not_checked">VPN 준비 상태를 확인하지 않았습니다. 연결은 시작되지 않습니다.</string>
   <string name="check_vpn_readiness">VPN 준비 상태 확인 (권한 요청 없음)</string>
   <string name="vpn_readiness_app_unavailable">선택한 테스트 앱이 더 이상 실행 앱 목록에 표시되지 않습니다. VPN 권한을 요청하기 전에 다시 선택하세요. VPN은 시작되지 않았습니다.</string>
@@ -41,9 +41,9 @@
   <string name="test_gateway_token">일회용 Bearer 인증 정보 (base64url 16–256자)</string>
   <string name="save_test_config">기기에 임시 설정</string>
   <string name="test_config_invalid">설정이 올바르지 않습니다. 이름, 공개 숫자 IP, 포트, 인증 정보 형식을 확인하세요.</string>
-  <string name="test_config_summary">임시 설정만 완료: %1$s:%2$d → %3$s (%4$s). 트래픽은 라우팅되지 않습니다.</string>
+  <string name="test_config_summary">설정만 임시 보관됨: %1$s:%2$d → %3$s (%4$s). 별도 디버그 시작 동의 전에는 라우팅하지 않습니다.</string>
   <string name="request_vpn_consent">Android VPN 권한 요청 (연결 안 함)</string>
-  <string name="vpn_consent_warning">Android VPN 권한만 요청합니다. BetterNet은 아직 초기 개발 단계로 VPN 시작, 트래픽 수집, 게이트웨이 연결, 임시 인증 정보 사용을 하지 않습니다. Android VPN 권한은 기기 수준으로 부여되며 테스트 앱 선택을 해제해도 유지될 수 있습니다. 다른 VPN을 사용 중이면 취소하고 기존 VPN을 유지하세요.</string>
+  <string name="vpn_consent_warning">이 버튼은 Android VPN 권한만 요청하며 직접 VPN·게이트웨이·인증 정보 사용을 시작하지 않습니다. 이후 별도 명시적 디버그 테스트 동의 시 제한된 VPN이 시작될 수 있습니다. 기기 수준 VPN 권한은 앱 선택 해제 후에도 유지될 수 있습니다. 다른 VPN 사용 중에는 취소하세요.</string>
   <string name="continue_to_system_consent">Android 동의 화면으로</string>
   <string name="vpn_notification_channel">제한된 VPN 테스트</string>
   <string name="stop_restricted_vpn_test">제한된 VPN 테스트 중지</string>
@@ -62,4 +62,12 @@
   <string name="authenticated_probe_running">인증된 HTTPS 경로 확인 중…</string>
   <string name="authenticated_probe_response">게이트웨이를 통해 검증된 HTTPS 서버에서 HTTP %1$d 응답을 받았습니다. VPN과 선택 앱 전달은 테스트하지 않았습니다.</string>
   <string name="authenticated_probe_failed">인증된 HTTPS 경로 실패 또는 승인 상태 변경. VPN은 시작되지 않았습니다.</string>
+  <string name="debug_start_button">2분 제한 단일 앱 VPN 테스트 시작 (디버그)</string>
+  <string name="debug_test_warning">실험용 디버그 테스트입니다. 인증된 HTTPS 게이트웨이 검사 성공 및 Android VPN 권한 승인 후, 선택한 앱에만 가상 DNS와 승인된 HTTPS IP 두 경로로 제한된 VPN을 시작합니다. 해당 앱의 다른 사이트 연결은 테스트 중 끊길 수 있고 데이터 요금이 발생할 수 있습니다. 일반 VPN/인터넷 가속 기능이 아닙니다. 중요한 앱은 선택하지 마세요. 중지 버튼 또는 약 2분 뒤 자동 종료를 요청하지만, OS 작업이 지연될 수 있습니다. 권한이 있는 게이트웨이와 목적지만 이용하세요.</string>
+  <string name="debug_start_confirm">제한된 테스트 시작</string>
+  <string name="debug_test_not_started">디버그 VPN 미시작. 최근 성공한 인증된 HTTPS 게이트웨이 검사 결과가 필요합니다.</string>
+  <string name="debug_test_not_ready">준비되지 않았습니다. HTTPS 경로를 다시 확인하고, Android VPN 권한을 허용한 뒤 다른 VPN을 종료해야 합니다.</string>
+  <string name="debug_test_start_requested">디버그 VPN 시작을 요청했습니다. 실제 실행은 Android VPN 상태/알림에서 확인하세요. 이 메시지는 인터넷 전달 성공을 뜻하지 않습니다.</string>
+  <string name="debug_test_start_failed">디버그 VPN 시작 요청이 거부되었습니다. 연결 성공으로 표시하지 않습니다.</string>
+  <string name="debug_test_stop_requested">VPN 중지를 요청했습니다. 실제 종료 여부는 Android VPN 상태에서 확인하세요.</string>
 </resources>

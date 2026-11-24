@@ -1,6 +1,6 @@
 <resources>
   <string name="app_name">BetterNet</string>
-  <string name="preview_scope">Early public app foundation. Network status, optional VPN permission preparation and a user-confirmed TLS-only gateway check. No VPN connection, forwarding or optimization is available.</string>
+  <string name="preview_scope">Pre-alpha: network status and gateway diagnostics. Only debug builds can explicitly start a 2-minute restricted single-app VPN test after permission and a verified HTTPS probe. General Internet access and optimization are NOT provided.</string>
   <string name="not_checked">No observation yet</string>
   <string name="refresh_network">Check connection</string>
   <string name="state_disconnected">No active network</string>
@@ -17,10 +17,10 @@
   <string name="metered_no">Not reported as metered</string>
   <string name="network_summary">State: %1$s\nNetwork: %2$s\nCost: %3$s</string>
   <string name="no_app_selected">No test app selected. No traffic is routed.</string>
-  <string name="select_test_app">Select a test app (no routing)</string>
+  <string name="select_test_app">Select test app (selection alone does not route)</string>
   <string name="clear_app_selection">Clear test app selection</string>
   <string name="no_selectable_apps">No other launcher apps are visible. Nothing was selected.</string>
-  <string name="selected_app_summary">Selected for future testing: %1$s (%2$s). No traffic is routed.</string>
+  <string name="selected_app_summary">Selected test app: %1$s (%2$s). Traffic is routed only after a separate debug test confirmation.</string>
   <string name="vpn_readiness_not_checked">VPN readiness not checked. No connection is started.</string>
   <string name="check_vpn_readiness">Check VPN readiness (no permission prompt)</string>
   <string name="vpn_readiness_app_unavailable">The selected test app is no longer launcher-visible. Select it again before requesting VPN permission. No VPN was started.</string>
@@ -41,9 +41,9 @@
   <string name="test_gateway_token">Disposable bearer credential (16–256 base64url characters)</string>
   <string name="save_test_config">Stage locally</string>
   <string name="test_config_invalid">Invalid configuration. Check names, public numeric IP, port and credential format.</string>
-  <string name="test_config_summary">Staged only: %1$s:%2$d → %3$s (%4$s). No traffic is routed.</string>
+  <string name="test_config_summary">Staged only: %1$s:%2$d → %3$s (%4$s). Only a separate confirmed debug start can route the selected app.</string>
   <string name="request_vpn_consent">Request Android VPN permission (no connection)</string>
-  <string name="vpn_consent_warning">This asks Android for VPN permission only. BetterNet is still pre-alpha: it will NOT start a VPN, capture traffic, connect to a gateway, or use the staged credential. Android VPN permission is device-level and may remain granted after you clear the test app. If another VPN is active, cancel and keep using it.</string>
+  <string name="vpn_consent_warning">This button only requests Android VPN permission; it does not start routing, connect to a gateway or use a token. An additional explicit debug-only test action may later start a restricted VPN. Android VPN permission is device-level and can outlive app selection. If another VPN is active, cancel and keep using it.</string>
   <string name="continue_to_system_consent">Continue to Android</string>
   <string name="vpn_notification_channel">Restricted VPN test</string>
   <string name="stop_restricted_vpn_test">Stop restricted VPN test</string>
@@ -62,4 +62,12 @@
   <string name="authenticated_probe_running">Checking authenticated HTTPS path…</string>
   <string name="authenticated_probe_response">Verified HTTPS peer responded with HTTP %1$d via the gateway. No VPN or selected-app forwarding was tested.</string>
   <string name="authenticated_probe_failed">Authenticated HTTPS path failed or authorization changed. No VPN was started.</string>
+  <string name="debug_start_button">Start 2-minute scoped VPN test (DEBUG)</string>
+  <string name="debug_test_warning">Experimental debug test ONLY. After a successful authenticated HTTPS gateway check and Android VPN consent, this starts a temporary VPN capturing ONLY the selected app on two exact routes (virtual DNS and approved HTTPS IP). The app may lose access to other destinations during this test; data charges may occur, and this is NOT a general VPN or acceleration product. Do not select a critical app. Stop requests shutdown immediately; a separate timer ends the test after about 2 minutes, subject to bounded OS I/O delays. Test only with a gateway and destination you are authorized to use.</string>
+  <string name="debug_start_confirm">Start restricted test</string>
+  <string name="debug_test_not_started">Restricted debug VPN has not been started. A successful recent authenticated HTTPS probe is required.</string>
+  <string name="debug_test_not_ready">Not ready. Verify the gateway HTTPS path again, grant Android VPN permission, and ensure no other VPN is active.</string>
+  <string name="debug_test_start_requested">Restricted debug VPN start requested. Android VPN status and the foreground notification indicate actual activity; this message is NOT evidence of Internet forwarding.</string>
+  <string name="debug_test_start_failed">Restricted debug start was refused. No VPN success is claimed.</string>
+  <string name="debug_test_stop_requested">Restricted VPN stop requested. Check the Android VPN status to confirm it stopped.</string>
 </resources>

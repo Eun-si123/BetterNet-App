@@ -13,7 +13,19 @@
 
 The feature PR adds a dormant `SelectedAppVpnService` boundary, `RestrictedTun*` ownership/lifecycle/pump, per-packet ingress and DNS/TCP primitives, verified TLS and scoped HTTP CONNECT clients, diagnostic probes and a **loopback-only** Python reference gateway. They have isolated gateway/Android CI coverage, but a real device's selected-app HTTPS response is **NOT RUN**. No home-server deployment or general Internet relay is in use.
 
-This is the intended future high-level path **only after consent and A1 proof**:
+An additional unmerged **debug-only opt-in activation path** reuses that
+restricted worker, only after a recent approved authenticated HTTPS diagnostic,
+independent OS VPN permission and explicit second consent. A one-use opaque
+Intent handle retrieves app/config/token from an in-process registry; credentials
+never enter Intent extras. The service revalidates app signature/UID, visible
+other VPNs and the underlying network before foreground promotion and TUN
+creation. Only virtual DNS and one approved public HTTPS IP are routed for the
+selected app, the owner has a roughly two-minute runtime ceiling, and unknown,
+restarted or non-debug service starts shut down. Real Android use remains
+**NOT RUN**. No remote node, general-purpose VPN, or signed release is
+authorized by the debug code.
+
+This is the intended narrow test path **subject to physical A1 proof**:
 
 ```text
 User / Android UI  -- explicit app + network + fallback choice -->  Scoped Android VPN controller
