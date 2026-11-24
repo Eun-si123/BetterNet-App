@@ -2,5 +2,5 @@
 // Do not reintroduce unrelated direct buildscript constraints just to mask
 // old plugin transitive versions in GitHub's dependency graph.
 plugins {
-  id("com.android.application") version "9.4.0" apply false
+  id("com.android.application") version "9.5.1" apply false
 }
