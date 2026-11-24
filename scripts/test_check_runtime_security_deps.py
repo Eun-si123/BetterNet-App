@@ -1,6 +1,8 @@
 """Regression tests for runtime-only security dependency evidence."""
+import io
 import unittest
-from scripts.check_runtime_security_deps import vulnerable_entries
+from unittest.mock import patch
+from scripts.check_runtime_security_deps import vulnerable_entries, main
 
 
 class RuntimeDependencyAuditTests(unittest.TestCase):
@@ -19,6 +21,16 @@ class RuntimeDependencyAuditTests(unittest.TestCase):
 
     def test_readme_or_random_text_does_not_appear_as_dependency(self):
         self.assertEqual(vulnerable_entries("README: vulnerability in a buildscript"), [])
+
+    def test_exact_debug_runtime_configuration_header_passes(self):
+        with patch("sys.argv", ["audit.py", "debugRuntimeClasspath"]), \
+             patch("sys.stdin", io.StringIO("debugRuntimeClasspath - Runtime classpath of variant debug.\\nNo dependencies")):
+            self.assertEqual(main(), 0)
+
+    def test_mismatched_configuration_header_fails_closed(self):
+        with patch("sys.argv", ["audit.py", "releaseRuntimeClasspath"]), \
+             patch("sys.stdin", io.StringIO("debugRuntimeClasspath - Runtime classpath of variant debug.\\nNo dependencies")):
+            self.assertEqual(main(), 1)
 
     def test_kotlin_stdlib_is_not_the_gradle_plugin(self):
         self.assertEqual(vulnerable_entries("+--- org.jetbrains.kotlin:kotlin-stdlib:2.2.10"), [])
