@@ -106,7 +106,7 @@ jobs:
           # do not let a Maven outage hide what actually ships in the app.
           for config in debugRuntimeClasspath releaseRuntimeClasspath; do
             ./gradlew --offline --no-daemon :app:dependencies --configuration "$config" > "$RUNNER_TEMP/$config.txt"
-            python3 scripts/check_runtime_security_deps.py < "$RUNNER_TEMP/$config.txt"
+            python3 scripts/check_runtime_security_deps.py "$config" < "$RUNNER_TEMP/$config.txt"
           done
       - name: Test APK secret scanner fixtures and inspect built artifact
         run: |
