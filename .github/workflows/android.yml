@@ -24,6 +24,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      # Cache verified Gradle artifacts across runs; reduce repeated remote
+      # Maven fetches on hourly development CI and rate-limit exposure.
+      - uses: gradle/actions/setup-gradle@v4
       - name: Install Android SDK packages
         shell: bash
         run: |
@@ -36,7 +39,25 @@ jobs:
           echo "::error::Android command-line SDK tools are missing"
           exit 1
       - name: Test and build
-        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+        shell: bash
+        run: |
+          # Retry ONLY Maven repository HTTP 429; a compilation, Lint, test
+          # or other build failure must remain an immediate hard failure.
+          set -o pipefail
+          build_log="$(mktemp)"
+          trap 'rm -f "$build_log"' EXIT
+          for attempt in 1 2 3; do
+            if ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug 2>&1 | tee "$build_log"; then
+              exit 0
+            fi
+            if (( attempt == 3 )) || ! grep -Eq 'Received status code 429|Too Many Requests' "$build_log"; then
+              exit 1
+            fi
+            echo "::warning::Maven repository returned HTTP 429; retrying after backoff ($attempt/3)"
+            sleep $((attempt * 30))
+            : > "$build_log"
+          done
+          exit 1
       - name: Test APK secret scanner fixtures and inspect built artifact
         run: |
           python3 -m unittest discover -s scripts -p 'test_check_apk_secrets.py' -v

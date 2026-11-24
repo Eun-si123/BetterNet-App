@@ -54,6 +54,11 @@ For each future optional component measure **baseline signed APK/download size, 
 ## CI and change management
 
 - Default branch: GitHub Actions compiles Android JVM tests, Lint and Debug APK with SHA/artifact checksums. Draft PR #7 adds isolated loopback and netem tests but has not been merged; always check the exact workflow tied to the commit.
+- Android CI restores Gradle dependencies with the official setup-gradle
+  cache and retries ONLY observable Maven repository HTTP 429 rate limits,
+  at most twice with bounded backoff. Non-429 build, Lint and test failures
+  still fail immediately; retrying never waives test/provenance/APK checks.
+  A successful cache hit is not test or device evidence.
 - Documentation PRs run `python3 -m unittest discover -s scripts -p 'test_check_docs.py'` and `python3 scripts/check_docs.py` where available; link checks must also detect broken references and reject leaving the repository root.
 - Keep release signing, secrets and third-party DNS/network requests out of documentation checks. A CI pass cannot establish user-device VPN behavior.
 - Failures are useful evidence. Before retrying: record initial reproduction, isolate source/test/environment regression, fix the cause, repeat at the same gate and link new exact-head CI.
