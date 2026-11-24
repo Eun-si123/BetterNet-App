@@ -43,6 +43,7 @@ class SelectedAppVpnService : VpnService() {
         schedule = { task, delay -> debugDeadlineHandler.postDelayed(task, delay) },
         unschedule = { task -> debugDeadlineHandler.removeCallbacks(task) },
         requestStop = {
+            recordDebugEvent(RestrictedDebugEvent.TIME_LIMIT_REACHED)
             try {
                 stopRestrictedServiceFailClosed(
                     cancel = { tunLifecycle.cancel() },
@@ -55,7 +56,14 @@ class SelectedAppVpnService : VpnService() {
         },
     )
 
+    private fun recordDebugEvent(event: RestrictedDebugEvent) {
+        RestrictedDebugEvents.record(
+            applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0, event,
+        )
+    }
+
     override fun onRevoke() {
+        recordDebugEvent(RestrictedDebugEvent.VPN_REVOKED)
         // Even if closing the TUN descriptor fails, Android's revocation
         // callback must still run; otherwise the service can remain alive.
         try {
@@ -70,6 +78,7 @@ class SelectedAppVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        recordDebugEvent(RestrictedDebugEvent.SERVICE_DESTROYED)
         try {
             RestrictedDebugActivationRegistry.handoff.clear()
             debugStopWatchdog.cancel()
@@ -307,7 +316,14 @@ class SelectedAppVpnService : VpnService() {
             // An independent main-looper watchdog cancels even when the
             // pump is waiting inside an OS callback rather than iterating.
         ),
-        onTerminated = {
+        onTerminated = { error ->
+            recordDebugEvent(
+                when (error) {
+                    null -> RestrictedDebugEvent.WORKER_TERMINATED
+                    is RestrictedTunByteBudgetExceeded -> RestrictedDebugEvent.TUN_BUDGET_EXCEEDED
+                    else -> RestrictedDebugEvent.WORKER_FAILED
+                }
+            )
             // Even an unexpected pump failure must not leave a future
             // foreground service running without an owned TUN. The callback
             // runs after owner-thread cleanup and never joins its own thread.
@@ -474,9 +490,11 @@ class SelectedAppVpnService : VpnService() {
                     session.ticket, manager, underlying,
                     session.app, session.configuration, timeoutMs = 3_000,
                 )
+                recordDebugEvent(RestrictedDebugEvent.START_ACCEPTED)
                 return START_NOT_STICKY
             } catch (_: Exception) {
                 // No token, selected package, destination or exception is logged.
+                recordDebugEvent(RestrictedDebugEvent.START_REFUSED)
                 debugStopWatchdog.cancel()
                 android.util.Log.w("BetterNet", "Restricted debug activation refused")
             }

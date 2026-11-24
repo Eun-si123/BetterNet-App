@@ -11,7 +11,7 @@ precedence over this snapshot.
 | Public main at 9ee93d3 | Pre-alpha baseline | Does not include A1 experimental VPN; PR #21 CI recovery merged |
 | [A1 implementation Draft #7](https://github.com/Eun-si123/BetterNet-App/pull/7) at 4637073 | Unmerged | Restricted gateway and TUN components; not device-proven |
 | [Explicit debug start Draft #20](https://github.com/Eun-si123/BetterNet-App/pull/20) at 82d1277 | Stacked on #7 | Consent-based, memory-only, one-use test start; no device proof |
-| [A1 stability Draft #22](https://github.com/Eun-si123/BetterNet-App/pull/22) | Stacked on #20 | Network identity pin, bounded dual-stack retry, browser DNS and stop/rollback fixes; 342 local JVM PASS at b8459d8; bounded TUN-byte implementation under review |
+| [A1 stability Draft #22](https://github.com/Eun-si123/BetterNet-App/pull/22) | Stacked on #20 | Network pin, dual-stack TCP, browser DNS, 120s/8 MiB limits, and opt-in local event diagnostics; at this source revision 356 local JVM PASS; device NOT RUN |
 | [TCP-focused Draft #19](https://github.com/Eun-si123/BetterNet-App/pull/19) | Its fix is integrated into #22 | Preserve as focused review; do not separately double-merge |
 
 These pending PRs are **not** on main and are **not** releases. The exact
@@ -31,18 +31,29 @@ latest SHA and GitHub CI must be rechecked before claiming any new pass.
 
 ## Reproducible A1 draft evidence
 
-At draft commit b8459d8 in the controlled Ubuntu mini-PC environment (before the new TUN-byte-budget patch):
-- 342 Android JVM tests PASS, 0 failures/skips (31 suites)
+At this source revision in the controlled Ubuntu mini-PC environment:
+- 356 Android JVM tests PASS, 0 failures/skips (33 suites)
 - Android Lint and debug/unsigned release APK build PASS
 - VPN merged manifest and APK high-confidence secret scan PASS
-- Documentation check PASS; Python gateway tests 9 PASS
+- Documentation checks and 28 Python script unit tests PASS; gateway tests 9 PASS
 - Disposable Linux loopback tests 9/9 baseline + 9/9 under 25±5 ms
   delay and 3% loss PASS
+- GitHub Actions for this specific new revision need independent verification
 
 **No connected Android test handset, no approved external gateway test,
 no real HTTPS browser traffic, and no unrelated-app isolation proof.**
 All these results remain local fixture or static/build evidence. A passing
 GitHub Actions run would not establish A1 DEVICE PASS.
+
+## Optional A1 debug event evidence (unmerged review)
+
+A1 Draft #22 now also proposes a process-only 64-code event journal with
+manual View, Copy and Clear controls in **debug builds**. Every entry is an
+enum code and approximate relative seconds, not a token, endpoint, app name
+or packet. Nothing is automatically sent, saved or copied. The user can
+inspect the exact text before deciding to copy it to the Android clipboard.
+This is review/fixture evidence only, **not** hardware verification of the
+real browser/tunnel lifecycle.
 
 ## Read-only test-phone preflight
 

@@ -39,6 +39,20 @@ not guaranteed strict no-leak or an OS-enforced wall-clock limit. Physical
 Android testing of service Stop, revocation and per-app isolation remains
 required.
 
+## Optional user-reviewed debug events (local memory only)
+
+The A1 debug Activity has a deliberately opt-in **View debug events** dialog
+and separate Copy/Clear controls. Only a closed Kotlin enum of status codes
+can be recorded, with approximate time since the first event and a strict
+64-entry cap. There is no arbitrary message/exception overload and no
+credential, URL, host/IP, package identifier, TUN contents, crash trace,
+persisted file or network submission. Events disappear when the app process
+dies or the user clears them. Viewing does not alter clipboard state.
+The Copy button exports **only the previewed text** to Android's system
+clipboard after explicit user action; other apps may see clipboard content,
+so the preview prominently warns about that exposure. App and service
+recording is locally observable but does not constitute VPN or HTTPS proof.
+
 ## Debug-only combined TUN packet traffic budget
 
 An experimental A1 debug session limits **combined TUN ingress and egress**

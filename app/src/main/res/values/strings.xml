@@ -70,4 +70,9 @@
   <string name="debug_test_start_requested">Restricted debug VPN start requested. Android VPN status and the foreground notification indicate actual activity; this message is NOT evidence of Internet forwarding.</string>
   <string name="debug_test_start_failed">Restricted debug start was refused. No VPN success is claimed.</string>
   <string name="debug_test_stop_requested">Restricted VPN stop requested. Check the Android VPN status to confirm it stopped.</string>
+  <string name="debug_view_events">View A1 debug events (local only)</string>
+  <string name="debug_clear_events">Clear events</string>
+  <string name="debug_copy_events">Copy this preview</string>
+  <string name="debug_events_copied">Only the previewed event codes were copied. Clipboard content can be read by other apps.</string>
+  <string name="debug_events_copy_failed">Clipboard access failed; events remain local to this process.</string>
 </resources>

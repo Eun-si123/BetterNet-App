@@ -74,6 +74,20 @@ direct Internet. Repeat on dual-stack and loss/delay, record Android version,
 SHA, exact expected/observed behavior and failure logs **without tokens**.
 If the test cannot run, report A1 as `NOT RUN (DEVICE)`, not `PASS`.
 
+## A1 opt-in diagnostic privacy and lifecycle regression
+
+Check the debug-only View/Copy/Clear event UI. Only user-triggered preview
+may expose the finite event ledger; the second Copy action writes only
+reviewed text to clipboard. Neither recording nor viewing persists, uploads,
+collects IPs/domains/tokens, accesses private logs or auto-copies.
+Validate the pure JVM journal: fixed event enum, relative timestamps,
+clock rollback, at most 64 retained entries, oldest eviction, clear reset,
+concurrency and typed quota refusal with no numeric/session/secret payload.
+Release builds must not show the diagnostic controls. A successful
+START_ACCEPTED code never counts as real A1 browser connectivity evidence;
+physical Android UI, clipboard and service-lifecycle observations remain
+NOT RUN (DEVICE).
+
 ## A1 debug test dual-direction TUN byte quota
 
 JVM regression tests verify a single 8 MiB (8 * 1024 * 1024 bytes) budget

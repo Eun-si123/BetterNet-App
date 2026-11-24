@@ -70,6 +70,23 @@ only invalidated the next-start lease and could leave the old restricted
 session running for the remainder of its lifetime. Android device verification
 of notification, STOP races, and actual route removal is still **NOT RUN**.
 
+## A1 opt-in local diagnostic event ledger (device evidence support)
+
+In debug builds only, an explicit **View A1 debug events** UI permits users
+to review up to 64 predefined event codes and approximate process-relative
+seconds. Codes cover selection/config changes, HTTPS probe success/failure,
+service start refusal/acceptance, stop/revoke/timeout, worker termination
+and the limited TUN quota. No arbitrary strings, stack traces, hostnames, IP
+addresses, package names, bearer credentials or packet contents can enter the
+bounded memory-only ring. Process death discards it; the user may clear it.
+There is **no automatic upload or clipboard write**. Only the user's separate
+Copy button puts the *previewed* text on the OS clipboard, whose contents
+may be visible to other apps. This is explicit in the preview warning.
+
+Start-accepted means only that Android returned from the bounded test
+activation; it is **not** a verified HTTPS browser response. Actual Android
+diagnostics and device A1 acceptance remain NOT RUN.
+
 ## A1 debug TUN byte-usage ceiling (not carrier billing quota)
 
 In addition to the independent ~120-second stop paths, an explicitly started
