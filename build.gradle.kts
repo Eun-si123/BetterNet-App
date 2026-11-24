@@ -11,6 +11,15 @@ buildscript {
   }
   dependencies {
     constraints {
+      // Build tools only: resolve known-vulnerable AGP 8.13.2 transitives.
+      // Keep the BC Java modules in sync for provider/ASN.1 compatibility.
+      classpath("org.bouncycastle:bcprov-jdk18on:1.86")
+      classpath("org.bouncycastle:bcpkix-jdk18on:1.86")
+      classpath("org.bouncycastle:bcutil-jdk18on:1.86")
+      classpath("org.bitbucket.b_c:jose4j:0.9.6")
+      classpath("org.jdom:jdom2:2.0.6.1")
+      classpath("org.apache.commons:commons-compress:1.26.0")
+      classpath("com.google.guava:guava:33.7.2-jre")
       classpath("io.netty:netty-buffer:4.1.137.Final")
       classpath("io.netty:netty-codec:4.1.137.Final")
       classpath("io.netty:netty-codec-http:4.1.137.Final")
