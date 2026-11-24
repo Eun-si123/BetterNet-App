@@ -88,6 +88,17 @@ START_ACCEPTED code never counts as real A1 browser connectivity evidence;
 physical Android UI, clipboard and service-lifecycle observations remain
 NOT RUN (DEVICE).
 
+## A1 crossed TCP data/ACK ordering
+
+For IPv4 and IPv6, exercise SYN/ACK setup, a pending server response, and an
+in-order client payload carrying the unchanged cumulative ACK. The payload
+must reach the upstream exactly once; its delivery ACK uses SND.NXT, even
+at sequence-number wraparound. Replaying that client packet re-ACKs without
+an upstream write, the pending response remains retriable, and only the
+exact full response ACK retires it. Keep partial/future ACK, wrong tuple,
+wrong sequence, checksum and receive-window negative tests. This is a
+packet/stream fixture, not a selected Android app or WAN TLS success.
+
 ## A1 debug test dual-direction TUN byte quota
 
 JVM regression tests verify a single 8 MiB (8 * 1024 * 1024 bytes) budget

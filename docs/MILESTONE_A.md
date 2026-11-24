@@ -13,6 +13,20 @@ One explicitly selected, consenting Android app completes a genuine HTTPS reques
 - **A2: Measurable value.** Same workload with BetterNet OFF/ON under Linux-host-simulated impairment; compare task success, p50/p95, recovery, overhead, data cost and battery. A direct/no-change choice is valid when the tunnel is worse.
 - **A3: Auto and restricted environments.** Only validated routing, scheduling and transport adaptation; later protocol-blocking and vetted relays, without unsupported anonymity or universal unblockability promises.
 
+## A1 crossed bidirectional TCP data (draft)
+
+A one-segment response retry slot must not block independent client-to-gateway
+data. A valid in-order client segment may acknowledge either the current
+cumulative server sequence or the complete outstanding server response.
+Only the latter retires the outstanding response; partial and future ACKs
+remain rejected. Delivery and duplicate-payload ACKs use the next server
+send sequence, including outstanding response bytes and 32-bit wraparound.
+The already sent response remains eligible for bounded exact-packet retry;
+an exact duplicate client payload is re-ACKed without repeating the upstream
+write. This improves the existing restricted single-flow test path, not a
+full TCP stack. Partial ACKs, general reordering and physical Android browser
+interoperability are not established by this regression.
+
 ## Single budget for restricted gateway connection
 
 The dormant A1 authenticated CONNECT path uses one monotonic timeout for
