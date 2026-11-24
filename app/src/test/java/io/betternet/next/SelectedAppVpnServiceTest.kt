@@ -684,6 +684,83 @@ class SelectedAppVpnServiceTest {
         assertEquals(0, attempts)
     }
 
+    @Test fun blackholedFirstFamilyLeavesTimeForOtherFamily() {
+        // The old entire-budget TCP dial could starve a reachable IPv4
+        // address after the initial IPv6 SYN packets were blackholed.
+        val v6 = InetAddress.getByName("2001:db8::2")
+        val v4 = InetAddress.getByName("192.0.2.2")
+        val events = mutableListOf<String>()
+        var clockNanos = 0L
+        val chosen = connectWithGatewayTcpFallback(
+            "gateway.example", 443, 1000,
+            { arrayOf(v6, v4) },
+            { address, totalBudget, tcpBudget ->
+                events += address.address.hostAddress.orEmpty() + ":" + totalBudget + "/" + tcpBudget
+                connectProtectedSocket(address, totalBudget,
+                    protect = { events += "protect"; true },
+                    createSocket = {
+                        object : Socket() {
+                            override fun connect(endpoint: SocketAddress?, timeout: Int) {
+                                events += "tcp:" + timeout
+                                if (address.address == v6) {
+                                    assertEquals(500, timeout)
+                                    clockNanos += timeout * 1_000_000L
+                                    throw SocketTimeoutException("IPv6 blackhole")
+                                }
+                            }
+                            override fun close() { events += "close" }
+                        }
+                    },
+                    bind = { events += "bind" },
+                    connectTimeout = { tcpBudget },
+                ).close()
+                address
+            },
+            { clockNanos },
+        )
+        assertEquals(v4, chosen.address)
+        assertEquals(listOf(
+            v6.hostAddress.orEmpty() + ":1000/500", "protect", "bind", "tcp:500", "close",
+            v4.hostAddress.orEmpty() + ":500/500", "protect", "bind", "tcp:500", "close",
+        ), events)
+    }
+
+    @Test fun fallbackNeverReplaysTlsOrConnectFailureOrProtectionRefusal() {
+        val first = InetAddress.getByName("2001:db8::2")
+        val second = InetAddress.getByName("192.0.2.2")
+        for (failure in listOf(
+            javax.net.ssl.SSLHandshakeException("Rejected certificate"),
+            SocketTimeoutException("Post-connect TLS/CONNECT timeout"),
+            SecurityException("VPN protection revoked"),
+        )) {
+            var attempts = 0
+            try {
+                connectWithGatewayTcpFallback("gateway.example", 443, 1000,
+                    { arrayOf(first, second) },
+                    { _, _, _ -> attempts++; throw failure },
+                )
+                fail("Must not try a second address after TLS/auth/scope failure")
+            } catch (caught: Exception) {
+                assertSame(failure, caught)
+                assertEquals(1, attempts)
+            }
+        }
+    }
+
+    @Test fun singleAddressUsesEntireBudgetAndNoExtraDnsQueries() {
+        val first = InetAddress.getByName("192.0.2.2")
+        var lookups = 0
+        val budgets = mutableListOf<Pair<Int, Int>>()
+        val chosen = connectWithGatewayTcpFallback("gateway.example", 443, 750,
+            { lookups++; arrayOf(first) },
+            { address, total, tcp -> budgets += total to tcp; address },
+            { 0L },
+        )
+        assertEquals(first, chosen.address)
+        assertEquals(1, lookups)
+        assertEquals(listOf(750 to 750), budgets)
+    }
+
     private fun assertRejected(packageName: String?) {
         try {
             requireSelectedPackage(packageName, "io.betternet.next")

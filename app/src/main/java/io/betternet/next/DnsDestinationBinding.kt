@@ -164,6 +164,7 @@ internal fun connectDnsBoundTestTcpBridge(
     protect: (Socket) -> Boolean,
     tlsFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
     bind: (Socket) -> Unit = {},
+    tcpConnectBudgetMs: Int? = null,
 ): OfflineTcpTunBridge {
     require(binding.allows(syn, nowMillis) &&
         buildTcpSynAck(syn, serverIsn, mtu) != null) {
@@ -171,7 +172,8 @@ internal fun connectDnsBoundTestTcpBridge(
     }
     val tunnel = connectAuthenticatedPinnedIpTestTunnel(
         gatewayAddress, gatewayName, timeoutMs, protect, binding.address, 443,
-        bearerToken, tlsFactory = tlsFactory, bind = bind
+        bearerToken, tlsFactory = tlsFactory, bind = bind,
+        tcpConnectBudgetMs = tcpConnectBudgetMs,
     )
     return try {
         // CONNECT has its own whole-response deadline. Once authenticated,

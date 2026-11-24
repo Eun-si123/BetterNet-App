@@ -40,6 +40,18 @@ These are criteria, **not a claim that tests currently exist**. Do not infer any
 
 **First workload candidates:** controlled HTTPS browser (A1); browser and messenger actions next; YouTube playback, QUIC/UDP, DRM and adaptive bitrate separately, never assumed from a TCP-only success. No claim about unsupported games/voice.
 
+## Dual-stack gateway regression (A1 draft)
+
+For each restricted gateway path (read-only TLS probe, authenticated HTTPS
+probe, dormant DNS-over-TLS and TCP CONNECT dispatcher), verify that a stalled
+first IPv6/IPv4 TCP dial leaves time for a reachable alternate under the same
+absolute timeout. A successful TCP connection must still have the original
+remaining budget to verify TLS certificate/name and receive authenticated
+CONNECT approval. Invalid TLS identity, post-connect timeouts, withdrawn VPN
+scope and failed socket binding must **not** trigger another credential-bearing
+attempt. Run both deterministic virtual-clock tests and bounded loopback TLS;
+neither constitutes a physical-device A1 PASS.
+
 ## A2 performance design
 
 - Record baseline network/path, geography, device/OS, selected app, server trust, Wi-Fi/mobile and cost constraints. Compare BetterNet OFF/direct vs ON using **same task** and network impairment; randomize AB/BA order and repeat enough to show variability.

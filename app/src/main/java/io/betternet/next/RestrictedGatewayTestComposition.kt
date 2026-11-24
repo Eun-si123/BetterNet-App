@@ -47,15 +47,16 @@ internal fun newDormantRestrictedGatewayDispatcher(
                 if (question == null || !isApprovedTestDnsQuestion(
                         question, approvedHost, plan.allowedHttpsAddress
                     )) null
-                else connectWithGatewayAddressFallback(
+                else connectWithGatewayTcpFallback(
                     gatewayName, gatewayPort, timeoutMs, lookupOnUnderlyingNetwork,
-                    dial = { address, remaining ->
+                    dial = { address, remaining, tcpBudget ->
                         exchangeOneTunDnsQueryThroughGatewayAndBindTestDestination(
                             address, gatewayName, dnsServerName, bearerToken, remaining,
                             protect, packet, pending, output, plan.mtu,
                             approvedHost, plan.allowedHttpsAddress,
                             gatewayTlsFactory, dnsTlsFactory, bindToUnderlyingNetwork,
                             elapsedRealtimeMillis,
+                            tcpConnectBudgetMs = tcpBudget,
                         )
                     },
                 )
@@ -68,13 +69,14 @@ internal fun newDormantRestrictedGatewayDispatcher(
             }
             val serverIsn = nextServerIsn()
             require(serverIsn in 0..0xffff_ffffL)
-            connectWithGatewayAddressFallback(
+            connectWithGatewayTcpFallback(
                 gatewayName, gatewayPort, timeoutMs, lookupOnUnderlyingNetwork,
-                dial = { address, remaining ->
+                dial = { address, remaining, tcpBudget ->
                     connectDnsBoundTestTcpBridge(
                         binding, syn, now, output, address, gatewayName,
                         bearerToken, remaining, plan.mtu, serverIsn,
                         protect, gatewayTlsFactory, bindToUnderlyingNetwork,
+                        tcpConnectBudgetMs = tcpBudget,
                     )
                 },
             )
