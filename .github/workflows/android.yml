@@ -97,6 +97,17 @@ jobs:
             : > "$build_log"
           done
           exit 1
+      - name: Verify actual app debug and release runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest scripts.test_check_runtime_security_deps -v
+          # Use the already resolved Gradle cache from the passing APK build;
+          # do not let a Maven outage hide what actually ships in the app.
+          for config in debugRuntimeClasspath releaseRuntimeClasspath; do
+            ./gradlew --offline --no-daemon :app:dependencies --configuration "$config" > "$RUNNER_TEMP/$config.txt"
+            python3 scripts/check_runtime_security_deps.py "$config" < "$RUNNER_TEMP/$config.txt"
+          done
       - name: Test APK secret scanner fixtures and inspect built artifact
         run: |
           python3 -m unittest discover -s scripts -p 'test_check_apk_secrets.py' -v
