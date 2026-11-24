@@ -9,7 +9,6 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-  security-events: write
 concurrency:
   group: betternet-codeql-${{ github.ref }}
   cancel-in-progress: true
@@ -35,6 +34,9 @@ jobs:
   analyze:
     needs: change-scope
     if: needs.change-scope.outputs.heavy == 'true'
+    permissions:
+      contents: read
+      security-events: write
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
