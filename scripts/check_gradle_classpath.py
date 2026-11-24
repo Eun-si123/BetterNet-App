@@ -42,14 +42,53 @@ def check_versions(report: str) -> list[str]:
     return problems
 
 
+
+# Vulnerable transitive AGP and Android-testing dependencies, *not* app runtime.
+# Versions are selected from current GitHub advisories and compatible stable releases.
+OTHER_PATCHES = {
+    "org.bouncycastle:bcprov-jdk18on": "1.86",
+    "org.bouncycastle:bcpkix-jdk18on": "1.86",
+    "org.bouncycastle:bcutil-jdk18on": "1.86",
+    "org.bitbucket.b_c:jose4j": "0.9.6",
+    "org.jdom:jdom2": "2.0.6.1",
+    "org.apache.commons:commons-compress": "1.26.0",
+    "com.google.guava:guava": "33.7.2-jre",
+}
+OTHER_PATTERN = re.compile(
+    r"(?P<module>org\.bouncycastle:(?:bcprov|bcpkix|bcutil)-jdk18on"
+    r"|org\.bitbucket\.b_c:jose4j|org\.jdom:jdom2"
+    r"|org\.apache\.commons:commons-compress|com\.google\.guava:guava):"
+    r"(?P<requested>[0-9][\w.+-]*)(?:\s*->\s*(?P<selected>[0-9][\w.+-]*))?"
+)
+
+
+def check_other_patches(report: str) -> list[str]:
+    resolved: dict[str, set[str]] = {}
+    for line in report.splitlines():
+        for match in OTHER_PATTERN.finditer(line):
+            module = match.group("module")
+            version = match.group("selected") or match.group("requested")
+            resolved.setdefault(module, set()).add(version)
+    errors = []
+    for module, expected in sorted(OTHER_PATCHES.items()):
+        versions = resolved.get(module)
+        if not versions:
+            errors.append(f"No build classpath evidence for: {module}")
+        elif versions != {expected}:
+            errors.append(
+                f"{module}: resolved {', '.join(sorted(versions))}; expected {expected}"
+            )
+    return errors
+
+
 def main() -> int:
     text = sys.stdin.read()
-    errors = check_versions(text)
+    errors = check_versions(text) + check_other_patches(text)
     if errors:
         for problem in errors:
             print("::error::" + problem, file=sys.stderr)
         return 1
-    print(f"Verified all resolved Gradle plugin Netty modules at {PATCHED_VERSION}")
+    print(f"Verified resolved Netty and other Gradle plugin dependency patches")
     return 0
 
 
