@@ -80,6 +80,20 @@ budget, retry refusal, and an actual isolated loopback TLS handshake longer
 than its TCP-only cap. This is a **Draft PR correctness improvement**, not a
 VPN activation or physical-device A1 completion.
 
+## A1 browser parallel DNS A/AAAA handling (draft, device not proven)
+
+The A1 test TUN accepts **only one independently approved DNS-correlated
+destination IP**. Real Android resolvers can nevertheless ask A and AAAA in
+either order. A legitimate *complementary* query for the **same hostname** and
+unsupported family must not revoke the already authenticated, unconsumed
+grant while it is still fresh. It may not create a new authorization, renew
+the TTL or cause a credential-bearing gateway dial. Any failed approved-family
+lookup, malformed query, different hostname, unexpected QTYPE or expired grant
+retains fail-closed behavior. This is a bounded *authorization preservation*
+fix; it does not manufacture a DNS answer or claim support for the other IP
+family. A browser may still wait for its unanswered supplementary query, so
+real Android A1 validation remains necessary.
+
 ## DNS name correlation interoperability
 
 A dormant A1 DNS-over-TLS response may echo the original QNAME with different

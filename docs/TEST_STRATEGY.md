@@ -85,6 +85,17 @@ scope and failed socket binding must **not** trigger another credential-bearing
 attempt. Run both deterministic virtual-clock tests and bounded loopback TLS;
 neither constitutes a physical-device A1 PASS.
 
+## A1 browser A/AAAA ordering regression
+
+Run both IPv4-approved A→AAAA→TCP and IPv6-approved AAAA→A→TCP
+sequences through the same restricted dispatcher. The second query must
+neither spend a new bearer credential nor erase the first, still-fresh
+one-use grant. Check mismatched domain/QTYPE, expired grant, case-normalized
+hostname and a retransmitted SYN; no arbitrary address may be authorized
+and a grant must never be renewed. A suppressed alternate-family DNS
+request is not proof that the Android resolver proceeds promptly: the real
+selected-browser DNS/TCP/HTTPS result is still NOT RUN on a device.
+
 ## A2 performance design
 
 - Record baseline network/path, geography, device/OS, selected app, server trust, Wi-Fi/mobile and cost constraints. Compare BetterNet OFF/direct vs ON using **same task** and network impairment; randomize AB/BA order and repeat enough to show variability.
