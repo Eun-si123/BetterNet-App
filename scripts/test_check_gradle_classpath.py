@@ -18,6 +18,13 @@ class TestNettyBuildscriptClasspath(unittest.TestCase):
     def test_original_transitive_version_is_allowed_when_resolved_fixed(self):
         self.assertEqual(check_versions(example("4.1.110.Final", PATCHED_VERSION)), [])
 
+    def test_absence_permitted_only_for_agp9(self):
+        self.assertEqual(check_versions("No dependencies", allow_no_netty=True), [])
+        self.assertTrue(check_versions("No dependencies", allow_no_netty=False))
+
+    def test_agp9_must_still_reject_unpatched_present_netty(self):
+        self.assertTrue(check_versions(example("4.1.110.Final"), allow_no_netty=True))
+
     def test_unfixed_resolved_version_is_rejected(self):
         self.assertTrue(check_versions(example("4.1.110.Final")))
 

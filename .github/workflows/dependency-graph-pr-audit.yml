@@ -1,0 +1,52 @@
+name: Inspect resolved Gradle dependency snapshot (PR, read only)
+
+on:
+  pull_request:
+    paths:
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'app/build.gradle.kts'
+      - '.github/workflows/dependency-graph-pr-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gradle-snapshot-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  snapshot:
+    name: Generate unsubmitted Gradle SBOM for audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Configure SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          for cli in "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager; do
+            if [[ -x "$cli" ]]; then
+              "$cli" --install 'platforms;android-36' 'build-tools;35.0.0'
+              exit $?
+            fi
+          done
+          exit 1
+      # On fork PRs the job has no write permission and never submits.
+      # This artifact shows the *single proposed commit's* resolved graph,
+      # unlike the repository SBOM assembled from multiple submissions.
+      - name: Generate and upload dependency graph without GitHub submission
+        uses: gradle/actions/dependency-submission@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
+        with:
+          dependency-graph: generate-and-upload
+          dependency-graph-continue-on-failure: false
+          artifact-retention-days: 1
+          cache-read-only: true
