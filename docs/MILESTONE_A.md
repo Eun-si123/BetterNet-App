@@ -63,6 +63,23 @@ approved underlying Network without requiring it to remain the default.
 
 These are JVM/race-gate checks, not Android hardware or metered cost proof.
 
+## Dual-stack TCP fallback inside the single gateway budget (A1 Draft)
+
+The restricted gateway paths now reserve a bounded **TCP-only** slice for early
+IPv6/IPv4 addresses, leaving time to attempt an alternate address when the
+first TCP connection blackholes. The original **shared transaction deadline**
+still applies to TLS identity verification, CONNECT authorization, and
+credential use; the TCP-only slice does not truncate a successful TLS
+handshake. Only an explicitly tagged **TCP-connect** failure may try another
+resolved address. TLS identity failures, revoked VPN scope, failed network
+binding, or errors after authentication **must not be replayed** to another
+address. No default network, unapproved app, or destination is substituted.
+
+Local JVM tests include a simulated blackholed first family, single-address
+budget, retry refusal, and an actual isolated loopback TLS handshake longer
+than its TCP-only cap. This is a **Draft PR correctness improvement**, not a
+VPN activation or physical-device A1 completion.
+
 ## DNS name correlation interoperability
 
 A dormant A1 DNS-over-TLS response may echo the original QNAME with different

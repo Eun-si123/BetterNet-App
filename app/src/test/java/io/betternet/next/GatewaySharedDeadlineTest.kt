@@ -103,6 +103,39 @@ class GatewaySharedDeadlineTest {
         assertFalse("TLS must not authenticate after the shared deadline", sawCredential.get())
     }
 
+    @Test fun tcpOnlyCapDoesNotShortenVerifiedTlsHandshake() {
+        val (serverTls, clientTls) = contexts()
+        val listener = serverTls.serverSocketFactory.createServerSocket(
+            0, 1, InetAddress.getLoopbackAddress()) as SSLServerSocket
+        listener.soTimeout = 3000
+        val serverFailure = java.util.concurrent.atomic.AtomicReference<Throwable?>(null)
+        val server = Thread({
+            try {
+                listener.use { bound ->
+                    (bound.accept() as SSLSocket).use { peer ->
+                        peer.soTimeout = 2000
+                        Thread.sleep(450) // Longer than the 200 ms TCP connect cap.
+                        peer.startHandshake()
+                    }
+                }
+            } catch (failure: Throwable) {
+                serverFailure.set(failure)
+            }
+        }, "BetterNet-TcpOnlyBudget").apply { isDaemon = true; start() }
+        try {
+            val address = InetSocketAddress(InetAddress.getLoopbackAddress(), listener.localPort)
+            connectVerifiedGatewayTls(address, "gateway.example", 2200,
+                protect = { true }, tlsFactory = clientTls.socketFactory,
+                tcpConnectBudgetMs = 200,
+            ).use { assertTrue(it.session.isValid) }
+        } finally {
+            listener.close()
+            server.join(4000)
+        }
+        assertFalse(server.isAlive)
+        assertEquals(null, serverFailure.get())
+    }
+
     @Test fun blockingNetworkBindCannotRenewConnectDeadlineOrSendBearer() {
         val (serverTls, clientTls) = contexts()
         val sawCredential = AtomicBoolean(false)

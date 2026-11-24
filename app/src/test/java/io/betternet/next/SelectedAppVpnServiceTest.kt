@@ -2,6 +2,7 @@ package io.betternet.next
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
 import org.junit.Assert.fail
 import org.junit.Assert.assertTrue
 import java.io.IOException
@@ -682,6 +683,127 @@ class SelectedAppVpnServiceTest {
         }
         assertEquals(1, lookups)
         assertEquals(0, attempts)
+    }
+
+    @Test fun blackholedFirstFamilyLeavesTimeForOtherFamily() {
+        // The old entire-budget TCP dial could starve a reachable IPv4
+        // address after the initial IPv6 SYN packets were blackholed.
+        val v6 = InetAddress.getByName("2001:db8::2")
+        val v4 = InetAddress.getByName("192.0.2.2")
+        val events = mutableListOf<String>()
+        var clockNanos = 0L
+        val chosen = connectWithGatewayTcpFallback(
+            "gateway.example", 443, 1000,
+            { arrayOf(v6, v4) },
+            { address, totalBudget, tcpBudget ->
+                events += address.address.hostAddress.orEmpty() + ":" + totalBudget + "/" + tcpBudget
+                connectProtectedSocket(address, totalBudget,
+                    protect = { events += "protect"; true },
+                    createSocket = {
+                        object : Socket() {
+                            override fun connect(endpoint: SocketAddress?, timeout: Int) {
+                                events += "tcp:" + timeout
+                                if (address.address == v6) {
+                                    assertEquals(500, timeout)
+                                    clockNanos += timeout * 1_000_000L
+                                    throw SocketTimeoutException("IPv6 blackhole")
+                                }
+                            }
+                            override fun close() { events += "close" }
+                        }
+                    },
+                    bind = { events += "bind" },
+                    connectTimeout = { tcpBudget },
+                ).close()
+                address
+            },
+            { clockNanos },
+        )
+        assertEquals(v4, chosen.address)
+        assertEquals(listOf(
+            v6.hostAddress.orEmpty() + ":1000/500", "protect", "bind", "tcp:500", "close",
+            v4.hostAddress.orEmpty() + ":500/500", "protect", "bind", "tcp:500", "close",
+        ), events)
+    }
+
+    @Test fun networkSwitchDuringBlackholedTcpNeverTriesUnapprovedFallback() {
+        // A dead IPv6 dial legitimately permits IPv4 fallback, but NOT after
+        // the user's verified physical Network changes to a different one.
+        val ipv6 = InetAddress.getByName("2001:db8::2")
+        val ipv4 = InetAddress.getByName("192.0.2.2")
+        var currentNetwork = 42L
+        var socketsCreated = 0
+        var closedSockets = 0
+        val caught = assertThrows(IllegalArgumentException::class.java) {
+            connectWithGatewayTcpFallback(
+                "gateway.example", 443, 1_000,
+                { arrayOf(ipv6, ipv4) },
+                { candidate, transaction, tcpOnly ->
+                    withFreshRestrictedGatewaySocketScope(
+                        verify = { requireApprovedRestrictedNetworkHandle(42L, currentNetwork) },
+                        dial = {
+                            connectProtectedSocket(candidate, transaction,
+                                protect = { true },
+                                createSocket = {
+                                    socketsCreated++
+                                    object : Socket() {
+                                        override fun connect(endpoint: SocketAddress?, timeout: Int) {
+                                            assertEquals(tcpOnly, timeout)
+                                            if (candidate.address == ipv6) {
+                                                currentNetwork = 43L
+                                                throw SocketTimeoutException("IPv6 timed out; default changed")
+                                            }
+                                            fail("Must not connect IPv4 on an unapproved Network")
+                                        }
+                                        override fun close() { closedSockets++ }
+                                    }
+                                },
+                                connectTimeout = { tcpOnly },
+                            )
+                        },
+                    )
+                },
+            )
+        }
+        assertEquals("Underlying Network changed since user authorization", caught.message)
+        assertEquals(1, socketsCreated)
+        assertEquals(1, closedSockets)
+    }
+
+    @Test fun fallbackNeverReplaysTlsOrConnectFailureOrProtectionRefusal() {
+        val first = InetAddress.getByName("2001:db8::2")
+        val second = InetAddress.getByName("192.0.2.2")
+        for (failure in listOf(
+            javax.net.ssl.SSLHandshakeException("Rejected certificate"),
+            SocketTimeoutException("Post-connect TLS/CONNECT timeout"),
+            SecurityException("VPN protection revoked"),
+        )) {
+            var attempts = 0
+            try {
+                connectWithGatewayTcpFallback("gateway.example", 443, 1000,
+                    { arrayOf(first, second) },
+                    { _, _, _ -> attempts++; throw failure },
+                )
+                fail("Must not try a second address after TLS/auth/scope failure")
+            } catch (caught: Exception) {
+                assertSame(failure, caught)
+                assertEquals(1, attempts)
+            }
+        }
+    }
+
+    @Test fun singleAddressUsesEntireBudgetAndNoExtraDnsQueries() {
+        val first = InetAddress.getByName("192.0.2.2")
+        var lookups = 0
+        val budgets = mutableListOf<Pair<Int, Int>>()
+        val chosen = connectWithGatewayTcpFallback("gateway.example", 443, 750,
+            { lookups++; arrayOf(first) },
+            { address, total, tcp -> budgets += total to tcp; address },
+            { 0L },
+        )
+        assertEquals(first, chosen.address)
+        assertEquals(1, lookups)
+        assertEquals(listOf(750 to 750), budgets)
     }
 
     private fun assertRejected(packageName: String?) {

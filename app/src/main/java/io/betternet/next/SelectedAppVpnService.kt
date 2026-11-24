@@ -305,10 +305,11 @@ class SelectedAppVpnService : VpnService() {
         manager: ConnectivityManager, network: Network, hostname: String,
         port: Int, timeoutMs: Int,
     ): SSLSocket {
-        return onUnderlyingNetworkGateway(manager, network, hostname, port, timeoutMs) { address, remaining ->
+        return onUnderlyingNetworkGateway(manager, network, hostname, port, timeoutMs) { address, remaining, tcpBudget ->
             connectVerifiedGatewayTls(
                 address, hostname, remaining, { socket -> protect(socket) },
                 bind = { socket -> network.bindSocket(socket) },
+                tcpConnectBudgetMs = tcpBudget,
             )
         }
     }
@@ -323,11 +324,12 @@ class SelectedAppVpnService : VpnService() {
     ): SSLSocket {
         return onUnderlyingNetworkGateway(
             manager, network, gatewayName, gatewayPort, timeoutMs
-        ) { address, remaining ->
+        ) { address, remaining, tcpBudget ->
             connectAuthenticatedTestTunnel(
                 address, gatewayName, remaining, { socket -> protect(socket) },
                 destinationHost, destinationPort, bearerToken,
                 bind = { socket -> network.bindSocket(socket) },
+                tcpConnectBudgetMs = tcpBudget,
             )
         }
     }
@@ -392,24 +394,24 @@ class SelectedAppVpnService : VpnService() {
 
     private fun <T : Closeable> onUnderlyingNetworkGateway(
         manager: ConnectivityManager, network: Network, hostname: String,
-        port: Int, timeoutMs: Int, dial: (InetSocketAddress, Int) -> T,
+        port: Int, timeoutMs: Int, dial: (InetSocketAddress, Int, Int) -> T,
     ): T {
         requireUnderlyingInternetNetwork(manager, network)
         // Revalidate at each DNS lookup and retry, not just at method entry.
         // Protection and binding remain mandatory in the dial callback.
-        return connectWithGatewayAddressFallback(
+        return connectWithGatewayTcpFallback(
             hostname, port, timeoutMs,
             { host ->
                 requireUnderlyingInternetNetwork(manager, network)
                 network.getAllByName(host)
             },
-            { address, remaining ->
+            { address, remaining, tcpBudget ->
                 // The selected Network may disappear or become a VPN while a
                 // protected TLS/CONNECT dial is blocked. Reject its socket and
                 // close it rather than handing out a stale recursive route.
                 withFreshRestrictedGatewaySocketScope(
                     { requireUnderlyingInternetNetwork(manager, network) },
-                    { dial(address, remaining) },
+                    { dial(address, remaining, tcpBudget) },
                 )
             },
         )
@@ -656,30 +658,50 @@ private fun resolveGatewayAddresses(
     return addresses.map { InetSocketAddress(it, port) }
 }
 
-/**
- * One shared timeout across a bounded IPv6/IPv4 address list. Retry only
- * failures explicitly tagged at the TCP connect boundary; never retry a
- * TLS handshake/CONNECT error (even ConnectException), TLS identity failure,
- * failed protection or network binding.
- * The dial callback must close each failed socket before throwing.
+/** Legacy two-argument adapter. Existing callers explicitly retain the old
+ * entire-budget semantics; only consumers that can separate the protected TCP
+ * dial from TLS/CONNECT should opt in to the TCP-only fallback budget.
  */
 internal fun <T> connectWithGatewayAddressFallback(
     hostname: String, port: Int, timeoutMs: Int,
     lookup: (String) -> Array<InetAddress>,
     dial: (InetSocketAddress, Int) -> T,
     nowNanos: () -> Long = System::nanoTime,
+): T = connectWithGatewayTcpFallback(
+    hostname, port, timeoutMs, lookup,
+    { address, totalRemaining, _ -> dial(address, totalRemaining) }, nowNanos
+)
+
+/**
+ * Bounded dual-stack attempts with a separate TCP-only per-address timeout.
+ * Retry only failures tagged at the TCP connect boundary, never TLS identity,
+ * authenticated CONNECT, failed protection, or network binding. The caller
+ * closes failed sockets before returning. All attempts share a single absolute
+ * transaction deadline; a TCP-only cap never resets TLS or CONNECT deadlines.
+ */
+internal fun <T> connectWithGatewayTcpFallback(
+    hostname: String, port: Int, timeoutMs: Int,
+    lookup: (String) -> Array<InetAddress>,
+    dial: (InetSocketAddress, Int, Int) -> T,
+    nowNanos: () -> Long = System::nanoTime,
 ): T {
     require(timeoutMs in 1..10_000) { "Gateway timeout must be bounded" }
     val deadline = nowNanos() + timeoutMs * 1_000_000L
     val addresses = resolveGatewayAddresses(hostname, port, lookup)
     var lastFailure: IOException? = null
-    for (address in addresses) {
+    for ((index, address) in addresses.withIndex()) {
         val remaining = deadline - nowNanos()
         if (remaining <= 0L) break
         val attemptTimeout = ((remaining / 1_000_000L) +
             if (remaining % 1_000_000L == 0L) 0L else 1L).coerceIn(1L, 10_000L).toInt()
         try {
-            return dial(address, attemptTimeout)
+            // Only cap the TCP connect wait, not gateway TLS or CONNECT.
+            // A blackholed first address should leave time for the other IP
+            // family. Once TCP connects, TLS still owns the full shared
+            // remaining transaction deadline, not this reduced TCP cap.
+            val tcpBudget = if (index < addresses.lastIndex && attemptTimeout > 500)
+                maxOf(250, attemptTimeout / 2) else attemptTimeout
+            return dial(address, attemptTimeout, tcpBudget)
         } catch (failure: IOException) {
             if (failure !is GatewayTcpConnectFailure &&
                 failure !is GatewayTcpConnectTimeout) throw failure

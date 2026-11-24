@@ -115,6 +115,7 @@ internal fun exchangeOneTunDnsQueryThroughGatewayAndBindTestDestination(
     // A wall-clock timestamp here would silently reject every legitimate SYN
     // when the future session owner passes Android elapsedRealtime().
     clockMillis: () -> Long = { android.os.SystemClock.elapsedRealtime() },
+    tcpConnectBudgetMs: Int? = null,
 ): DnsDestinationBinding? {
     require(isValidGatewayName(expectedHost)) { "Invalid test destination hostname" }
     // No underlying-network DNS lookup, socket protection, CONNECT credential,
@@ -125,7 +126,8 @@ internal fun exchangeOneTunDnsQueryThroughGatewayAndBindTestDestination(
     if (!isApprovedTestDnsQuestion(query, expectedHost, allowedTestAddress)) return null
     return exchangeOneTunDnsQueryThroughGatewayChecked(
         gatewayAddress, gatewayName, dnsServerName, bearerToken, timeoutMs,
-        protect, request, pending, output, mtu, gatewayTlsFactory, destinationTlsFactory, bind
+        protect, request, pending, output, mtu, gatewayTlsFactory, destinationTlsFactory, bind,
+        tcpConnectBudgetMs = tcpConnectBudgetMs,
     ) { query, response ->
         DnsDestinationBinding.fromCorrelatedResponse(
             query, response, expectedHost, allowedTestAddress, clockMillis()
@@ -147,6 +149,7 @@ private fun <T : Any> exchangeOneTunDnsQueryThroughGatewayChecked(
     gatewayTlsFactory: SSLSocketFactory,
     destinationTlsFactory: SSLSocketFactory,
     bind: (Socket) -> Unit,
+    tcpConnectBudgetMs: Int? = null,
     approve: (ByteArray, ByteArray) -> T?,
 ): T? {
     require(mtu in 1280..9000) { "TUN MTU must be bounded" }
@@ -160,7 +163,8 @@ private fun <T : Any> exchangeOneTunDnsQueryThroughGatewayChecked(
         try {
             val tls = connectVerifiedDestinationTlsThroughGateway(
                 gatewayAddress, gatewayName, dnsServerName, 853, bearerToken,
-                timeoutMs, protect, gatewayTlsFactory, destinationTlsFactory, bind
+                timeoutMs, protect, gatewayTlsFactory, destinationTlsFactory, bind,
+                tcpConnectBudgetMs = tcpConnectBudgetMs,
             )
             return tls.use {
                 exchangeRegisteredTunDnsQuery(
