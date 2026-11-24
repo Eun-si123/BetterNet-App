@@ -7,10 +7,49 @@ on:
     branches: [main]
 permissions:
   contents: read
+concurrency:
+  group: betternet-android-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
+  change-scope:
+    name: Change scope (fail open)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      heavy: ${{ steps.classify.outputs.heavy }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify full PR or push change range
+        id: classify
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: python3 scripts/ci_changed_files.py
+  docs:
+    name: Markdown-only documentation validation
+    needs: change-scope
+    if: needs.change-scope.outputs.heavy == 'false' && (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base != null)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Verify docs and change-gate regressions
+        run: |
+          python3 -m unittest scripts.test_ci_changed_files -v
+          python3 -m unittest discover -s scripts -p 'test_check_docs.py' -v
+          python3 -m unittest scripts.test_ci_changed_files -v
+          python3 scripts/check_docs.py
+
   build:
+    needs: change-scope
     # Skip cosmetic PR edits; only a base change merits another build.
-    if: github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base != null
+    if: needs.change-scope.outputs.heavy == 'true' && (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base != null)
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
