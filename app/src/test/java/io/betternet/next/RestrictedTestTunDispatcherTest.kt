@@ -296,6 +296,251 @@ class RestrictedTestTunDispatcherTest {
         }
     }
 
+    @Test fun disallowedFamilyDnsQuestionGetsScopedNodataWithoutGatewayAccess() {
+        // The selected test route deliberately supports one approved address
+        // family. Do not leave ordinary A/AAAA resolver queries waiting on
+        // an unavailable upstream family; return *only* a local NODATA for
+        // the specifically approved host. Never imply remote DNS authenticity.
+        for (version in listOf(4, 6)) {
+            val syn = packets.request(version)
+            val p = plan(syn)
+            val unsupportedType = if (version == 4) 28 else 1
+            val unsupported = bindings.query(unsupportedType)
+            val offered = mutableListOf<String>()
+            val dispatcher = newDormantRestrictedGatewayDispatcher(
+                plan = p, gatewayName = "gateway.example", gatewayPort = 443,
+                dnsServerName = "dns.example", approvedHost = "dns.example",
+                bearerToken = "ABCDEFGHIJKLMNOP", timeoutMs = 1000,
+                lookupOnUnderlyingNetwork = {
+                    offered.add("lookup"); throw AssertionError("No gateway lookup allowed")
+                },
+                protect = {
+                    offered.add("protect"); throw AssertionError("No gateway socket allowed")
+                },
+                bindToUnderlyingNetwork = {
+                    offered.add("bind"); throw AssertionError("No network binding allowed")
+                },
+                elapsedRealtimeMillis = { 100L },
+            )
+            val output = ByteArrayOutputStream()
+            try {
+                assertTrue(feed(dispatcher, udp(p, payload = unsupported), output))
+                val packet = output.toByteArray()
+                val parsed = parseTunPacketHeader(packet, packet.size)!!
+                assertEquals(53, parsed.sourcePort)
+                assertEquals(49153, parsed.destinationPort)
+                assertEquals(17, parsed.protocol)
+                val payload = packet.copyOfRange(parsed.transportOffset + 8, packet.size)
+                assertEquals(unsupported[0], payload[0])
+                assertEquals(unsupported[1], payload[1])
+                assertEquals(0x81, payload[2].toInt() and 255)
+                assertEquals(0, payload[3].toInt() and 255) // NOERROR/NODATA
+                assertEquals(1, ((payload[4].toInt() and 255) shl 8) or
+                    (payload[5].toInt() and 255))
+                assertTrue("No resource records are authoritative in filtered DNS",
+                    (6..11).all { payload[it] == 0.toByte() })
+                assertEquals(unsupported.size, payload.size) // no additional records
+                assertTrue(offered.isEmpty())
+                output.reset()
+                // Answering the unsupported family must NOT create TCP grant.
+                assertTrue(feed(dispatcher, syn.bytes, output))
+                assertEquals(0, output.size())
+            } finally {
+                dispatcher.close()
+            }
+        }
+    }
+
+    @Test fun scopedNodataPreservesEdnsQueryIdentityAndRefusesInvalidScope() {
+        for (version in listOf(4, 6)) {
+            val syn = packets.request(version)
+            val p = plan(syn)
+            val type = if (version == 4) 28 else 1
+            val approved = if (version == 4) 1 else 28
+            val question = bindings.query(type)
+            val opt = byteArrayOf(0, 0, 41, 4, 0xd0.toByte(), 0, 0, 0, 0, 0, 0)
+            val ednsQuery = question.clone().apply { this[11] = 1 } + opt
+            val requestBytes = udp(p, payload = ednsQuery)
+            val request = TunIngressResult.Packet(
+                requestBytes, parseTunPacketHeader(requestBytes, requestBytes.size)!!
+            )
+            val answer = buildRestrictedTestOtherFamilyNodata(
+                request, "dns.example", p.allowedHttpsAddress, 1280
+            )!!
+            val parsed = parseTunPacketHeader(answer, answer.size)!!
+            val dns = answer.copyOfRange(parsed.transportOffset + 8, answer.size)
+            assertEquals(0x81, dns[2].toInt() and 255)
+            assertEquals(0, dns[3].toInt() and 255)
+            assertArrayEquals("NODATA drops EDNS OPT without changing question",
+                question, dns.clone().apply { this[2] = 1 })
+            assertNull(buildRestrictedTestOtherFamilyNodata(
+                request, "other.example", p.allowedHttpsAddress, 1280))
+            val correctType = udp(p, payload = bindings.query(approved))
+            assertNull(buildRestrictedTestOtherFamilyNodata(
+                TunIngressResult.Packet(
+                    correctType, parseTunPacketHeader(correctType, correctType.size)!!
+                ), "dns.example", p.allowedHttpsAddress, 1280
+            ))
+            val wrongName = udp(p, payload = bindings.query(type)
+                .apply { this[13] = 'x'.code.toByte() })
+            assertNull(buildRestrictedTestOtherFamilyNodata(
+                TunIngressResult.Packet(
+                    wrongName, parseTunPacketHeader(wrongName, wrongName.size)!!
+                ), "dns.example", p.allowedHttpsAddress, 1280
+            ))
+            val corrupted = requestBytes.clone().apply { this[lastIndex] =
+                (this[lastIndex].toInt() xor 1).toByte() }
+            assertNull(buildRestrictedTestOtherFamilyNodata(
+                TunIngressResult.Packet(corrupted, request.header),
+                "dns.example", p.allowedHttpsAddress, 1280
+            ))
+        }
+    }
+
+    @Test fun parallelAAndAaaaQueriesCannotEraseAStillValidAuthorizedGrant() {
+        // Real Android/browser resolvers commonly ask both A and AAAA for a
+        // hostname. A protected, independently approved A grant should survive
+        // a *different QTYPE* for exactly the same hostname, even though only
+        // the approved family may open an authenticated TCP CONNECT.
+        for (version in listOf(4, 6)) {
+            val syn = packets.request(version)
+            val p = plan(syn)
+            val matchingType = if (version == 4) 1 else 28
+            val otherType = if (matchingType == 1) 28 else 1
+            val match = bindings.query(matchingType)
+            val supplementary = bindings.query(otherType)
+            var dnsCalls = 0
+            var dials = 0
+            var closes = 0
+            val dispatcher = RestrictedTestTunDispatcher(p,
+                { packet, _ ->
+                    dnsCalls++
+                    val header = packet.header
+                    val question = packet.bytes.copyOfRange(
+                        header.transportOffset + 8, packet.bytes.size
+                    )
+                    if (question.contentEquals(match)) bindings.bindingFor(syn) else null
+                },
+                { approved, initial, output, time ->
+                    dials++
+                    assertEquals(syn.header.destination, approved.address)
+                    OfflineTcpTunBridge(
+                        ByteArrayInputStream(byteArrayOf()),
+                        ByteArrayOutputStream(), p.mtu, 100L,
+                        allowedDestination = approved.address,
+                        onClose = { closes++ },
+                    ).also {
+                        assertTrue(it.pumpOneTunPacket(
+                            ByteArrayInputStream(initial.bytes), output, time))
+                    }
+                })
+            val output = ByteArrayOutputStream()
+            assertTrue(feed(dispatcher, udp(p, payload = match), output, 100))
+            assertTrue(feed(dispatcher, udp(p, payload = supplementary), output, 101))
+            assertEquals(2, dnsCalls)
+            assertEquals(0, dials)
+            assertTrue(feed(dispatcher, syn.bytes, output, 102))
+            assertEquals("Complementary family DNS must not erase the valid grant", 1, dials)
+            assertTrue("Expected SYN-ACK", output.size() > 0)
+            // A retransmitted SYN cannot spend the prior DNS grant again:
+            // it is handled by the same authenticated bridge, not a new dial.
+            assertTrue(feed(dispatcher, syn.bytes, ByteArrayOutputStream(), 103))
+            assertEquals(1, dials)
+            dispatcher.close()
+            assertEquals(1, closes)
+        }
+    }
+
+    @Test fun complementaryQueryCannotRefreshExpiredAuthorizedDnsGrant() {
+        for (version in listOf(4, 6)) {
+            val syn = packets.request(version)
+            val p = plan(syn)
+            val selectedType = if (version == 4) 1 else 28
+            val alternateType = if (selectedType == 1) 28 else 1
+            var connectCount = 0
+            val dispatcher = RestrictedTestTunDispatcher(p,
+                { packet, _ ->
+                    val question = packet.bytes.copyOfRange(
+                        packet.header.transportOffset + 8, packet.bytes.size
+                    )
+                    if (question.contentEquals(bindings.query(selectedType)))
+                        bindings.bindingFor(syn, now = 100)
+                    else null
+                },
+                { _, _, _, _ ->
+                    connectCount++
+                    throw AssertionError("Expired DNS grant must not open a TCP tunnel")
+                })
+            assertTrue(feed(dispatcher, udp(p, payload = bindings.query(selectedType)),
+                time = 100))
+            assertTrue(feed(dispatcher, udp(p, payload = bindings.query(alternateType)),
+                time = 30_100))
+            assertTrue(feed(dispatcher, syn.bytes, time = 30_101))
+            assertEquals(0, connectCount)
+            dispatcher.close()
+        }
+    }
+
+    @Test fun caseChangedComplementaryQueryIsAllowedButOtherQuestionTypeRevokes() {
+        for (version in listOf(4, 6)) {
+            val syn = packets.request(version)
+            val p = plan(syn)
+            val selectedType = if (version == 4) 1 else 28
+            val alternateType = if (selectedType == 1) 28 else 1
+            val selected = bindings.query(selectedType)
+            val alternate = bindings.query(alternateType).apply {
+                // DNS label comparison is case-insensitive (RFC 4343).
+                this[13] = 'D'.code.toByte()
+            }
+            var dials = 0
+            val dispatcher = RestrictedTestTunDispatcher(p,
+                { packet, _ ->
+                    val q = packet.bytes.copyOfRange(
+                        packet.header.transportOffset + 8, packet.bytes.size
+                    )
+                    if (q.contentEquals(selected)) bindings.bindingFor(syn) else null
+                },
+                { _, _, _, _ ->
+                    dials++
+                    throw AssertionError("Nonapproved grant must be withheld")
+                })
+            assertTrue(feed(dispatcher, udp(p, payload = selected), time = 100))
+            assertTrue(feed(dispatcher, udp(p, payload = alternate), time = 101))
+            // This query is neither an alternate A/AAAA request nor an
+            // approved successful new lookup, and must revoke the grant.
+            val unsupportedType = bindings.query(15) // MX, same owner name.
+            assertTrue(feed(dispatcher, udp(p, payload = unsupportedType), time = 102))
+            assertTrue(feed(dispatcher, syn.bytes, time = 103))
+            assertEquals(0, dials)
+            dispatcher.close()
+        }
+    }
+
+    @Test fun unrelatedOrMalformedQueryStillRevokesOneUseDnsGrant() {
+        for (version in listOf(4, 6)) {
+            val syn = packets.request(version)
+            val p = plan(syn)
+            val approvedType = if (version == 4) 1 else 28
+            val wrong = bindings.query(if (approvedType == 1) 28 else 1)
+                .apply { this[13] = 'x'.code.toByte() }
+            var dials = 0
+            val dispatcher = RestrictedTestTunDispatcher(p,
+                { packet, _ ->
+                    val query = packet.bytes.copyOfRange(
+                        packet.header.transportOffset + 8, packet.bytes.size)
+                    if (query.contentEquals(bindings.query(approvedType)))
+                        bindings.bindingFor(syn)
+                    else null
+                },
+                { _, _, _, _ -> dials++; throw AssertionError("Revoked grant") })
+            assertTrue(feed(dispatcher, udp(p, payload = bindings.query(approvedType)), time = 100))
+            assertTrue(feed(dispatcher, udp(p, payload = wrong), time = 101))
+            assertTrue(feed(dispatcher, syn.bytes, time = 102))
+            assertEquals(0, dials)
+            dispatcher.close()
+        }
+    }
+
     @Test fun rejectedOrExpiredDnsGrantCannotOpenGateway() {
         for (version in listOf(4, 6)) {
             val syn = packets.request(version)

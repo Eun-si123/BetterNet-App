@@ -798,6 +798,8 @@ class GatewayTlsLoopbackTest {
                 }
             } catch (_: SSLException) {
                 // Client may abort the handshake with a TLS fatal alert.
+            } catch (_: java.net.SocketException) {
+                // Some TLS runtimes close the peer transport without a TLS alert.
             }
         }) { address ->
             try {
@@ -830,6 +832,7 @@ class GatewayTlsLoopbackTest {
                     it.startHandshake()
                 }
             } catch (_: SSLException) { /* inner client rejects wrong SAN */ }
+              catch (_: java.net.SocketException) { /* rejected peer reset the socket */ }
         }) { address ->
             try {
                 connectVerifiedDestinationTlsThroughGateway(
@@ -1026,7 +1029,9 @@ class GatewayTlsLoopbackTest {
     @Test fun trustedCertificateWithWrongHostnameIsRejected() {
         val tls = contexts()
         withServer(tls.server, { peer ->
-            try { peer.startHandshake() } catch (_: SSLException) { /* client rejects peer */ }
+            try { peer.startHandshake() }
+            catch (_: SSLException) { /* client's hostname rejection */ }
+            catch (_: java.net.SocketException) { /* client already reset peer */ }
         }) { address ->
             try {
                 connectVerifiedGatewayTls(
@@ -1044,7 +1049,9 @@ class GatewayTlsLoopbackTest {
         val tls = contexts()
         val defaultTrust = SSLContext.getInstance("TLS").apply { init(null, null, SecureRandom()) }
         withServer(tls.server, { peer ->
-            try { peer.startHandshake() } catch (_: SSLException) { /* client rejects peer */ }
+            try { peer.startHandshake() }
+            catch (_: SSLException) { /* client's untrusted CA rejection */ }
+            catch (_: java.net.SocketException) { /* client already reset peer */ }
         }) { address ->
             try {
                 connectVerifiedGatewayTls(
@@ -1301,6 +1308,20 @@ class GatewayTlsLoopbackTest {
                 )
                 try {
                     val tunOut = java.io.ByteArrayOutputStream()
+                    // Real local gateway composition: a valid alternate-family
+                    // lookup is answered locally, not sent to the authenticated
+                    // gateway, and cannot grant the unapproved IP family.
+                    val auxiliaryQuery = dnsFixtures.query(if (version == 4) 28 else 1)
+                    val auxiliaryPacket = packetFixtures.udp(plan, payload = auxiliaryQuery)
+                    val auxiliaryIngress = TunIngressResult.Packet(auxiliaryPacket,
+                        parseTunPacketHeader(auxiliaryPacket, auxiliaryPacket.size)!!)
+                    val expectedFiltered = buildRestrictedTestOtherFamilyNodata(
+                        auxiliaryIngress, "dns.example", plan.allowedHttpsAddress, 1280)!!
+                    assertTrue(dispatcher.pumpOneTunPacket(
+                        java.io.ByteArrayInputStream(auxiliaryPacket), tunOut, 99))
+                    assertArrayEquals(expectedFiltered, tunOut.toByteArray())
+                    assertTrue(events.isEmpty()) // no socket/protection/credential
+                    tunOut.reset()
                     val dnsPacket = packetFixtures.udp(plan, payload = question)
                     assertTrue(dispatcher.pumpOneTunPacket(
                         java.io.ByteArrayInputStream(dnsPacket), tunOut, 100))
@@ -1309,8 +1330,16 @@ class GatewayTlsLoopbackTest {
                             parseTunPacketHeader(dnsPacket, dnsPacket.size)!!),
                         answer, 1280), tunOut.toByteArray())
                     tunOut.reset()
+                    // Parallel AAAA/A request after the authenticated approved
+                    // answer must retain its one-use grant and return NODATA
+                    // without opening a second gateway connection.
                     assertTrue(dispatcher.pumpOneTunPacket(
-                        java.io.ByteArrayInputStream(syn.bytes), tunOut, 101))
+                        java.io.ByteArrayInputStream(auxiliaryPacket), tunOut, 101))
+                    assertArrayEquals(expectedFiltered, tunOut.toByteArray())
+                    assertEquals(listOf("protect", "bind"), events)
+                    tunOut.reset()
+                    assertTrue(dispatcher.pumpOneTunPacket(
+                        java.io.ByteArrayInputStream(syn.bytes), tunOut, 102))
                     val synAck = tunOut.toByteArray()
                     assertEquals(0x12, synAck[if (version == 4) 33 else 53].toInt() and 255)
                     tunOut.reset()

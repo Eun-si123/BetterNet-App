@@ -54,10 +54,18 @@ internal class RestrictedTestTunDispatcher(
             when {
                 h.protocol == 17 && h.destination == plan.virtualDnsAddress &&
                     h.destinationPort == 53 && bridge == null -> {
-                    // A failed or rejected new DNS query cannot retain an old grant.
+                    // A same-name A/AAAA lookup for the *other* family is
+                    // common during browser resolution. It grants nothing new
+                    // and must not erase an existing unconsumed, unexpired
+                    // authenticated A/AAAA authorization. Other rejected,
+                    // unrelated or malformed DNS queries revoke it as before.
+                    val prior = binding
                     binding = null
+                    val preserve = prior != null &&
+                        isComplementaryAddressDnsQuery(ingress, prior, nowMillis)
                     val approved = exchangeDns(ingress, output)
                     if (approved?.address == plan.allowedHttpsAddress) binding = approved
+                    else if (preserve) binding = prior
                 }
                 h.protocol == 6 && h.destination == plan.allowedHttpsAddress &&
                     h.destinationPort == 443 -> {

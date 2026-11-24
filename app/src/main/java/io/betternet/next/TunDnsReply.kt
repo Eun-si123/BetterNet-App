@@ -60,6 +60,37 @@ internal fun buildDnsUdpReply(
 }
 
 /**
+ * A1 debug-only, policy-filtered DNS NOERROR/NODATA for the *unapproved*
+ * address family of exactly one owner-approved test hostname. Without a
+ * negative response, parallel A/AAAA queries may stall a browser resolver
+ * even after the approved family's authenticated answer was delivered.
+ *
+ * This is explicitly a LOCAL test VPN policy response, not a forged claim
+ * that the authoritative resolver has no other A/AAAA records. It never
+ * resolves DNS, touches a gateway, grants a TCP destination or redirects the
+ * user's general Internet traffic. EDNS(0) options from the query are NOT
+ * echoed; the response includes only the exact matching DNS question.
+ */
+internal fun buildRestrictedTestOtherFamilyNodata(
+    request: TunIngressResult.Packet, expectedHost: String,
+    approvedAddress: java.net.InetAddress, mtu: Int,
+): ByteArray? {
+    if (!isSupportedDnsTunQuery(request)) return null
+    val packet = request.bytes
+    val queryOffset = request.header.transportOffset + 8
+    val query = packet.copyOfRange(queryOffset, packet.size)
+    if (!isComplementaryTestDnsQuestion(query, expectedHost, approvedAddress)) return null
+    val end = dnsQuestionEnd(query, 0, query.size) ?: return null
+    val response = query.copyOfRange(0, end)
+    // QR=1, same RD bit as the query, no recursive-service claim, and no
+    // resource records. QDCOUNT remains one and the transaction ID is copied.
+    response[2] = (0x80 or (query[2].toInt() and 1)).toByte()
+    response[3] = 0
+    for (offset in 6..11) response[offset] = 0
+    return buildDnsUdpReply(request, response, mtu)
+}
+
+/**
  * Validate a bounded, unfragmented DNS/UDP request before allocating pending
  * state. This does not authenticate any upstream or perform DNS resolution.
  */

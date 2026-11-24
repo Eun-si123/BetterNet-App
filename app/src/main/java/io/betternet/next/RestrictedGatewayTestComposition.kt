@@ -44,18 +44,30 @@ internal fun newDormantRestrictedGatewayDispatcher(
                 val question = header?.let {
                     packet.bytes.copyOfRange(it.transportOffset + 8, packet.bytes.size)
                 }
-                if (question == null || !isApprovedTestDnsQuestion(
+                if (question == null) null
+                else if (isComplementaryTestDnsQuestion(
+                        question, approvedHost, plan.allowedHttpsAddress
+                    )) {
+                    // Only the explicitly approved debug-test hostname gets
+                    // local NODATA for the unavailable family. No network,
+                    // token, fresh grant or cross-family route is involved.
+                    buildRestrictedTestOtherFamilyNodata(
+                        packet, approvedHost, plan.allowedHttpsAddress, plan.mtu
+                    )?.let { output.write(it) }
+                    null
+                } else if (!isApprovedTestDnsQuestion(
                         question, approvedHost, plan.allowedHttpsAddress
                     )) null
-                else connectWithGatewayAddressFallback(
+                else connectWithGatewayTcpFallback(
                     gatewayName, gatewayPort, timeoutMs, lookupOnUnderlyingNetwork,
-                    dial = { address, remaining ->
+                    dial = { address, remaining, tcpBudget ->
                         exchangeOneTunDnsQueryThroughGatewayAndBindTestDestination(
                             address, gatewayName, dnsServerName, bearerToken, remaining,
                             protect, packet, pending, output, plan.mtu,
                             approvedHost, plan.allowedHttpsAddress,
                             gatewayTlsFactory, dnsTlsFactory, bindToUnderlyingNetwork,
                             elapsedRealtimeMillis,
+                            tcpConnectBudgetMs = tcpBudget,
                         )
                     },
                 )
@@ -68,13 +80,14 @@ internal fun newDormantRestrictedGatewayDispatcher(
             }
             val serverIsn = nextServerIsn()
             require(serverIsn in 0..0xffff_ffffL)
-            connectWithGatewayAddressFallback(
+            connectWithGatewayTcpFallback(
                 gatewayName, gatewayPort, timeoutMs, lookupOnUnderlyingNetwork,
-                dial = { address, remaining ->
+                dial = { address, remaining, tcpBudget ->
                     connectDnsBoundTestTcpBridge(
                         binding, syn, now, output, address, gatewayName,
                         bearerToken, remaining, plan.mtu, serverIsn,
                         protect, gatewayTlsFactory, bindToUnderlyingNetwork,
+                        tcpConnectBudgetMs = tcpBudget,
                     )
                 },
             )

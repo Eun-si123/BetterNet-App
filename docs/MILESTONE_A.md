@@ -13,6 +13,20 @@ One explicitly selected, consenting Android app completes a genuine HTTPS reques
 - **A2: Measurable value.** Same workload with BetterNet OFF/ON under Linux-host-simulated impairment; compare task success, p50/p95, recovery, overhead, data cost and battery. A direct/no-change choice is valid when the tunnel is worse.
 - **A3: Auto and restricted environments.** Only validated routing, scheduling and transport adaptation; later protocol-blocking and vetted relays, without unsupported anonymity or universal unblockability promises.
 
+## A1 crossed bidirectional TCP data (draft)
+
+A one-segment response retry slot must not block independent client-to-gateway
+data. A valid in-order client segment may acknowledge either the current
+cumulative server sequence or the complete outstanding server response.
+Only the latter retires the outstanding response; partial and future ACKs
+remain rejected. Delivery and duplicate-payload ACKs use the next server
+send sequence, including outstanding response bytes and 32-bit wraparound.
+The already sent response remains eligible for bounded exact-packet retry;
+an exact duplicate client payload is re-ACKed without repeating the upstream
+write. This improves the existing restricted single-flow test path, not a
+full TCP stack. Partial ACKs, general reordering and physical Android browser
+interoperability are not established by this regression.
+
 ## Single budget for restricted gateway connection
 
 The dormant A1 authenticated CONNECT path uses one monotonic timeout for
@@ -48,6 +62,110 @@ hardware. Running a debug build, showing a foreground notice or obtaining
 the OS grant is **not** proof of A1 Internet forwarding or unrelated-app
 exclusion. Test only an authorized gateway and independent HTTPS endpoint; the
 repository's reference gateway still binds loopback only and is not deployed.
+
+## A1 scoped test configuration changes and independent termination backstop
+
+An explicitly approved debug A1 test can run for roughly **120 seconds**.
+Previously, its timeout was observed only by the TUN owner between packet
+cycles, so a blocking Android DNS/binding callback could postpone cleanup.
+The Service now also schedules an independent main-looper STOP task **before**
+TUN activation. It requests descriptor cancellation and service shutdown even
+when the packet pump does not complete its current cycle. The owner-loop
+monotonic deadline remains separately active. A failed schedule refuses
+activation; revoke, service destroy, and explicit user stop cancel the pending
+callback and cannot rearm that service instance. This is a stronger OS-level
+cleanup request, **not a hard real-time guarantee** if Android freezes the
+process or an OS call ignores descriptor closure.
+
+Changing the selected app **or any staged gateway/destination/token fields**
+must invalidate the one-use start handoff and **request shutdown of the
+previous VPN** before the new configuration can be used. Previously, editing
+only invalidated the next-start lease and could leave the old restricted
+session running for the remainder of its lifetime. Android device verification
+of notification, STOP races, and actual route removal is still **NOT RUN**.
+
+## A1 opt-in local diagnostic event ledger (device evidence support)
+
+In debug builds only, an explicit **View A1 debug events** UI permits users
+to review up to 64 predefined event codes and approximate process-relative
+seconds. Codes cover selection/config changes, HTTPS probe success/failure,
+service start refusal/acceptance, stop/revoke/timeout, worker termination
+and the limited TUN quota. No arbitrary strings, stack traces, hostnames, IP
+addresses, package names, bearer credentials or packet contents can enter the
+bounded memory-only ring. Process death discards it; the user may clear it.
+There is **no automatic upload or clipboard write**. Only the user's separate
+Copy button puts the *previewed* text on the OS clipboard, whose contents
+may be visible to other apps. This is explicit in the preview warning.
+
+Start-accepted means only that Android returned from the bounded test
+activation; it is **not** a verified HTTPS browser response. Actual Android
+diagnostics and device A1 acceptance remain NOT RUN.
+
+## A1 debug TUN byte-usage ceiling (not carrier billing quota)
+
+In addition to the independent ~120-second stop paths, an explicitly started
+A1 debug test now has a fixed **8 MiB bidirectional combined IP/TUN packet
+budget**. The TUN session charges the ingress packet before parsing/callbacks
+and charges complete outgoing responses before a descriptor write. Budget
+exhaustion throws a terminal error, closes the session and the already-owned
+TUN descriptor; the existing worker termination callback requests service
+shutdown. Malformed/rejected inbound IP packets also count against the cap.
+The accounting is shared across directions and atomic, never per-connection.
+
+This is intentionally **not** a billed cellular data cap: underlying
+protected TCP/TLS traffic, upstream DNS, VPN overhead and mobile-radio
+retransmissions do not traverse the TUN counters. The Android OS may also
+delay teardown, and hardware billing impact remains NOT RUN. The debug UI
+discloses these limitations in English and Korean. No configuration,
+credential or new routing capability is added.
+
+## A1 debug handoff is pinned to the tested underlying network
+
+The Activity places the opaque Android Network handle (not a credential or
+raw Network object) in its one-use process-local activation session.
+The Service compares the current default Network handle before starting,
+then checks that same Network is still default in the last pre-establishment
+validation. Switching Wi-Fi to mobile data while a request is queued must
+abort instead of silently using an unapproved metered route. Missing/zero,
+mismatched, expired, and replayed handoffs fail closed. Once the VPN begins,
+the OS may set the VPN itself as default, so ongoing checks keep using the
+approved underlying Network without requiring it to remain the default.
+
+These are JVM/race-gate checks, not Android hardware or metered cost proof.
+
+## Dual-stack TCP fallback inside the single gateway budget (A1 Draft)
+
+The restricted gateway paths now reserve a bounded **TCP-only** slice for early
+IPv6/IPv4 addresses, leaving time to attempt an alternate address when the
+first TCP connection blackholes. The original **shared transaction deadline**
+still applies to TLS identity verification, CONNECT authorization, and
+credential use; the TCP-only slice does not truncate a successful TLS
+handshake. Only an explicitly tagged **TCP-connect** failure may try another
+resolved address. TLS identity failures, revoked VPN scope, failed network
+binding, or errors after authentication **must not be replayed** to another
+address. No default network, unapproved app, or destination is substituted.
+
+Local JVM tests include a simulated blackholed first family, single-address
+budget, retry refusal, and an actual isolated loopback TLS handshake longer
+than its TCP-only cap. This is a **Draft PR correctness improvement**, not a
+VPN activation or physical-device A1 completion.
+
+## A1 browser parallel DNS A/AAAA handling (draft, device not proven)
+
+The A1 test TUN accepts **only one independently approved DNS-correlated
+destination IP**. Real Android resolvers can nevertheless ask A and AAAA in
+either order. A legitimate *complementary* query for the **same hostname** and
+unsupported family must not revoke the already authenticated, unconsumed
+grant while it is still fresh. It may not create a new authorization, renew
+the TTL or cause a credential-bearing gateway dial. Any failed approved-family
+lookup, malformed query, different hostname, unexpected QTYPE or expired grant
+retains fail-closed behavior. The explicitly approved *debug test hostname*
+now gets a **local policy-filtered NOERROR/NODATA response** for the unsupported
+A/AAAA family, with no gateway contact, new IP authorization or TTL renewal.
+This is **not a claim about the authoritative upstream DNS records**; it
+only describes the currently permitted test routing scope. No general
+DNS rewriting, content interception or new route is enabled. Real Android
+A1 validation remains necessary to check browser resolver interoperability.
 
 ## DNS name correlation interoperability
 

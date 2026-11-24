@@ -26,11 +26,13 @@ internal class DnsDestinationBinding private constructor(
     private val createdAtMillis: Long,
     private val ttlMillis: Long,
 ) {
+    internal fun isFreshAt(nowMillis: Long): Boolean =
+        nowMillis >= createdAtMillis && nowMillis - createdAtMillis < ttlMillis
+
     fun allows(syn: TunIngressResult.Packet, nowMillis: Long): Boolean {
         val header = parseTunPacketHeader(syn.bytes, syn.bytes.size) ?: return false
         if (header.protocol != 6 || header.destinationPort != 443 ||
-            header.destination != address || nowMillis < createdAtMillis ||
-            nowMillis - createdAtMillis >= ttlMillis) return false
+            header.destination != address || !isFreshAt(nowMillis)) return false
         val offset = header.transportOffset
         return (syn.bytes[offset + 13].toInt() and 0xff) == 0x02
     }
@@ -119,6 +121,40 @@ internal class DnsDestinationBinding private constructor(
  */
 internal fun isApprovedTestDnsQuestion(
     query: ByteArray, expectedHost: String, allowedTestAddress: InetAddress,
+): Boolean = isApprovedTestDnsQuestionOfType(
+    query, expectedHost, if (allowedTestAddress.address.size == 4) 1 else 28
+)
+
+/** Preserve an unconsumed, fresh, already authenticated DNS A/AAAA grant
+ * during a parallel query for the *same name* in the unapproved address
+ * family. This query must not grant a new address, contact a gateway, renew
+ * the TTL or authorize any additional destination. Malformed or unrelated
+ * queries still revoke the one-use binding.
+ */
+internal fun isComplementaryAddressDnsQuery(
+    request: TunIngressResult.Packet,
+    approved: DnsDestinationBinding,
+    nowMillis: Long,
+): Boolean {
+    if (!approved.isFreshAt(nowMillis) || !isSupportedDnsTunQuery(request)) return false
+    val query = request.bytes.copyOfRange(
+        request.header.transportOffset + 8, request.bytes.size
+    )
+    return isComplementaryTestDnsQuestion(query, approved.hostname, approved.address)
+}
+
+/** The user-approved A1 test route has exactly one IP family. A valid
+ * query for the opposite family is a policy-filtered *same-host* request,
+ * not another authenticated DNS address grant.
+ */
+internal fun isComplementaryTestDnsQuestion(
+    query: ByteArray, approvedHost: String, approvedAddress: InetAddress,
+): Boolean = isApprovedTestDnsQuestionOfType(
+    query, approvedHost, if (approvedAddress.address.size == 4) 28 else 1
+)
+
+private fun isApprovedTestDnsQuestionOfType(
+    query: ByteArray, expectedHost: String, expectedType: Int,
 ): Boolean {
     if (!isValidGatewayName(expectedHost) || !isSupportedDnsQueryMessage(query)) return false
     var at = 12
@@ -135,8 +171,7 @@ internal fun isApprovedTestDnsQuestion(
     if (at + 5 > query.size || query[at++] != 0.toByte()) return false
     val questionType = ((query[at].toInt() and 255) shl 8) or
         (query[at + 1].toInt() and 255)
-    val approvedType = if (allowedTestAddress.address.size == 4) 1 else 28
-    return questionType == approvedType &&
+    return questionType == expectedType &&
         query[at + 2] == 0.toByte() && query[at + 3] == 1.toByte()
 }
 
@@ -164,6 +199,7 @@ internal fun connectDnsBoundTestTcpBridge(
     protect: (Socket) -> Boolean,
     tlsFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
     bind: (Socket) -> Unit = {},
+    tcpConnectBudgetMs: Int? = null,
 ): OfflineTcpTunBridge {
     require(binding.allows(syn, nowMillis) &&
         buildTcpSynAck(syn, serverIsn, mtu) != null) {
@@ -171,7 +207,8 @@ internal fun connectDnsBoundTestTcpBridge(
     }
     val tunnel = connectAuthenticatedPinnedIpTestTunnel(
         gatewayAddress, gatewayName, timeoutMs, protect, binding.address, 443,
-        bearerToken, tlsFactory = tlsFactory, bind = bind
+        bearerToken, tlsFactory = tlsFactory, bind = bind,
+        tcpConnectBudgetMs = tcpConnectBudgetMs,
     )
     return try {
         // CONNECT has its own whole-response deadline. Once authenticated,

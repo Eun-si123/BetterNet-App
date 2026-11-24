@@ -217,6 +217,55 @@ class RestrictedTunActivationTest {
         assertEquals(listOf("preflight"), events)
     }
 
+    @Test fun changedDefaultNetworkAbortsBeforeForegroundOrTunEstablishment() {
+        // Model UI authorization on Wi-Fi (42) followed by a default-network
+        // switch to cellular (43) while the service request was queued.
+        val events = mutableListOf<String>()
+        val approved = 42L
+        var current = 43L
+        val failure = assertThrows(IllegalArgumentException::class.java) {
+            withRestrictedForegroundOwnership(
+                revalidate = {
+                    events += "preflight"
+                    requireApprovedRestrictedNetworkHandle(approved, current)
+                },
+                promote = { events += "foreground" },
+                activate = { events += "establish"; "worker" },
+                demote = { events += "demote" },
+            )
+        }
+        assertEquals("Underlying Network changed since user authorization", failure.message)
+        assertEquals(listOf("preflight"), events)
+        // Even if an earlier identity check passed, the transaction must
+        // reject a race at its final checkpoint before touching the TUN.
+        current = approved
+        val anotherRace = assertThrows(IllegalArgumentException::class.java) {
+            withRestrictedForegroundOwnership(
+                revalidate = { events += "preflight2" },
+                promote = { events += "foreground2" },
+                activate = {
+                    current = 43L
+                    establishRestrictedTunTransaction(
+                        revalidate = {
+                            events += "last-check"
+                            requireApprovedRestrictedNetworkHandle(approved, current)
+                        },
+                        establish = { events += "establish2"; FakeDescriptor(events) },
+                        attach = { events += "attach2"; "worker" },
+                        start = { events += "start2" },
+                        rollback = { events += "rollback2" },
+                    )
+                },
+                demote = { events += "demote2" },
+            )
+        }
+        assertEquals("Underlying Network changed since user authorization", anotherRace.message)
+        assertEquals(
+            listOf("preflight", "preflight2", "foreground2", "last-check", "rollback2", "demote2"),
+            events
+        )
+    }
+
     @Test fun foregroundOrActivationFailureDemotesWithoutMaskingPrimaryError() {
         for (failAt in listOf("foreground", "establish")) {
             val events = mutableListOf<String>()

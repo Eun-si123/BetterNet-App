@@ -36,6 +36,19 @@
       "fieldEvidence": [
         "docs/TEST_STRATEGY.md"
       ]
+    },
+    {
+      "id": "a1-debug-events",
+      "source": [
+        "app/src/main/java/io/betternet/next/RestrictedDebugEvents.kt"
+      ],
+      "regressions": [
+        "app/src/test/java/io/betternet/next/RestrictedDebugEventsTest.kt"
+      ],
+      "fieldEvidence": [
+        "docs/TEST_STRATEGY.md",
+        "docs/SECURITY_PRIVACY.md"
+      ]
     }
   ]
 }

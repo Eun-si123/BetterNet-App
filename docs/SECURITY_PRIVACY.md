@@ -26,6 +26,43 @@ Exit nodes and network providers can still observe IP addresses, DNS metadata, c
 4. No blanket bypass of other VPNs. Unexpected starts/restarts, revoke, stopped app, stale server trust and failed cleanup must not leave a hidden forwarding session active.
 5. Network probes can cost money and leak destination metadata. Require explicit request for optional external probes and show the affected network and endpoint category.
 
+## Debug-only session expiry and configuration isolation
+
+Changing the user-approved gateway, test destination or bearer credential
+requests shutdown of any earlier in-process restricted VPN and invalidates
+pending approval. A separate, one-shot **120-second main-looper watchdog**
+stops the service and cancels its TUN descriptor even if the packet owner is
+stuck waiting for the next iteration; its independent monotonic pump limit
+is retained. Android process suspension or an uninterruptible OS call can
+still postpone exact cleanup, so this is a best-effort bounded stop request,
+not guaranteed strict no-leak or an OS-enforced wall-clock limit. Physical
+Android testing of service Stop, revocation and per-app isolation remains
+required.
+
+## Optional user-reviewed debug events (local memory only)
+
+The A1 debug Activity has a deliberately opt-in **View debug events** dialog
+and separate Copy/Clear controls. Only a closed Kotlin enum of status codes
+can be recorded, with approximate time since the first event and a strict
+64-entry cap. There is no arbitrary message/exception overload and no
+credential, URL, host/IP, package identifier, TUN contents, crash trace,
+persisted file or network submission. Events disappear when the app process
+dies or the user clears them. Viewing does not alter clipboard state.
+The Copy button exports **only the previewed text** to Android's system
+clipboard after explicit user action; other apps may see clipboard content,
+so the preview prominently warns about that exposure. App and service
+recording is locally observable but does not constitute VPN or HTTPS proof.
+
+## Debug-only combined TUN packet traffic budget
+
+An experimental A1 debug session limits **combined TUN ingress and egress**
+to 8 MiB. The packet-read and packet-write wrappers debit a shared atomic
+counter before forwarding and fail/close the entire restricted session on
+exhaustion. This is not a carrier/mobile-data budget: encrypted gateway
+overhead, DNS, radio retransmission and billing may exceed it. Do not claim
+strict no-charge, perfect cutoff time or unmetered safety without device
+measurements. The user sees this limitation in the opt-in warning.
+
 ## Experimental debug VPN handoff (unmerged A1 prototype)
 
 - **Release builds stay closed:** the service accepts explicit restricted
@@ -49,6 +86,19 @@ Exit nodes and network providers can still observe IP addresses, DNS metadata, c
 
 This is a reviewable code path, not permission to route user traffic on any
 physical phone or deploy a gateway without an explicit test environment.
+
+## Debug test-only local DNS address-family policy
+
+The explicit, selected-app A1 test routes **only one independently approved
+destination IP**. For that exact approved hostname alone, the unsupported
+A/AAAA query gets a synthetic local **NOERROR/NODATA** reply so parallel
+browser DNS queries need not wait for a non-routed family. This is a
+**local policy decision**, not an assertion that the upstream authoritative
+DNS has no records. The virtual DNS endpoint never returns a second IP grant
+or contacts a gateway for that negative response. All unrelated, malformed
+or non-approved name/type queries remain rejected without DNS modification.
+Do not describe this as a general-purpose DNS resolver, an anonymity feature
+or a physical Android A1 PASS.
 
 ## Diagnostic data: preview-before-send contract
 

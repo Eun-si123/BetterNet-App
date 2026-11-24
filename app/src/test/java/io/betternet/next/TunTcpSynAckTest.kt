@@ -479,6 +479,50 @@ class TunTcpSynAckTest {
         }
     }
 
+    @Test fun crossedBidirectionalPayloadPreservesOutstandingReplyAndForwardsExactlyOnce() {
+        for (version in listOf(4, 6)) {
+            val syn = request(version)
+            val isn = 0xffff_fffeL
+            val upstream = ByteArrayOutputStream()
+            val tun = ByteArrayOutputStream()
+            val bridge = OfflineTcpTunBridge(ByteArrayInputStream(byteArrayOf(9, 8)),
+                upstream, 1280, isn, clientWindow = 4,
+                allowedDestination = syn.header.destination)
+            val ip = if (version == 4) 20 else 40
+            fun send(packet: TunIngressResult.Packet, time: Long): ByteArray {
+                tun.reset()
+                assertTrue(bridge.pumpOneTunPacket(ByteArrayInputStream(packet.bytes), tun, time))
+                return tun.toByteArray()
+            }
+            try {
+                assertTrue(send(syn, 100).isNotEmpty())
+                assertTrue(send(finalAck(syn, isn), 101).isEmpty())
+                tun.reset()
+                assertTrue(bridge.pumpOneGatewayReply(tun, 102))
+                val pending = tun.toByteArray()
+                val payload = byteArrayOf(4, 5)
+                val crossed = finalAck(syn, isn, flags = 0x18,
+                    acknowledgement = 0xffff_ffffL, payload = payload)
+                val ack = send(crossed, 103)
+                assertArrayEquals("In-order peer bytes must not wait for the opposite ACK",
+                    payload, upstream.toByteArray())
+                assertEquals(0, tcpChecksum(ack, version))
+                assertEquals(1L, u32(ack, ip + 4)) // SND.NXT wraps
+                assertEquals(2L, u32(ack, ip + 8))
+                assertArrayEquals(ack, send(crossed, 104))
+                assertArrayEquals(payload, upstream.toByteArray()) // replay never writes twice
+                tun.reset()
+                assertTrue(bridge.pumpPendingRetry(tun, 602))
+                assertArrayEquals(pending, tun.toByteArray())
+                assertTrue(send(finalAck(syn, isn, sequence = 2L,
+                    acknowledgement = 1L), 603).isEmpty())
+                tun.reset()
+                assertFalse(bridge.pumpPendingRetry(tun, 1602))
+                assertArrayEquals(payload, upstream.toByteArray())
+            } finally { bridge.close() }
+        }
+    }
+
     @Test fun malformedPiggybackAckNeverRetiresResponseOrForwardsClientBytes() {
         for (version in listOf(4, 6)) {
             val syn = request(version)
@@ -493,8 +537,8 @@ class TunTcpSynAckTest {
                 this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte()
             }
             for (invalid in listOf(
-                finalAck(syn, isn, flags = 0x18, acknowledgement = 124L,
-                    payload = byteArrayOf(1, 2)), // stale ACK
+                finalAck(syn, isn, flags = 0x18, acknowledgement = 125L,
+                    payload = byteArrayOf(1, 2)), // partial ACK unsupported
                 finalAck(syn, isn, flags = 0x18, acknowledgement = 127L,
                     payload = byteArrayOf(1, 2)), // unsent server bytes
                 finalAck(syn, isn, flags = 0x18, sequence = 1,

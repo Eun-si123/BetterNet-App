@@ -63,11 +63,16 @@
   <string name="authenticated_probe_response">Verified HTTPS peer responded with HTTP %1$d via the gateway. No VPN or selected-app forwarding was tested.</string>
   <string name="authenticated_probe_failed">Authenticated HTTPS path failed or authorization changed. No VPN was started.</string>
   <string name="debug_start_button">Start 2-minute scoped VPN test (DEBUG)</string>
-  <string name="debug_test_warning">Experimental debug test ONLY. After a successful authenticated HTTPS gateway check and Android VPN consent, this starts a temporary VPN capturing ONLY the selected app on two exact routes (virtual DNS and approved HTTPS IP). The app may lose access to other destinations during this test; data charges may occur, and this is NOT a general VPN or acceleration product. Do not select a critical app. Stop requests shutdown immediately; a separate timer ends the test after about 2 minutes, subject to bounded OS I/O delays. Test only with a gateway and destination you are authorized to use.</string>
+  <string name="debug_test_warning">Experimental debug test ONLY. After a successful authenticated HTTPS gateway check and Android VPN consent, this starts a temporary VPN capturing ONLY the selected app on two exact routes (virtual DNS and approved HTTPS IP). Unsupported A/AAAA records for the approved test hostname receive a local filtered empty DNS response (not authoritative DNS). The app may lose access to other destinations during this test; data charges may occur, and this is NOT a general VPN or acceleration product. Do not select a critical app. The test also stops after 8 MiB total TUN IP traffic (incoming and outgoing combined) or about 2 minutes. Gateway encryption, DNS, radio retransmissions and carrier billing are NOT covered by that 8 MiB counter. Android OS I/O delays can postpone actual shutdown. Test only with a gateway and destination you are authorized to use.</string>
   <string name="debug_start_confirm">Start restricted test</string>
   <string name="debug_test_not_started">Restricted debug VPN has not been started. A successful recent authenticated HTTPS probe is required.</string>
   <string name="debug_test_not_ready">Not ready. Verify the gateway HTTPS path again, grant Android VPN permission, and ensure no other VPN is active.</string>
   <string name="debug_test_start_requested">Restricted debug VPN start requested. Android VPN status and the foreground notification indicate actual activity; this message is NOT evidence of Internet forwarding.</string>
   <string name="debug_test_start_failed">Restricted debug start was refused. No VPN success is claimed.</string>
   <string name="debug_test_stop_requested">Restricted VPN stop requested. Check the Android VPN status to confirm it stopped.</string>
+  <string name="debug_view_events">View A1 debug events (local only)</string>
+  <string name="debug_clear_events">Clear events</string>
+  <string name="debug_copy_events">Copy this preview</string>
+  <string name="debug_events_copied">Only the previewed event codes were copied. Clipboard content can be read by other apps.</string>
+  <string name="debug_events_copy_failed">Clipboard access failed; events remain local to this process.</string>
 </resources>

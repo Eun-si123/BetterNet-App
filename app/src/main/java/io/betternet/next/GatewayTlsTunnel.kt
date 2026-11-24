@@ -24,6 +24,7 @@ internal fun connectVerifiedDestinationTlsThroughGateway(
     gatewayTlsFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
     destinationTlsFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
     bind: (Socket) -> Unit = {},
+    tcpConnectBudgetMs: Int? = null,
 ): SSLSocket {
     // Reject unsafe destinations before opening a gateway socket.
     require(isValidGatewayName(destinationName)) { "Invalid destination TLS hostname" }
@@ -31,7 +32,8 @@ internal fun connectVerifiedDestinationTlsThroughGateway(
     require(timeoutMs in 1..10_000) { "Destination TLS timeout must be bounded" }
     val tunnel = connectAuthenticatedTestTunnel(
         gatewayAddress, gatewayName, timeoutMs, protect, destinationName, destinationPort,
-        bearerToken, tlsFactory = gatewayTlsFactory, bind = bind
+        bearerToken, tlsFactory = gatewayTlsFactory, bind = bind,
+        tcpConnectBudgetMs = tcpConnectBudgetMs,
     )
     return establishVerifiedDestinationTlsOnTunnel(
         tunnel, destinationName, destinationPort, timeoutMs, destinationTlsFactory

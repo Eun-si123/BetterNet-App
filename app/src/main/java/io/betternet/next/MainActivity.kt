@@ -2,6 +2,8 @@ package io.betternet.next
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -31,6 +33,7 @@ class MainActivity : Activity() {
     private var consentButton: Button? = null
     private val verifiedGateway = VerifiedGatewayTestLease()
     private var debugStartButton: Button? = null
+    private var debugTestStatus: TextView? = null
     private var gatewayProbeRunning = false
     private val gatewayProbeGeneration = AtomicInteger(0)
 
@@ -82,8 +85,13 @@ class MainActivity : Activity() {
                     showRestrictedTestConfigurationDialog { configuration ->
                         gatewayProbeGeneration.incrementAndGet()
                         verifiedGateway.clear()
-                        updateDebugStartAvailability()
+                        // Changing the destination, credentials or gateway is
+                        // a new authorization scope. Stop the old live VPN;
+                        // merely clearing the next-start lease is insufficient.
+                        invalidateRestrictedDebugUserScope()
+                        recordDebugEvent(RestrictedDebugEvent.CONFIG_UPDATED)
                         testConfiguration = configuration
+                        updateDebugStartAvailability()
                         consentButton?.isEnabled = true
                         configurationStatus.text = getString(R.string.test_config_summary,
                             configuration.gatewayName, configuration.gatewayPort,
@@ -109,11 +117,11 @@ class MainActivity : Activity() {
             setOnClickListener {
                 gatewayProbeGeneration.incrementAndGet()
                 verifiedGateway.clear()
-                RestrictedDebugActivationRegistry.handoff.clear()
-                stopService(Intent(this@MainActivity, SelectedAppVpnService::class.java))
-                updateDebugStartAvailability()
+                invalidateRestrictedDebugUserScope()
+                recordDebugEvent(RestrictedDebugEvent.SCOPE_CLEARED)
                 selectedApp = null
                 testConfiguration = null
+                updateDebugStartAvailability()
                 requestConsentButton.isEnabled = false
                 configurationStatus.setText(R.string.test_config_not_set)
                 configureButton.isEnabled = false
@@ -141,13 +149,13 @@ class MainActivity : Activity() {
                             // downgrading to package-name/UID-only consent.
                             gatewayProbeGeneration.incrementAndGet()
                             verifiedGateway.clear()
-                            RestrictedDebugActivationRegistry.handoff.clear()
-                            stopService(Intent(this@MainActivity, SelectedAppVpnService::class.java))
-                            updateDebugStartAvailability()
+                            invalidateRestrictedDebugUserScope()
+                            recordDebugEvent(RestrictedDebugEvent.SELECTION_CHANGED)
                             selectedApp = readInstalledAppIdentity(packageManager, choices[index].packageName)
                                 ?.takeIf { it.uid == choices[index].uid }
                                 ?.let { choices[index].copy(signerFingerprint = it.signerFingerprint) }
                             testConfiguration = null
+                            updateDebugStartAvailability()
                             requestConsentButton.isEnabled = false
                             configurationStatus.setText(R.string.test_config_not_set)
                             configureButton.isEnabled = selectedApp != null
@@ -218,6 +226,7 @@ class MainActivity : Activity() {
         root.addView(authenticatedStatus)
         if (isDebugActivationBuild()) {
             val testStatus = TextView(this).apply { setText(R.string.debug_test_not_started) }
+            debugTestStatus = testStatus
             val startButton = Button(this).apply {
                 setText(R.string.debug_start_button)
                 isEnabled = false
@@ -246,14 +255,37 @@ class MainActivity : Activity() {
             root.addView(Button(this).apply {
                 setText(R.string.stop_restricted_vpn_test)
                 setOnClickListener {
-                    RestrictedDebugActivationRegistry.handoff.clear()
                     verifiedGateway.clear()
+                    invalidateRestrictedDebugUserScope()
                     updateDebugStartAvailability()
-                    stopService(Intent(this@MainActivity, SelectedAppVpnService::class.java))
-                    testStatus.setText(R.string.debug_test_stop_requested)
                 }
             })
             root.addView(testStatus)
+            root.addView(Button(this).apply {
+                setText(R.string.debug_view_events)
+                setOnClickListener {
+                    // Explicit local preview; nothing is auto-sent or copied.
+                    val preview = RestrictedDebugEvents.journal.snapshot()
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle(R.string.debug_view_events)
+                        .setMessage(preview)
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .setNeutralButton(R.string.debug_clear_events) { _, _ ->
+                            RestrictedDebugEvents.journal.clear()
+                        }
+                        .setPositiveButton(R.string.debug_copy_events) { _, _ ->
+                            try {
+                                val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText(
+                                    "BetterNet A1 diagnostic events", preview,
+                                ))
+                                debugTestStatus?.setText(R.string.debug_events_copied)
+                            } catch (_: RuntimeException) {
+                                debugTestStatus?.setText(R.string.debug_events_copy_failed)
+                            }
+                        }.show()
+                }
+            })
         }
         // Keep the selection and clear controls reachable on small screens or large fonts.
         setContentView(ScrollView(this).apply {
@@ -384,6 +416,22 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun invalidateRestrictedDebugUserScope() {
+        recordDebugEvent(RestrictedDebugEvent.STOP_REQUESTED)
+        revokeRestrictedDebugScope(RestrictedDebugActivationRegistry.handoff) {
+            stopService(Intent(this, SelectedAppVpnService::class.java))
+        }
+        // The stop request is asynchronous; do not imply that Android has
+        // already removed the TUN or foreground notification.
+        debugTestStatus?.setText(R.string.debug_test_stop_requested)
+    }
+
+    private fun recordDebugEvent(event: RestrictedDebugEvent) {
+        RestrictedDebugEvents.record(
+            applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0, event,
+        )
+    }
+
     private fun isDebugActivationBuild(): Boolean =
         applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
 
@@ -419,13 +467,17 @@ class MainActivity : Activity() {
         updateDebugStartAvailability()
         try {
             val ticket = RestrictedActivationTicket.forFutureExplicitConfirmation(selected, config)
-            val handle = RestrictedDebugActivationRegistry.handoff.stage(ticket, selected, config)
+            val handle = RestrictedDebugActivationRegistry.handoff.stage(
+                ticket, selected, config, network.networkHandle
+            )
+            recordDebugEvent(RestrictedDebugEvent.START_REQUESTED)
             startForegroundService(Intent(this, SelectedAppVpnService::class.java)
                 .setAction(ACTION_START_RESTRICTED_DEBUG)
                 .putExtra(EXTRA_RESTRICTED_HANDLE, handle))
             status.setText(R.string.debug_test_start_requested)
         } catch (_: RuntimeException) {
             RestrictedDebugActivationRegistry.handoff.clear()
+            recordDebugEvent(RestrictedDebugEvent.START_REQUEST_FAILED)
             status.setText(R.string.debug_test_start_failed)
         }
     }
@@ -504,8 +556,12 @@ class MainActivity : Activity() {
                 gatewayProbeRunning = false
                 if (probeStillCurrent(generation, gatewayProbeGeneration.get(), isDestroyed)) {
                     button.isEnabled = true
-                    if (result != null && selectedApp === selected && testConfiguration === config)
+                    if (result != null && selectedApp === selected && testConfiguration === config) {
                         verifiedGateway.approve(selected, config, network)
+                        recordDebugEvent(RestrictedDebugEvent.HTTPS_PREFLIGHT_PASSED)
+                    } else {
+                        recordDebugEvent(RestrictedDebugEvent.HTTPS_PREFLIGHT_FAILED)
+                    }
                     status.text = if (result == null) getString(R.string.authenticated_probe_failed)
                         else getString(R.string.authenticated_probe_response, result)
                     updateDebugStartAvailability()

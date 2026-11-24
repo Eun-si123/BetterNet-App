@@ -131,19 +131,22 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         val offset = header.transportOffset
         val count = bytes.size - offset - 20
         val flags = bytes[offset + 13].toInt() and 255
-        // TCP may acknowledge our one outstanding response AND carry the next
-        // client bytes in the same PSH|ACK. Validate the entire segment before
-        // retiring the response: a bad payload must not free its retry slot.
-        // A pending FIN is intentionally not combined with client data here.
+        // The two TCP directions advance independently: client data can
+        // cross a still-unacknowledged server response. Accept either the
+        // current cumulative ACK or an exact ACK of that one response.
+        // Partial/future ACKs remain unsupported. Only a validated full ACK
+        // may retire the retry slot. A pending FIN is still excluded.
         val expectedAck = (current.serverNext + pendingResponseBytes) and 0xffff_ffffL
+        val acknowledgement = read32(bytes, offset + 8)
         if (count !in 1..receiveWindow ||
             (bytes[offset + 12].toInt() and 15) != 0 ||
             (flags != 0x10 && flags != 0x18) ||
             read16(bytes, offset + 18) != 0 ||
             read32(bytes, offset + 4) != current.clientNext ||
-            read32(bytes, offset + 8) != expectedAck) return null
+            (acknowledgement != current.serverNext &&
+                acknowledgement != expectedAck)) return null
         val staged = bytes.copyOfRange(offset + 20, bytes.size)
-        if (pendingResponseBytes != 0) {
+        if (pendingResponseBytes != 0 && acknowledgement == expectedAck) {
             flow = current.copy(serverNext = expectedAck)
             pendingResponseBytes = 0
             pendingResponsePacket = null
@@ -178,7 +181,8 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         val ack = buildTcpDeliveryAck(
             current.destination, current.source,
             current.destinationPort, current.sourcePort,
-            current.serverNext, next, nextReceiveWindow,
+            (current.serverNext + pendingResponseBytes) and 0xffff_ffffL,
+            next, nextReceiveWindow,
         ) ?: return null
         try {
             tunnelOutput.write(payload)
@@ -235,7 +239,7 @@ internal class OfflineTcpHandshake(private val lifetimeMillis: Long = 15_000L) {
         val reply = buildTcpDeliveryAck(
             current.destination, current.source,
             current.destinationPort, current.sourcePort,
-            acknowledgement, current.clientNext, receiveWindow,
+            pendingAck, current.clientNext, receiveWindow,
         ) ?: return null
         if (acknowledgesResponse) {
             flow = current.copy(serverNext = acknowledgement)

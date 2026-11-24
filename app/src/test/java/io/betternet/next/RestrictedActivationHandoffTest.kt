@@ -19,7 +19,7 @@ class RestrictedActivationHandoffTest {
     @Test fun handleIsOpaqueOneUseAndDoesNotExposeCredential() {
         val registry = RestrictedActivationHandoff()
         val (ticket, app, config) = session()
-        val handle = registry.stage(ticket, app, config)
+        val handle = registry.stage(ticket, app, config, 42L)
         assertEquals(64, handle.length)
         assertFalse(handle.contains("abcdefghijklmnop"))
         assertNull(registry.take(null))
@@ -34,14 +34,14 @@ class RestrictedActivationHandoffTest {
     @Test fun replacementCancellationAndProcessRestartInvalidateOldHandles() {
         val registry = RestrictedActivationHandoff()
         val (firstTicket, firstApp, firstConfig) = session()
-        val first = registry.stage(firstTicket, firstApp, firstConfig)
+        val first = registry.stage(firstTicket, firstApp, firstConfig, 42L)
         val (secondTicket, secondApp, secondConfig) = session()
-        val second = registry.stage(secondTicket, secondApp, secondConfig)
+        val second = registry.stage(secondTicket, secondApp, secondConfig, 43L)
         assertNotEquals(first, second)
         assertNull(registry.take(first))
         registry.clear()
         assertNull(registry.take(second))
-        val third = registry.stage(secondTicket, secondApp, secondConfig)
+        val third = registry.stage(secondTicket, secondApp, secondConfig, 43L)
         assertNull(RestrictedActivationHandoff().take(third))
     }
 
@@ -49,12 +49,12 @@ class RestrictedActivationHandoffTest {
         var now = 1_000_000_000_000L
         val registry = RestrictedActivationHandoff(monotonicNanos = { now })
         val (ticket, app, config) = session()
-        val expired = registry.stage(ticket, app, config)
+        val expired = registry.stage(ticket, app, config, 42L)
         now += TimeUnit.SECONDS.toNanos(61)
         assertNull(registry.take(expired))
         now -= TimeUnit.SECONDS.toNanos(61)
         assertNull(registry.take(expired))
-        val reversed = registry.stage(ticket, app, config)
+        val reversed = registry.stage(ticket, app, config, 42L)
         now--
         assertNull(registry.take(reversed))
     }
@@ -65,13 +65,13 @@ class RestrictedActivationHandoffTest {
         }
         val registry = RestrictedActivationHandoff(random = repeatingRandom)
         val (ticket, app, config) = session()
-        val first = registry.stage(ticket, app, config)
+        val first = registry.stage(ticket, app, config, 42L)
         registry.clear()
-        val second = registry.stage(ticket, app, config)
+        val second = registry.stage(ticket, app, config, 42L)
         assertNotEquals(first, second)
         assertNull(registry.take(first))
         assertSame(ticket, registry.take(second)?.ticket)
-        val third = registry.stage(ticket, app, config)
+        val third = registry.stage(ticket, app, config, 42L)
         assertNotEquals(first, third)
         assertNotEquals(second, third)
         assertNull(registry.take(first))
@@ -89,10 +89,10 @@ class RestrictedActivationHandoffTest {
         }
         val registry = RestrictedActivationHandoff(random = random)
         val (ticket, app, config) = session()
-        val previous = registry.stage(ticket, app, config)
+        val previous = registry.stage(ticket, app, config, 42L)
         fail = true
         try {
-            registry.stage(ticket, app, config)
+            registry.stage(ticket, app, config, 42L)
             fail("Expected random failure")
         } catch (expected: IllegalStateException) {
             assertEquals("random unavailable", expected.message)
@@ -112,7 +112,7 @@ class RestrictedActivationHandoffTest {
             random = slowRandom, monotonicNanos = { now })
         val (ticket, app, config) = session()
         try {
-            registry.stage(ticket, app, config)
+            registry.stage(ticket, app, config, 42L)
             fail("Expired handle must not be issued")
         } catch (expected: IllegalStateException) {
             assertEquals("Activation handoff expired before issuance", expected.message)
@@ -123,7 +123,7 @@ class RestrictedActivationHandoffTest {
         var now = 10_000_000_000L
         val registry = RestrictedActivationHandoff(monotonicNanos = { now })
         val (ticket, app, config) = session()
-        val handle = registry.stage(ticket, app, config)
+        val handle = registry.stage(ticket, app, config, 42L)
         now += TimeUnit.SECONDS.toNanos(60)
         assertSame(ticket, registry.take(handle)?.ticket)
     }
@@ -131,7 +131,7 @@ class RestrictedActivationHandoffTest {
     @Test fun simultaneousConsumersCannotBothClaimSession() {
         val registry = RestrictedActivationHandoff()
         val (ticket, app, config) = session()
-        val handle = registry.stage(ticket, app, config)
+        val handle = registry.stage(ticket, app, config, 42L)
         val ready = CountDownLatch(2)
         val go = CountDownLatch(1)
         val claimed = AtomicInteger()

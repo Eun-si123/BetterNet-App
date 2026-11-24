@@ -16,7 +16,22 @@ class FeatureMapTests(unittest.TestCase):
         cls.real = json.loads(MAP.read_text(encoding="utf-8"))
 
     def test_committed_map_points_to_existing_sources_and_tests(self):
-        self.assertEqual(len(validate(self.real)), 3)
+        features = validate(self.real)
+        self.assertTrue(features)
+        self.assertTrue(all(feature["source"] and feature["regressions"]
+                            for feature in features))
+
+    def test_a1_debug_events_have_specific_regression_without_claiming_device_pass(self):
+        report = summarize(validate(self.real), [
+            "app/src/main/java/io/betternet/next/RestrictedDebugEvents.kt",
+            "app/src/test/java/io/betternet/next/RestrictedDebugEventsTest.kt",
+        ])
+        self.assertEqual(len(report["affectedFeatures"]), 1)
+        item = report["affectedFeatures"][0]
+        self.assertEqual(item["feature"], "a1-debug-events")
+        self.assertEqual(item["review"], "regression-test-change-present")
+        self.assertEqual(item["fieldStatus"], "not-run")
+        self.assertEqual(item["automatedEvidence"], "not-run")
 
     def test_change_without_test_update_cannot_claim_pass(self):
         report = summarize(validate(self.real), ["app/src/main/java/io/betternet/next/AppChoice.kt"])

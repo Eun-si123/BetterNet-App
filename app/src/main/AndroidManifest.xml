@@ -5,7 +5,7 @@
   <!-- Required for a future explicitly consented, authenticated A1 gateway dial.
        Declaring this permission does not initiate a connection or VPN. -->
   <uses-permission android:name="android.permission.INTERNET" />
-  <!-- Dormant A1 foreground ownership; no service start is currently exposed. -->
+  <!-- Debug-only explicitly authorized A1 VPN test; release starts fail closed. -->
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
   <!-- Scoped launcher-app visibility; no QUERY_ALL_PACKAGES permission. -->
@@ -18,7 +18,7 @@
   <application android:allowBackup="false"
     android:label="@string/app_name"
     android:theme="@android:style/Theme.Material.Light.NoActionBar">
-    <!-- Inactive until an explicitly reviewed, authenticated forwarding path exists. -->
+    <!-- Explicitly consented restricted debug test, never a release VPN start. -->
     <!-- Android explicitly exempts configured VPN apps from the alarm-permission
          prerequisite. Android Lint 8.13 cannot infer this VPN exception and
          incorrectly demands SCHEDULE_EXACT_ALARM. Do not request alarm access.
@@ -31,7 +31,7 @@
       <intent-filter>
         <action android:name="android.net.VpnService" />
       </intent-filter>
-      <!-- No forwarding path exists yet: never offer this dormant VPN as always-on. -->
+      <!-- Experimental selected-app VPN must never be configured always-on. -->
       <meta-data android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"
         android:value="false" />
     </service>

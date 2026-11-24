@@ -40,6 +40,18 @@ These are criteria, **not a claim that tests currently exist**. Do not infer any
 
 **First workload candidates:** controlled HTTPS browser (A1); browser and messenger actions next; YouTube playback, QUIC/UDP, DRM and adaptive bitrate separately, never assumed from a TCP-only success. No claim about unsupported games/voice.
 
+## Read-only Android device availability preflight
+
+Run python scripts/a1_android_preflight.py only after connecting a test
+phone over authorized ADB. Windows Python or Linux can locate Android
+platform-tools from PATH, ANDROID_HOME/ANDROID_SDK_ROOT or explicit --adb.
+Exactly one authorized device is required (use --serial for more than one).
+The preflight checks API 26+, installed BetterNet package and debug-only
+run-as. It does not show serial values, read app files, request VPN consent,
+install an APK, send traffic or verify the selected browser. If no phone
+is connected, report NOT RUN (BLOCKED). The independent gateway and
+unselected-app isolation checks remain additional hard requirements.
+
 ## Experimental debug A1 activation gate (not yet DEVICE PASS)
 
 JVM checks on a never-started service seam: only an exact one-use in-memory
@@ -61,6 +73,94 @@ and OS process kill must tear down TUN and sockets and permit returning to
 direct Internet. Repeat on dual-stack and loss/delay, record Android version,
 SHA, exact expected/observed behavior and failure logs **without tokens**.
 If the test cannot run, report A1 as `NOT RUN (DEVICE)`, not `PASS`.
+
+## A1 opt-in diagnostic privacy and lifecycle regression
+
+Check the debug-only View/Copy/Clear event UI. Only user-triggered preview
+may expose the finite event ledger; the second Copy action writes only
+reviewed text to clipboard. Neither recording nor viewing persists, uploads,
+collects IPs/domains/tokens, accesses private logs or auto-copies.
+Validate the pure JVM journal: fixed event enum, relative timestamps,
+clock rollback, at most 64 retained entries, oldest eviction, clear reset,
+concurrency and typed quota refusal with no numeric/session/secret payload.
+Release builds must not show the diagnostic controls. A successful
+START_ACCEPTED code never counts as real A1 browser connectivity evidence;
+physical Android UI, clipboard and service-lifecycle observations remain
+NOT RUN (DEVICE).
+
+## A1 crossed TCP data/ACK ordering
+
+For IPv4 and IPv6, exercise SYN/ACK setup, a pending server response, and an
+in-order client payload carrying the unchanged cumulative ACK. The payload
+must reach the upstream exactly once; its delivery ACK uses SND.NXT, even
+at sequence-number wraparound. Replaying that client packet re-ACKs without
+an upstream write, the pending response remains retriable, and only the
+exact full response ACK retires it. Keep partial/future ACK, wrong tuple,
+wrong sequence, checksum and receive-window negative tests. This is a
+packet/stream fixture, not a selected Android app or WAN TLS success.
+
+## A1 debug test dual-direction TUN byte quota
+
+JVM regression tests verify a single 8 MiB (8 * 1024 * 1024 bytes) budget
+for all TUN ingress and egress combined, not separate per-direction budgets.
+A byte that crosses the ceiling must reject forwarding, discard that packet,
+close the session and release the descriptor once. Exact-limit packets must
+still work; malformed ingress packets count; outbound over-budget responses
+must never be partially written. Concurrent counter operations cannot exceed
+the limit and no integer wrap can increase it. The gateway and radio/TLS
+overhead are not TUN bytes and are not claimed as a billing quota. Real mobile
+data/battery measurements and test-phone shutdown remain NOT RUN (DEVICE).
+
+## A1 debug timeout backstop and scope-change rollback
+
+JVM tests exercise the pure single-use deadline scheduler: exactly 120 seconds,
+expiry while a simulated packet owner is blocked, one callback only, cancellation
+when the foreground service is destroyed/revoked, no rearming to prolong a user
+grant, and refused/throwing scheduling failures with callback revocation.
+Changing an approved gateway address, hostname, bearer credential or selected
+application must clear the pending one-shot permission **before** requesting
+a stop of the old service. Verify stop errors cannot make old handoffs
+replayable. Actual Android Looper scheduling, service notifications, route
+removal and OEM sleep/Doze remain **NOT RUN (DEVICE)**.
+
+## A1 debug activation network-switch regression
+
+Reproduce approval on Wi-Fi then switch the Android default Network to mobile
+data or disconnected state before the service receives the one-use handle.
+Refuse the test before foreground promotion, TUN establishment or bearer use.
+Reject invalid and unknown handles and session replay. The pre-start Network
+identity gate differs from the active-session gate because Android can make
+the established VPN itself the default Network. JVM tests cover the pure
+network-handle check, but actual switching, OS lifecycle and data billing
+effects remain NOT RUN on a physical device.
+
+## Dual-stack gateway regression (A1 draft)
+
+For each restricted gateway path (read-only TLS probe, authenticated HTTPS
+probe, dormant DNS-over-TLS and TCP CONNECT dispatcher), verify that a stalled
+first IPv6/IPv4 TCP dial leaves time for a reachable alternate under the same
+absolute timeout. A successful TCP connection must still have the original
+remaining budget to verify TLS certificate/name and receive authenticated
+CONNECT approval. Invalid TLS identity, post-connect timeouts, withdrawn VPN
+scope and failed socket binding must **not** trigger another credential-bearing
+attempt. Run both deterministic virtual-clock tests and bounded loopback TLS;
+neither constitutes a physical-device A1 PASS.
+
+## A1 browser A/AAAA ordering regression
+
+Run both IPv4-approved A→AAAA→TCP and IPv6-approved AAAA→A→TCP
+sequences through the same restricted dispatcher. The second query must
+neither spend a new bearer credential nor erase the first, still-fresh
+one-use grant. Check mismatched domain/QTYPE, expired grant, case-normalized
+hostname and a retransmitted SYN; no arbitrary address may be authorized
+and a grant must never be renewed. For *only* the approved hostname,
+verify a locally synthesized NOERROR/NODATA response to the unsupported family,
+with the original transaction ID and question, no resource records, no EDNS
+echo, correct IPv4/IPv6 UDP/IP checksums, and **zero gateway socket/token use**.
+Reject any other host, malformed packet, unsupported QTYPE or stale grant.
+This deliberately filtered test answer must be disclosed to users; it is
+not a real upstream DNS record assertion. The selected-browser DNS/TCP/HTTPS
+result is still NOT RUN on a physical Android device.
 
 ## A2 performance design
 

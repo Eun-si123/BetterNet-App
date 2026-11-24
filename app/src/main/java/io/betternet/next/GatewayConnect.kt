@@ -27,11 +27,12 @@ internal fun connectAuthenticatedTestTunnel(
     bearerToken: String,
     tlsFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
     bind: (Socket) -> Unit = {},
+    tcpConnectBudgetMs: Int? = null,
 ): SSLSocket {
     require(isValidGatewayName(destinationHost)) { "Invalid test destination" }
     return connectAuthenticatedTestTunnelAuthority(
         gatewayAddress, gatewayName, timeoutMs, protect, destinationHost,
-        destinationPort, bearerToken, tlsFactory, bind
+        destinationPort, bearerToken, tlsFactory, bind, tcpConnectBudgetMs
     )
 }
 
@@ -46,6 +47,7 @@ internal fun connectAuthenticatedPinnedIpTestTunnel(
     bearerToken: String,
     tlsFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
     bind: (Socket) -> Unit = {},
+    tcpConnectBudgetMs: Int? = null,
 ): SSLSocket {
     require(destinationIp !is Inet6Address || destinationIp.scopeId == 0) {
         "Scoped IPv6 destinations are not supported"
@@ -54,7 +56,7 @@ internal fun connectAuthenticatedPinnedIpTestTunnel(
         else destinationIp.hostAddress
     return connectAuthenticatedTestTunnelAuthority(
         gatewayAddress, gatewayName, timeoutMs, protect, numericHost,
-        destinationPort, bearerToken, tlsFactory, bind
+        destinationPort, bearerToken, tlsFactory, bind, tcpConnectBudgetMs
     )
 }
 
@@ -68,6 +70,7 @@ private fun connectAuthenticatedTestTunnelAuthority(
     bearerToken: String,
     tlsFactory: SSLSocketFactory,
     bind: (Socket) -> Unit,
+    tcpConnectBudgetMs: Int?,
 ): SSLSocket {
     // Validate all untrusted request fields before opening any socket.
     require(timeoutMs in 1..10_000) { "Gateway timeout must be bounded" }
@@ -84,6 +87,7 @@ private fun connectAuthenticatedTestTunnelAuthority(
     val gatewayTls = connectVerifiedGatewayTls(
         gatewayAddress, gatewayName, timeoutMs, protect, tlsFactory = tlsFactory,
         bind = bind, deadlineNanos = deadlineNanos,
+        tcpConnectBudgetMs = tcpConnectBudgetMs,
     )
     try {
         remainingResponseTimeoutMs(deadlineNanos, System.nanoTime())

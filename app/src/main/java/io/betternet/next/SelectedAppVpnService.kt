@@ -9,6 +9,8 @@ import android.app.PendingIntent
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.os.Handler
+import android.os.Looper
 import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
@@ -36,12 +38,37 @@ import javax.net.ssl.SSLSocket
 class SelectedAppVpnService : VpnService() {
     private companion object { const val ACTION_STOP_RESTRICTED_TEST = "io.betternet.next.STOP_RESTRICTED_TEST" }
     private val tunLifecycle = RestrictedTunLifecycle()
+    private val debugDeadlineHandler = Handler(Looper.getMainLooper())
+    private val debugStopWatchdog = RestrictedDebugStopWatchdog(
+        schedule = { task, delay -> debugDeadlineHandler.postDelayed(task, delay) },
+        unschedule = { task -> debugDeadlineHandler.removeCallbacks(task) },
+        requestStop = {
+            recordDebugEvent(RestrictedDebugEvent.TIME_LIMIT_REACHED)
+            try {
+                stopRestrictedServiceFailClosed(
+                    cancel = { tunLifecycle.cancel() },
+                    stop = { stopSelf(); Unit },
+                )
+            } catch (_: Exception) {
+                // No credential, destination or selected package enters logs.
+                android.util.Log.w("BetterNet", "Restricted debug timeout cleanup failed")
+            }
+        },
+    )
+
+    private fun recordDebugEvent(event: RestrictedDebugEvent) {
+        RestrictedDebugEvents.record(
+            applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0, event,
+        )
+    }
 
     override fun onRevoke() {
+        recordDebugEvent(RestrictedDebugEvent.VPN_REVOKED)
         // Even if closing the TUN descriptor fails, Android's revocation
         // callback must still run; otherwise the service can remain alive.
         try {
             RestrictedDebugActivationRegistry.handoff.clear()
+            debugStopWatchdog.cancel()
             tunLifecycle.cancel()
         } finally {
             // Revocation may occur before a worker was started. Never leave
@@ -51,8 +78,10 @@ class SelectedAppVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        recordDebugEvent(RestrictedDebugEvent.SERVICE_DESTROYED)
         try {
             RestrictedDebugActivationRegistry.handoff.clear()
+            debugStopWatchdog.cancel()
             tunLifecycle.cancel()
         } finally {
             super.onDestroy()
@@ -217,6 +246,13 @@ class SelectedAppVpnService : VpnService() {
         // Neither a cached permission result nor an existing builder can
         // resurrect a cancelled service owner.
         tunLifecycle.requireNotCancelled()
+        // Pre-activation only: once our own TUN is established, the default
+        // Network may legitimately become the VPN. Never silently activate
+        // on cellular when the user verified the gateway on Wi-Fi (or vice
+        // versa) while the one-use service handoff was queued.
+        requireApprovedRestrictedNetworkHandle(
+            underlyingNetwork.networkHandle, manager.activeNetwork?.networkHandle ?: 0L
+        )
         val pkg = requireSelectedPackage(selectedApp?.packageName, packageName)
         requirePinnedSelectedApp(selectedApp, packageName,
             readInstalledAppIdentity(packageManager, pkg))
@@ -244,12 +280,14 @@ class SelectedAppVpnService : VpnService() {
     internal fun ownEstablishedRestrictedTestTun(
         descriptor: ParcelFileDescriptor,
         dispatcher: RestrictedTestTunDispatcher,
+        maxTunBytes: Long = Long.MAX_VALUE,
     ): RestrictedTunSession = RestrictedTunSession(
         dispatcher,
         FileInputStream(descriptor.fileDescriptor),
         FileOutputStream(descriptor.fileDescriptor),
         closeDescriptor = { descriptor.close() },
         waitForReadable = { pollRestrictedTunReadable(descriptor) },
+        maxTunBytes = maxTunBytes,
     )
 
     /**
@@ -265,16 +303,27 @@ class SelectedAppVpnService : VpnService() {
         selectedApp: AppChoice?,
     ): RestrictedTunWorker = tunLifecycle.adopt(RestrictedTunWorker(
         RestrictedTunPump(
-            ownEstablishedRestrictedTestTun(descriptor, dispatcher),
+            ownEstablishedRestrictedTestTun(
+                descriptor, dispatcher, RESTRICTED_DEBUG_MAX_TUN_BYTES
+            ),
             revalidate = {
                 // The established VPN itself is now visible in allNetworks,
                 // so do NOT reuse the pre-activation other-VPN rejection here.
                 requireActiveRestrictedTestPrerequisites(manager, underlyingNetwork, selectedApp)
             },
             nowMillis = SystemClock::elapsedRealtime,
-            maxRunMillis = 120_000L, // Debug safety ceiling; no permanent capture.
+            maxRunMillis = RESTRICTED_DEBUG_MAX_RUNTIME_MS,
+            // An independent main-looper watchdog cancels even when the
+            // pump is waiting inside an OS callback rather than iterating.
         ),
-        onTerminated = {
+        onTerminated = { error ->
+            recordDebugEvent(
+                when (error) {
+                    null -> RestrictedDebugEvent.WORKER_TERMINATED
+                    is RestrictedTunByteBudgetExceeded -> RestrictedDebugEvent.TUN_BUDGET_EXCEEDED
+                    else -> RestrictedDebugEvent.WORKER_FAILED
+                }
+            )
             // Even an unexpected pump failure must not leave a future
             // foreground service running without an owned TUN. The callback
             // runs after owner-thread cleanup and never joins its own thread.
@@ -298,10 +347,11 @@ class SelectedAppVpnService : VpnService() {
         manager: ConnectivityManager, network: Network, hostname: String,
         port: Int, timeoutMs: Int,
     ): SSLSocket {
-        return onUnderlyingNetworkGateway(manager, network, hostname, port, timeoutMs) { address, remaining ->
+        return onUnderlyingNetworkGateway(manager, network, hostname, port, timeoutMs) { address, remaining, tcpBudget ->
             connectVerifiedGatewayTls(
                 address, hostname, remaining, { socket -> protect(socket) },
                 bind = { socket -> network.bindSocket(socket) },
+                tcpConnectBudgetMs = tcpBudget,
             )
         }
     }
@@ -316,11 +366,12 @@ class SelectedAppVpnService : VpnService() {
     ): SSLSocket {
         return onUnderlyingNetworkGateway(
             manager, network, gatewayName, gatewayPort, timeoutMs
-        ) { address, remaining ->
+        ) { address, remaining, tcpBudget ->
             connectAuthenticatedTestTunnel(
                 address, gatewayName, remaining, { socket -> protect(socket) },
                 destinationHost, destinationPort, bearerToken,
                 bind = { socket -> network.bindSocket(socket) },
+                tcpConnectBudgetMs = tcpBudget,
             )
         }
     }
@@ -385,24 +436,24 @@ class SelectedAppVpnService : VpnService() {
 
     private fun <T : Closeable> onUnderlyingNetworkGateway(
         manager: ConnectivityManager, network: Network, hostname: String,
-        port: Int, timeoutMs: Int, dial: (InetSocketAddress, Int) -> T,
+        port: Int, timeoutMs: Int, dial: (InetSocketAddress, Int, Int) -> T,
     ): T {
         requireUnderlyingInternetNetwork(manager, network)
         // Revalidate at each DNS lookup and retry, not just at method entry.
         // Protection and binding remain mandatory in the dial callback.
-        return connectWithGatewayAddressFallback(
+        return connectWithGatewayTcpFallback(
             hostname, port, timeoutMs,
             { host ->
                 requireUnderlyingInternetNetwork(manager, network)
                 network.getAllByName(host)
             },
-            { address, remaining ->
+            { address, remaining, tcpBudget ->
                 // The selected Network may disappear or become a VPN while a
                 // protected TLS/CONNECT dial is blocked. Reject its socket and
                 // close it rather than handing out a stale recursive route.
                 withFreshRestrictedGatewaySocketScope(
                     { requireUnderlyingInternetNetwork(manager, network) },
-                    { dial(address, remaining) },
+                    { dial(address, remaining, tcpBudget) },
                 )
             },
         )
@@ -425,6 +476,13 @@ class SelectedAppVpnService : VpnService() {
                 val manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
                 val underlying = manager.activeNetwork
                     ?: throw IllegalStateException("No underlying Internet Network")
+                requireApprovedRestrictedNetworkHandle(
+                    session.approvedNetworkHandle, underlying.networkHandle
+                )
+                // Arm independent cancellation *before* activation starts.
+                // The owner-loop deadline alone cannot interrupt a blocking
+                // Android DNS call; no new session can rearm this watchdog.
+                debugStopWatchdog.arm()
                 // This revalidates Android preparation, selected UID/signers,
                 // other VPN visibility and the selected network, then promotes
                 // foreground before opening any restricted selected-app TUN.
@@ -432,9 +490,12 @@ class SelectedAppVpnService : VpnService() {
                     session.ticket, manager, underlying,
                     session.app, session.configuration, timeoutMs = 3_000,
                 )
+                recordDebugEvent(RestrictedDebugEvent.START_ACCEPTED)
                 return START_NOT_STICKY
             } catch (_: Exception) {
                 // No token, selected package, destination or exception is logged.
+                recordDebugEvent(RestrictedDebugEvent.START_REFUSED)
+                debugStopWatchdog.cancel()
                 android.util.Log.w("BetterNet", "Restricted debug activation refused")
             }
         }
@@ -646,30 +707,50 @@ private fun resolveGatewayAddresses(
     return addresses.map { InetSocketAddress(it, port) }
 }
 
-/**
- * One shared timeout across a bounded IPv6/IPv4 address list. Retry only
- * failures explicitly tagged at the TCP connect boundary; never retry a
- * TLS handshake/CONNECT error (even ConnectException), TLS identity failure,
- * failed protection or network binding.
- * The dial callback must close each failed socket before throwing.
+/** Legacy two-argument adapter. Existing callers explicitly retain the old
+ * entire-budget semantics; only consumers that can separate the protected TCP
+ * dial from TLS/CONNECT should opt in to the TCP-only fallback budget.
  */
 internal fun <T> connectWithGatewayAddressFallback(
     hostname: String, port: Int, timeoutMs: Int,
     lookup: (String) -> Array<InetAddress>,
     dial: (InetSocketAddress, Int) -> T,
     nowNanos: () -> Long = System::nanoTime,
+): T = connectWithGatewayTcpFallback(
+    hostname, port, timeoutMs, lookup,
+    { address, totalRemaining, _ -> dial(address, totalRemaining) }, nowNanos
+)
+
+/**
+ * Bounded dual-stack attempts with a separate TCP-only per-address timeout.
+ * Retry only failures tagged at the TCP connect boundary, never TLS identity,
+ * authenticated CONNECT, failed protection, or network binding. The caller
+ * closes failed sockets before returning. All attempts share a single absolute
+ * transaction deadline; a TCP-only cap never resets TLS or CONNECT deadlines.
+ */
+internal fun <T> connectWithGatewayTcpFallback(
+    hostname: String, port: Int, timeoutMs: Int,
+    lookup: (String) -> Array<InetAddress>,
+    dial: (InetSocketAddress, Int, Int) -> T,
+    nowNanos: () -> Long = System::nanoTime,
 ): T {
     require(timeoutMs in 1..10_000) { "Gateway timeout must be bounded" }
     val deadline = nowNanos() + timeoutMs * 1_000_000L
     val addresses = resolveGatewayAddresses(hostname, port, lookup)
     var lastFailure: IOException? = null
-    for (address in addresses) {
+    for ((index, address) in addresses.withIndex()) {
         val remaining = deadline - nowNanos()
         if (remaining <= 0L) break
         val attemptTimeout = ((remaining / 1_000_000L) +
             if (remaining % 1_000_000L == 0L) 0L else 1L).coerceIn(1L, 10_000L).toInt()
         try {
-            return dial(address, attemptTimeout)
+            // Only cap the TCP connect wait, not gateway TLS or CONNECT.
+            // A blackholed first address should leave time for the other IP
+            // family. Once TCP connects, TLS still owns the full shared
+            // remaining transaction deadline, not this reduced TCP cap.
+            val tcpBudget = if (index < addresses.lastIndex && attemptTimeout > 500)
+                maxOf(250, attemptTimeout / 2) else attemptTimeout
+            return dial(address, attemptTimeout, tcpBudget)
         } catch (failure: IOException) {
             if (failure !is GatewayTcpConnectFailure &&
                 failure !is GatewayTcpConnectTimeout) throw failure
