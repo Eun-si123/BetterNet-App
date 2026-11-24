@@ -24,10 +24,27 @@ internal class RestrictedTunSession(
     private val output: OutputStream,
     private val closeDescriptor: () -> Unit,
     private val waitForReadable: (() -> Boolean)? = null,
+    maxTunBytes: Long = Long.MAX_VALUE,
 ) : Closeable {
+    private val trafficBudget = RestrictedTunTrafficBudget(maxTunBytes)
     private var closed = false
     private val stopRequested = AtomicBoolean(false)
     private val descriptorReleased = AtomicBoolean(false)
+    // Charge complete TUN IP datagrams *before* allowing dispatcher processing
+    // and charge TUN responses before emitting them. All packet I/O passes
+    // these wrappers; requestStop remains descriptor-only and cross-thread.
+    private val budgetedInput = object : InputStream() {
+        override fun read(): Int {
+            val value = input.read()
+            if (value >= 0) trafficBudget.charge(1)
+            return value
+        }
+        override fun read(bytes: ByteArray, offset: Int, length: Int): Int {
+            val count = input.read(bytes, offset, length)
+            if (count > 0) trafficBudget.charge(count)
+            return count
+        }
+    }
     // A gateway/DNS callback can resume after onRevoke() closes the TUN fd.
     // Check again at the actual write boundary, not only after the callback:
     // no late response should be handed to the selected app after cancellation.
@@ -38,9 +55,17 @@ internal class RestrictedTunSession(
         }
         override fun write(value: Int) {
             ensureActive()
+            trafficBudget.charge(1)
+            ensureActive()
             output.write(value)
         }
         override fun write(bytes: ByteArray, offset: Int, length: Int) {
+            ensureActive()
+            // Do not debit malformed writes or charge twice on no-op writes.
+            if (offset < 0 || length < 0 || offset > bytes.size - length) {
+                throw IndexOutOfBoundsException()
+            }
+            trafficBudget.charge(length)
             ensureActive()
             output.write(bytes, offset, length)
         }
@@ -85,7 +110,7 @@ internal class RestrictedTunSession(
             dispatcher.expireIdleFlow(observedAt)
             return@guarded true
         }
-        if (!dispatcher.pumpOneTunPacket(input, cancellableOutput, observedAt)) {
+        if (!dispatcher.pumpOneTunPacket(budgetedInput, cancellableOutput, observedAt)) {
             close()
             false
         } else true

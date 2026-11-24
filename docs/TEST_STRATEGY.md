@@ -74,6 +74,18 @@ direct Internet. Repeat on dual-stack and loss/delay, record Android version,
 SHA, exact expected/observed behavior and failure logs **without tokens**.
 If the test cannot run, report A1 as `NOT RUN (DEVICE)`, not `PASS`.
 
+## A1 debug test dual-direction TUN byte quota
+
+JVM regression tests verify a single 8 MiB (8 * 1024 * 1024 bytes) budget
+for all TUN ingress and egress combined, not separate per-direction budgets.
+A byte that crosses the ceiling must reject forwarding, discard that packet,
+close the session and release the descriptor once. Exact-limit packets must
+still work; malformed ingress packets count; outbound over-budget responses
+must never be partially written. Concurrent counter operations cannot exceed
+the limit and no integer wrap can increase it. The gateway and radio/TLS
+overhead are not TUN bytes and are not claimed as a billing quota. Real mobile
+data/battery measurements and test-phone shutdown remain NOT RUN (DEVICE).
+
 ## A1 debug timeout backstop and scope-change rollback
 
 JVM tests exercise the pure single-use deadline scheduler: exactly 120 seconds,

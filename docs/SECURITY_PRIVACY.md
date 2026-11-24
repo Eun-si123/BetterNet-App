@@ -39,6 +39,16 @@ not guaranteed strict no-leak or an OS-enforced wall-clock limit. Physical
 Android testing of service Stop, revocation and per-app isolation remains
 required.
 
+## Debug-only combined TUN packet traffic budget
+
+An experimental A1 debug session limits **combined TUN ingress and egress**
+to 8 MiB. The packet-read and packet-write wrappers debit a shared atomic
+counter before forwarding and fail/close the entire restricted session on
+exhaustion. This is not a carrier/mobile-data budget: encrypted gateway
+overhead, DNS, radio retransmission and billing may exceed it. Do not claim
+strict no-charge, perfect cutoff time or unmetered safety without device
+measurements. The user sees this limitation in the opt-in warning.
+
 ## Experimental debug VPN handoff (unmerged A1 prototype)
 
 - **Release builds stay closed:** the service accepts explicit restricted

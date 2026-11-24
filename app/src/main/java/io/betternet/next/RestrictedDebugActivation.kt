@@ -87,6 +87,9 @@ internal fun requireApprovedRestrictedNetworkHandle(
 
 /** Debug consent is a time-limited test, not a persistent VPN permission. */
 internal const val RESTRICTED_DEBUG_MAX_RUNTIME_MS = 120_000L
+// The 8 MiB ceiling applies to TUN IP packets in both directions combined.
+// Protected network/gateway overhead is NOT included in these counted bytes.
+internal const val RESTRICTED_DEBUG_MAX_TUN_BYTES = 8L * 1024L * 1024L
 
 /** Invalidate the pending one-shot approval before requesting cancellation of
  * the selected-app test. Reconfiguring an active test must not leave the

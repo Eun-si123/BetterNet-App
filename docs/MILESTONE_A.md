@@ -70,6 +70,24 @@ only invalidated the next-start lease and could leave the old restricted
 session running for the remainder of its lifetime. Android device verification
 of notification, STOP races, and actual route removal is still **NOT RUN**.
 
+## A1 debug TUN byte-usage ceiling (not carrier billing quota)
+
+In addition to the independent ~120-second stop paths, an explicitly started
+A1 debug test now has a fixed **8 MiB bidirectional combined IP/TUN packet
+budget**. The TUN session charges the ingress packet before parsing/callbacks
+and charges complete outgoing responses before a descriptor write. Budget
+exhaustion throws a terminal error, closes the session and the already-owned
+TUN descriptor; the existing worker termination callback requests service
+shutdown. Malformed/rejected inbound IP packets also count against the cap.
+The accounting is shared across directions and atomic, never per-connection.
+
+This is intentionally **not** a billed cellular data cap: underlying
+protected TCP/TLS traffic, upstream DNS, VPN overhead and mobile-radio
+retransmissions do not traverse the TUN counters. The Android OS may also
+delay teardown, and hardware billing impact remains NOT RUN. The debug UI
+discloses these limitations in English and Korean. No configuration,
+credential or new routing capability is added.
+
 ## A1 debug handoff is pinned to the tested underlying network
 
 The Activity places the opaque Android Network handle (not a credential or

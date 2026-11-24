@@ -271,12 +271,14 @@ class SelectedAppVpnService : VpnService() {
     internal fun ownEstablishedRestrictedTestTun(
         descriptor: ParcelFileDescriptor,
         dispatcher: RestrictedTestTunDispatcher,
+        maxTunBytes: Long = Long.MAX_VALUE,
     ): RestrictedTunSession = RestrictedTunSession(
         dispatcher,
         FileInputStream(descriptor.fileDescriptor),
         FileOutputStream(descriptor.fileDescriptor),
         closeDescriptor = { descriptor.close() },
         waitForReadable = { pollRestrictedTunReadable(descriptor) },
+        maxTunBytes = maxTunBytes,
     )
 
     /**
@@ -292,7 +294,9 @@ class SelectedAppVpnService : VpnService() {
         selectedApp: AppChoice?,
     ): RestrictedTunWorker = tunLifecycle.adopt(RestrictedTunWorker(
         RestrictedTunPump(
-            ownEstablishedRestrictedTestTun(descriptor, dispatcher),
+            ownEstablishedRestrictedTestTun(
+                descriptor, dispatcher, RESTRICTED_DEBUG_MAX_TUN_BYTES
+            ),
             revalidate = {
                 // The established VPN itself is now visible in allNetworks,
                 // so do NOT reuse the pre-activation other-VPN rejection here.
