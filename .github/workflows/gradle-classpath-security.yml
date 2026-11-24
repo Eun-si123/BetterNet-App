@@ -51,5 +51,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew --no-daemon --max-workers=2 buildEnvironment :app:buildEnvironment > "$RUNNER_TEMP/gradle-build-environment.txt"
-          python3 scripts/check_gradle_classpath.py < "$RUNNER_TEMP/gradle-build-environment.txt"
+          # Public Maven mirrors may throttle new artifact downloads on hosted
+          # runners. Retry *only* HTTP 429; syntax, missing version, and ABI
+          # errors must fail immediately.
+          log="$RUNNER_TEMP/gradle-build-environment.txt"
+          for attempt in 1 2 3; do
+            if ./gradlew --no-daemon --max-workers=1 buildEnvironment :app:buildEnvironment > "$log" 2>&1; then
+              python3 scripts/check_gradle_classpath.py < "$log"
+              exit $?
+            fi
+            if (( attempt == 3 )) || ! grep -Eq 'Received status code 429|Too Many Requests' "$log"; then
+              tail -n 100 "$log"
+              exit 1
+            fi
+            echo "::warning::Maven HTTP 429; retrying classpath resolution after backoff ($attempt/3)"
+            sleep $((attempt * 30))
+          done
+          exit 1
