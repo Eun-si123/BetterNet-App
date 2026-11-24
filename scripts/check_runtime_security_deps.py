@@ -46,8 +46,12 @@ def vulnerable_entries(report: str) -> list[str]:
 
 def main() -> int:
     report = sys.stdin.read()
-    if "runtimeClasspath" not in report:
-        print("::error::Missing runtimeClasspath evidence; refusing empty audit", file=sys.stderr)
+    expected = sys.argv[1] if len(sys.argv) == 2 else ""
+    if expected not in {"debugRuntimeClasspath", "releaseRuntimeClasspath"}:
+        print("::error::Specify debugRuntimeClasspath or releaseRuntimeClasspath", file=sys.stderr)
+        return 1
+    if expected not in report:
+        print(f"::error::Missing {expected} evidence; refusing empty audit", file=sys.stderr)
         return 1
     if "BUILD FAILED" in report or "FAILED" in report:
         print("::error::Gradle dependency report signals failure", file=sys.stderr)
