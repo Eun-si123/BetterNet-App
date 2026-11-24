@@ -1,0 +1,29 @@
+version: 2
+updates:
+  # Review grouped CI upgrades in one PR instead of multiplying Actions runs.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:20"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 2
+    groups:
+      github-actions-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  # A proposal is not approval: Android Gradle/AGP/Kotlin compatibility must
+  # still pass Android CI and security analysis before merge.
+  - package-ecosystem: gradle
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:40"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 2
+    groups:
+      gradle-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
