@@ -49,6 +49,27 @@ the OS grant is **not** proof of A1 Internet forwarding or unrelated-app
 exclusion. Test only an authorized gateway and independent HTTPS endpoint; the
 repository's reference gateway still binds loopback only and is not deployed.
 
+## A1 scoped test configuration changes and independent termination backstop
+
+An explicitly approved debug A1 test can run for roughly **120 seconds**.
+Previously, its timeout was observed only by the TUN owner between packet
+cycles, so a blocking Android DNS/binding callback could postpone cleanup.
+The Service now also schedules an independent main-looper STOP task **before**
+TUN activation. It requests descriptor cancellation and service shutdown even
+when the packet pump does not complete its current cycle. The owner-loop
+monotonic deadline remains separately active. A failed schedule refuses
+activation; revoke, service destroy, and explicit user stop cancel the pending
+callback and cannot rearm that service instance. This is a stronger OS-level
+cleanup request, **not a hard real-time guarantee** if Android freezes the
+process or an OS call ignores descriptor closure.
+
+Changing the selected app **or any staged gateway/destination/token fields**
+must invalidate the one-use start handoff and **request shutdown of the
+previous VPN** before the new configuration can be used. Previously, editing
+only invalidated the next-start lease and could leave the old restricted
+session running for the remainder of its lifetime. Android device verification
+of notification, STOP races, and actual route removal is still **NOT RUN**.
+
 ## A1 debug handoff is pinned to the tested underlying network
 
 The Activity places the opaque Android Network handle (not a credential or

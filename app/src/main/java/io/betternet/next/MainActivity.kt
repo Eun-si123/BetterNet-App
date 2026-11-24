@@ -31,6 +31,7 @@ class MainActivity : Activity() {
     private var consentButton: Button? = null
     private val verifiedGateway = VerifiedGatewayTestLease()
     private var debugStartButton: Button? = null
+    private var debugTestStatus: TextView? = null
     private var gatewayProbeRunning = false
     private val gatewayProbeGeneration = AtomicInteger(0)
 
@@ -82,8 +83,12 @@ class MainActivity : Activity() {
                     showRestrictedTestConfigurationDialog { configuration ->
                         gatewayProbeGeneration.incrementAndGet()
                         verifiedGateway.clear()
-                        updateDebugStartAvailability()
+                        // Changing the destination, credentials or gateway is
+                        // a new authorization scope. Stop the old live VPN;
+                        // merely clearing the next-start lease is insufficient.
+                        invalidateRestrictedDebugUserScope()
                         testConfiguration = configuration
+                        updateDebugStartAvailability()
                         consentButton?.isEnabled = true
                         configurationStatus.text = getString(R.string.test_config_summary,
                             configuration.gatewayName, configuration.gatewayPort,
@@ -109,11 +114,10 @@ class MainActivity : Activity() {
             setOnClickListener {
                 gatewayProbeGeneration.incrementAndGet()
                 verifiedGateway.clear()
-                RestrictedDebugActivationRegistry.handoff.clear()
-                stopService(Intent(this@MainActivity, SelectedAppVpnService::class.java))
-                updateDebugStartAvailability()
+                invalidateRestrictedDebugUserScope()
                 selectedApp = null
                 testConfiguration = null
+                updateDebugStartAvailability()
                 requestConsentButton.isEnabled = false
                 configurationStatus.setText(R.string.test_config_not_set)
                 configureButton.isEnabled = false
@@ -141,13 +145,12 @@ class MainActivity : Activity() {
                             // downgrading to package-name/UID-only consent.
                             gatewayProbeGeneration.incrementAndGet()
                             verifiedGateway.clear()
-                            RestrictedDebugActivationRegistry.handoff.clear()
-                            stopService(Intent(this@MainActivity, SelectedAppVpnService::class.java))
-                            updateDebugStartAvailability()
+                            invalidateRestrictedDebugUserScope()
                             selectedApp = readInstalledAppIdentity(packageManager, choices[index].packageName)
                                 ?.takeIf { it.uid == choices[index].uid }
                                 ?.let { choices[index].copy(signerFingerprint = it.signerFingerprint) }
                             testConfiguration = null
+                            updateDebugStartAvailability()
                             requestConsentButton.isEnabled = false
                             configurationStatus.setText(R.string.test_config_not_set)
                             configureButton.isEnabled = selectedApp != null
@@ -218,6 +221,7 @@ class MainActivity : Activity() {
         root.addView(authenticatedStatus)
         if (isDebugActivationBuild()) {
             val testStatus = TextView(this).apply { setText(R.string.debug_test_not_started) }
+            debugTestStatus = testStatus
             val startButton = Button(this).apply {
                 setText(R.string.debug_start_button)
                 isEnabled = false
@@ -246,11 +250,9 @@ class MainActivity : Activity() {
             root.addView(Button(this).apply {
                 setText(R.string.stop_restricted_vpn_test)
                 setOnClickListener {
-                    RestrictedDebugActivationRegistry.handoff.clear()
                     verifiedGateway.clear()
+                    invalidateRestrictedDebugUserScope()
                     updateDebugStartAvailability()
-                    stopService(Intent(this@MainActivity, SelectedAppVpnService::class.java))
-                    testStatus.setText(R.string.debug_test_stop_requested)
                 }
             })
             root.addView(testStatus)
@@ -382,6 +384,15 @@ class MainActivity : Activity() {
             // Android's current state; selection/configuration may have reset.
             checkVpnReadiness()
         }
+    }
+
+    private fun invalidateRestrictedDebugUserScope() {
+        revokeRestrictedDebugScope(RestrictedDebugActivationRegistry.handoff) {
+            stopService(Intent(this, SelectedAppVpnService::class.java))
+        }
+        // The stop request is asynchronous; do not imply that Android has
+        // already removed the TUN or foreground notification.
+        debugTestStatus?.setText(R.string.debug_test_stop_requested)
     }
 
     private fun isDebugActivationBuild(): Boolean =

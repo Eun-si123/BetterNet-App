@@ -62,6 +62,18 @@ direct Internet. Repeat on dual-stack and loss/delay, record Android version,
 SHA, exact expected/observed behavior and failure logs **without tokens**.
 If the test cannot run, report A1 as `NOT RUN (DEVICE)`, not `PASS`.
 
+## A1 debug timeout backstop and scope-change rollback
+
+JVM tests exercise the pure single-use deadline scheduler: exactly 120 seconds,
+expiry while a simulated packet owner is blocked, one callback only, cancellation
+when the foreground service is destroyed/revoked, no rearming to prolong a user
+grant, and refused/throwing scheduling failures with callback revocation.
+Changing an approved gateway address, hostname, bearer credential or selected
+application must clear the pending one-shot permission **before** requesting
+a stop of the old service. Verify stop errors cannot make old handoffs
+replayable. Actual Android Looper scheduling, service notifications, route
+removal and OEM sleep/Doze remain **NOT RUN (DEVICE)**.
+
 ## A1 debug activation network-switch regression
 
 Reproduce approval on Wi-Fi then switch the Android default Network to mobile

@@ -9,6 +9,8 @@ import android.app.PendingIntent
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.os.Handler
+import android.os.Looper
 import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
@@ -36,12 +38,29 @@ import javax.net.ssl.SSLSocket
 class SelectedAppVpnService : VpnService() {
     private companion object { const val ACTION_STOP_RESTRICTED_TEST = "io.betternet.next.STOP_RESTRICTED_TEST" }
     private val tunLifecycle = RestrictedTunLifecycle()
+    private val debugDeadlineHandler = Handler(Looper.getMainLooper())
+    private val debugStopWatchdog = RestrictedDebugStopWatchdog(
+        schedule = { task, delay -> debugDeadlineHandler.postDelayed(task, delay) },
+        unschedule = { task -> debugDeadlineHandler.removeCallbacks(task) },
+        requestStop = {
+            try {
+                stopRestrictedServiceFailClosed(
+                    cancel = { tunLifecycle.cancel() },
+                    stop = { stopSelf(); Unit },
+                )
+            } catch (_: Exception) {
+                // No credential, destination or selected package enters logs.
+                android.util.Log.w("BetterNet", "Restricted debug timeout cleanup failed")
+            }
+        },
+    )
 
     override fun onRevoke() {
         // Even if closing the TUN descriptor fails, Android's revocation
         // callback must still run; otherwise the service can remain alive.
         try {
             RestrictedDebugActivationRegistry.handoff.clear()
+            debugStopWatchdog.cancel()
             tunLifecycle.cancel()
         } finally {
             // Revocation may occur before a worker was started. Never leave
@@ -53,6 +72,7 @@ class SelectedAppVpnService : VpnService() {
     override fun onDestroy() {
         try {
             RestrictedDebugActivationRegistry.handoff.clear()
+            debugStopWatchdog.cancel()
             tunLifecycle.cancel()
         } finally {
             super.onDestroy()
@@ -279,7 +299,9 @@ class SelectedAppVpnService : VpnService() {
                 requireActiveRestrictedTestPrerequisites(manager, underlyingNetwork, selectedApp)
             },
             nowMillis = SystemClock::elapsedRealtime,
-            maxRunMillis = 120_000L, // Debug safety ceiling; no permanent capture.
+            maxRunMillis = RESTRICTED_DEBUG_MAX_RUNTIME_MS,
+            // An independent main-looper watchdog cancels even when the
+            // pump is waiting inside an OS callback rather than iterating.
         ),
         onTerminated = {
             // Even an unexpected pump failure must not leave a future
@@ -437,6 +459,10 @@ class SelectedAppVpnService : VpnService() {
                 requireApprovedRestrictedNetworkHandle(
                     session.approvedNetworkHandle, underlying.networkHandle
                 )
+                // Arm independent cancellation *before* activation starts.
+                // The owner-loop deadline alone cannot interrupt a blocking
+                // Android DNS call; no new session can rearm this watchdog.
+                debugStopWatchdog.arm()
                 // This revalidates Android preparation, selected UID/signers,
                 // other VPN visibility and the selected network, then promotes
                 // foreground before opening any restricted selected-app TUN.
@@ -447,6 +473,7 @@ class SelectedAppVpnService : VpnService() {
                 return START_NOT_STICKY
             } catch (_: Exception) {
                 // No token, selected package, destination or exception is logged.
+                debugStopWatchdog.cancel()
                 android.util.Log.w("BetterNet", "Restricted debug activation refused")
             }
         }

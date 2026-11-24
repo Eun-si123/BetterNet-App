@@ -83,3 +83,59 @@ internal fun requireApprovedRestrictedNetworkHandle(
         "Underlying Network changed since user authorization"
     }
 }
+
+
+/** Debug consent is a time-limited test, not a persistent VPN permission. */
+internal const val RESTRICTED_DEBUG_MAX_RUNTIME_MS = 120_000L
+
+/** Invalidate the pending one-shot approval before requesting cancellation of
+ * the selected-app test. Reconfiguring an active test must not leave the
+ * previously approved server/token/route running in the background.
+ */
+internal fun revokeRestrictedDebugScope(
+    handoff: RestrictedActivationHandoff, requestStop: () -> Unit,
+) {
+    handoff.clear()
+    requestStop()
+}
+
+/** Independent main-looper stop backstop. The packet pump also has its own
+ * deadline; the owner may block in an OS DNS/bind call, so waiting for its next
+ * iteration is insufficient. This watchdog requests immediate descriptor
+ * cancellation and stopSelf, but cannot guarantee scheduling while Android
+ * is freezing the process. No network, timers or Android services start here.
+ */
+internal class RestrictedDebugStopWatchdog(
+    private val schedule: (Runnable, Long) -> Boolean,
+    private val unschedule: (Runnable) -> Unit,
+    private val requestStop: () -> Unit,
+) {
+    private val issued = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val active = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val timeoutTask = Runnable {
+        if (active.compareAndSet(true, false)) requestStop()
+    }
+
+    fun arm() {
+        check(issued.compareAndSet(false, true)) {
+            "Restricted debug stop deadline cannot be rearmed"
+        }
+        active.set(true)
+        try {
+            check(schedule(timeoutTask, RESTRICTED_DEBUG_MAX_RUNTIME_MS)) {
+                "Could not schedule restricted debug stop deadline"
+            }
+        } catch (error: Throwable) {
+            active.set(false)
+            try { unschedule(timeoutTask) } catch (cleanup: Throwable) {
+                if (cleanup !== error) error.addSuppressed(cleanup)
+            }
+            throw error
+        }
+    }
+
+    fun cancel() {
+        active.set(false)
+        unschedule(timeoutTask)
+    }
+}
