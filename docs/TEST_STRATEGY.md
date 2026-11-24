@@ -40,6 +40,18 @@ These are criteria, **not a claim that tests currently exist**. Do not infer any
 
 **First workload candidates:** controlled HTTPS browser (A1); browser and messenger actions next; YouTube playback, QUIC/UDP, DRM and adaptive bitrate separately, never assumed from a TCP-only success. No claim about unsupported games/voice.
 
+## Read-only Android device availability preflight
+
+Run python scripts/a1_android_preflight.py only after connecting a test
+phone over authorized ADB. Windows Python or Linux can locate Android
+platform-tools from PATH, ANDROID_HOME/ANDROID_SDK_ROOT or explicit --adb.
+Exactly one authorized device is required (use --serial for more than one).
+The preflight checks API 26+, installed BetterNet package and debug-only
+run-as. It does not show serial values, read app files, request VPN consent,
+install an APK, send traffic or verify the selected browser. If no phone
+is connected, report NOT RUN (BLOCKED). The independent gateway and
+unselected-app isolation checks remain additional hard requirements.
+
 ## Experimental debug A1 activation gate (not yet DEVICE PASS)
 
 JVM checks on a never-started service seam: only an exact one-use in-memory

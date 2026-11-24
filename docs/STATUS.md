@@ -1,36 +1,68 @@
-# BetterNet App — implementation and evidence snapshot
+# BetterNet App — verified implementation snapshot
 
-**Snapshot:** 2026-11-08. Source of truth is current GitHub code and exact-head CI; this dated file must be refreshed whenever a release/merge changes the conclusions. Not a live dashboard.
+**As of:** 2026-11-24 (KST). This is a dated evidence ledger, **not** a live
+dashboard. GitHub branch heads, Actions and physical device evidence take
+precedence over this snapshot.
 
-## Branch separation
+## Branch separation and source truth
 
-| Place | State | What has actually been established |
+| Location | State | Verified limitations |
 | --- | --- | --- |
-| `main` at `614fcb0` | `MAIN`, pre-alpha | Android network-state display, selected-app choice/readiness, basic JVM tests and debug APK CI; **no** VPN service or production gateway code in `main` at this snapshot |
-| [Implementation Draft PR #7](https://github.com/Eun-si123/BetterNet-App/pull/7) at `3e5ffdf` | `DRAFT PR`, not merged | Dormant selected-app VPN preparation, protected gateway TLS/CONNECT, DNS/TCP TUN primitives and restricted localhost reference gateway; exact-head [Android CI PASS](https://github.com/Eun-si123/BetterNet-App/actions/runs/42470998739), including isolated tests; **no** real selected-app public Internet success |
-| [Product documentation Draft PR #11](https://github.com/Eun-si123/BetterNet-App/pull/11) | `DRAFT PR`, not merged at snapshot | Docs-only; earlier revision `3812cdf` passed [Android CI run 42424059900](https://github.com/Eun-si123/BetterNet-App/actions/runs/42424059900); later commits require independent exact-head CI verification. No user features shipped. |
+| Public main at 9ee93d3 | Pre-alpha baseline | Does not include A1 experimental VPN; PR #21 CI recovery merged |
+| [A1 implementation Draft #7](https://github.com/Eun-si123/BetterNet-App/pull/7) at 4637073 | Unmerged | Restricted gateway and TUN components; not device-proven |
+| [Explicit debug start Draft #20](https://github.com/Eun-si123/BetterNet-App/pull/20) at 82d1277 | Stacked on #7 | Consent-based, memory-only, one-use test start; no device proof |
+| [A1 stability Draft #22](https://github.com/Eun-si123/BetterNet-App/pull/22) | Stacked on #20 | Network identity pin, bounded dual-stack retry, browser DNS and stop/rollback fixes; 342 local JVM PASS at b8459d8 |
+| [TCP-focused Draft #19](https://github.com/Eun-si123/BetterNet-App/pull/19) | Its fix is integrated into #22 | Preserve as focused review; do not separately double-merge |
 
-Even if a test checks TCP packets, DNS replies, TLS authentication, retries, or a localhost gateway, its success alone does **not** show Android selected-app Internet forwarding. A debug APK generated from `main` does not contain pending PR #7 code. Likewise, a PR #7 test APK should never be described as the general-release application.
+These pending PRs are **not** on main and are **not** releases. The exact
+latest SHA and GitHub CI must be rechecked before claiming any new pass.
 
-## Acceptance gate ledger
+## Milestone acceptance ledger
 
-| Gate | Status | What will prove it |
+| Milestone | Status | Missing acceptance proof |
 | --- | --- | --- |
-| A0 — safe Android foundation | `PARTIAL / MAIN` | Real-device install/UI/lifecycle checks, no implicit routing, build provenance and security review |
-| A1 — verified selected-app HTTPS | `NOT RUN (DEVICE)` | Explicit Android VPN consent + chosen app completes independent HTTPS request via authenticated gateway, actual response verified, unselected app unaffected, safe Stop/revoke/failure |
-| A2 — measurable user benefit | `NOT RUN` | Matched repeated OFF/ON *real workload* results for task success, latency, stalls, recovery, energy and bytes under specified conditions |
-| A3 — adaptive path/transport | `PLANNED` | Proven decisions and no new instability, leaks or unexpected data costs |
-| Built-in sharing module | `PLANNED`, no code yet | Opt-in app-local sharing, independent protocol, authentication, data integrity, resume/failures, no installation or runtime dependency on DataNetShare |
-| Volunteer directory and paid/free nodes | `PLANNED`, no deployment | Authenticated trust and revocation, explicit operator consent, quotas, abuse protection and independent remote-node checks |
-| User-reviewed diagnostic submission | `PLANNED`, no collection endpoint | Local preview, selectable/redactable exact payload, recipient/confirmation, no automatic upload and deletion/export verification |
+| A0 — Android foundation | PARTIAL | Physical install/UI and no-implicit-VPN |
+| A1 — selected-app real HTTPS | NOT RUN (DEVICE) | Approved gateway, actual browser HTTPS reply, unrelated app not captured, Stop/revoke/timeout |
+| A2 — measurable network improvement | NOT RUN | Matched repeated OFF/ON workload in good and impaired networks |
+| A3 — adaptive paths and fallback | PLANNED | User-controlled decision, failure behavior and non-regression |
+| Built-in sharing and optional modules | PLANNED | Permission, compatibility and data integrity checks |
+| Community relays | PLANNED | Trust, opt-in, quotas, authentication and abuse protection |
+| User-reviewed diagnostic submission | PLANNED | Local preview/redaction and explicit send consent |
 
-## Near-term sequencing
+## Reproducible A1 draft evidence
 
-1. Keep the next Android implementation focused on **A1 genuine selected-app HTTPS**, not optional modules or volunteer directory implementation.
-2. Run failure/cleanup and selected-vs-unselected app tests on real Android with a separately approved safe test endpoint. Owner/tester has **not** completed physical A1 review.
-3. Only once A1 is real, expand app coverage and assess what actually improves on good **and** bad networks. Use measured profiles, not marketing promises.
-4. Develop optional built-in sharing and richer node selection behind their own user-permission, privacy and verification gates. No copying DataNetShare or BetterNet-private private source.
+At draft commit b8459d8 in the controlled Ubuntu mini-PC environment:
+- 342 Android JVM tests PASS, 0 failures/skips (31 suites)
+- Android Lint and debug/unsigned release APK build PASS
+- VPN merged manifest and APK high-confidence secret scan PASS
+- Documentation check PASS; Python gateway tests 9 PASS
+- Disposable Linux loopback tests 9/9 baseline + 9/9 under 25±5 ms
+  delay and 3% loss PASS
 
-## Rules for status updates
+**No connected Android test handset, no approved external gateway test,
+no real HTTPS browser traffic, and no unrelated-app isolation proof.**
+All these results remain local fixture or static/build evidence. A passing
+GitHub Actions run would not establish A1 DEVICE PASS.
 
-Record: date, repository/ref/commit SHA, test environment, command or reproducible steps, real vs fixture endpoint, expected and observed results, pass/fail/blocked, unresolved risks, and whether traffic/credentials reached any external device. If unavailable, write **NOT RUN**, not “probably PASS.” Reconcile with current branch and tests before changing these entries.
+## Read-only test-phone preflight
+
+From the repo root, on Windows or Linux with Python and Android platform-tools:
+
+    python scripts/a1_android_preflight.py
+
+Pass --adb for an explicit platform-tools binary or --serial when multiple
+devices are attached. This command checks the authorized ADB device count,
+Android API level (26+), installed BetterNet package and debug-package
+eligibility via Android run-as. It redacts the device serial, reads no private
+files and never starts VPN/traffic, installs an app or sends tokens. A
+preflight PASS is **not A1 PASS**; without a connected phone it reports
+NOT RUN (BLOCKED). After a connected test phone and an independently
+authorized gateway exist, use [the A1 protocol](TEST_STRATEGY.md).
+
+## Reporting and acceptance
+
+Include exact source/build SHA, OS/device, authorized destination, local vs
+device environment, expected and observed results, sanitized failure logs,
+PASS/FAIL/NOT RUN, and whether any traffic or credential left the device.
+Never infer a released feature from a Draft PR or a network speedup from a
+successful parser/localhost unit test.
