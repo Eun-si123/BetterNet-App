@@ -798,6 +798,8 @@ class GatewayTlsLoopbackTest {
                 }
             } catch (_: SSLException) {
                 // Client may abort the handshake with a TLS fatal alert.
+            } catch (_: java.net.SocketException) {
+                // Some TLS runtimes close the peer transport without a TLS alert.
             }
         }) { address ->
             try {
@@ -830,6 +832,7 @@ class GatewayTlsLoopbackTest {
                     it.startHandshake()
                 }
             } catch (_: SSLException) { /* inner client rejects wrong SAN */ }
+              catch (_: java.net.SocketException) { /* rejected peer reset the socket */ }
         }) { address ->
             try {
                 connectVerifiedDestinationTlsThroughGateway(
@@ -1026,7 +1029,9 @@ class GatewayTlsLoopbackTest {
     @Test fun trustedCertificateWithWrongHostnameIsRejected() {
         val tls = contexts()
         withServer(tls.server, { peer ->
-            try { peer.startHandshake() } catch (_: SSLException) { /* client rejects peer */ }
+            try { peer.startHandshake() }
+            catch (_: SSLException) { /* client's hostname rejection */ }
+            catch (_: java.net.SocketException) { /* client already reset peer */ }
         }) { address ->
             try {
                 connectVerifiedGatewayTls(
@@ -1044,7 +1049,9 @@ class GatewayTlsLoopbackTest {
         val tls = contexts()
         val defaultTrust = SSLContext.getInstance("TLS").apply { init(null, null, SecureRandom()) }
         withServer(tls.server, { peer ->
-            try { peer.startHandshake() } catch (_: SSLException) { /* client rejects peer */ }
+            try { peer.startHandshake() }
+            catch (_: SSLException) { /* client's untrusted CA rejection */ }
+            catch (_: java.net.SocketException) { /* client already reset peer */ }
         }) { address ->
             try {
                 connectVerifiedGatewayTls(
