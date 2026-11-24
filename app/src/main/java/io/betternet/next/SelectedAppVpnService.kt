@@ -217,6 +217,13 @@ class SelectedAppVpnService : VpnService() {
         // Neither a cached permission result nor an existing builder can
         // resurrect a cancelled service owner.
         tunLifecycle.requireNotCancelled()
+        // Pre-activation only: once our own TUN is established, the default
+        // Network may legitimately become the VPN. Never silently activate
+        // on cellular when the user verified the gateway on Wi-Fi (or vice
+        // versa) while the one-use service handoff was queued.
+        requireApprovedRestrictedNetworkHandle(
+            underlyingNetwork.networkHandle, manager.activeNetwork?.networkHandle ?: 0L
+        )
         val pkg = requireSelectedPackage(selectedApp?.packageName, packageName)
         requirePinnedSelectedApp(selectedApp, packageName,
             readInstalledAppIdentity(packageManager, pkg))
@@ -425,6 +432,9 @@ class SelectedAppVpnService : VpnService() {
                 val manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
                 val underlying = manager.activeNetwork
                     ?: throw IllegalStateException("No underlying Internet Network")
+                requireApprovedRestrictedNetworkHandle(
+                    session.approvedNetworkHandle, underlying.networkHandle
+                )
                 // This revalidates Android preparation, selected UID/signers,
                 // other VPN visibility and the selected network, then promotes
                 // foreground before opening any restricted selected-app TUN.

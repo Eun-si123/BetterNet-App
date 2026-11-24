@@ -14,8 +14,8 @@ class RestrictedDebugActivationTest {
         val selected = app()
         val cfg = config()
         val ticket = RestrictedActivationTicket.forFutureExplicitConfirmation(selected, cfg)
-        val handle = registry.stage(ticket, selected, cfg)
-        return handle to RestrictedActivationHandoff.Session(ticket, selected, cfg)
+        val handle = registry.stage(ticket, selected, cfg, 42L)
+        return handle to RestrictedActivationHandoff.Session(ticket, selected, cfg, 42L)
     }
 
     @Test fun onlyExactSingleUseDebugStartClaimsOpaqueHandoff() {
@@ -37,6 +37,47 @@ class RestrictedDebugActivationTest {
         assertSame(fourth.second.configuration, taken.configuration)
         assertSame(fourth.second.ticket, taken.ticket)
         assertNull(claimRestrictedDebugSession(ACTION_START_RESTRICTED_DEBUG, fourth.first, true, registry))
+    }
+
+    @Test fun networkSwitchBeforeServiceClaimFailsClosed() {
+        val registry = RestrictedActivationHandoff()
+        val (handle, _) = stage(registry)
+        val taken = claimRestrictedDebugSession(
+            ACTION_START_RESTRICTED_DEBUG, handle, true, registry
+        )!!
+        assertEquals(42L, taken.approvedNetworkHandle)
+        requireApprovedRestrictedNetworkHandle(taken.approvedNetworkHandle, 42L)
+        for (actual in listOf(0L, -1L, 43L, 1_234L)) {
+            try {
+                requireApprovedRestrictedNetworkHandle(taken.approvedNetworkHandle, actual)
+                fail("Network change must abort the queued VPN start")
+            } catch (expected: IllegalArgumentException) {
+                assertTrue(expected.message!!.contains("Network changed"))
+            }
+        }
+        assertNull(registry.take(handle)) // Failed start may not be replayed.
+    }
+
+    @Test fun unboundOrInvalidNetworkCannotStageConsent() {
+        val registry = RestrictedActivationHandoff()
+        val (ticket, app, config) = Triple(
+            RestrictedActivationTicket.forFutureExplicitConfirmation(app(), config()),
+            app(), config(),
+        )
+        for (network in listOf(0L, -1L, Long.MIN_VALUE)) {
+            try {
+                registry.stage(ticket, app, config, network)
+                fail("Invalid Network must be refused")
+            } catch (_: IllegalArgumentException) {
+                // A prior valid handle must also be invalidated by failed replacement.
+            }
+        }
+        val valid = registry.stage(ticket, app, config, 99L)
+        assertEquals(99L, registry.take(valid)?.approvedNetworkHandle)
+        try {
+            requireApprovedRestrictedNetworkHandle(0L, 99L)
+            fail("Unbound approval must fail")
+        } catch (_: IllegalArgumentException) {}
     }
 
     @Test fun debugStartRequiresBothOsPreparationAndRecentVerifiedGateway() {

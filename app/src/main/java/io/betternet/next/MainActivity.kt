@@ -419,7 +419,9 @@ class MainActivity : Activity() {
         updateDebugStartAvailability()
         try {
             val ticket = RestrictedActivationTicket.forFutureExplicitConfirmation(selected, config)
-            val handle = RestrictedDebugActivationRegistry.handoff.stage(ticket, selected, config)
+            val handle = RestrictedDebugActivationRegistry.handoff.stage(
+                ticket, selected, config, network.networkHandle
+            )
             startForegroundService(Intent(this, SelectedAppVpnService::class.java)
                 .setAction(ACTION_START_RESTRICTED_DEBUG)
                 .putExtra(EXTRA_RESTRICTED_HANDLE, handle))

@@ -17,6 +17,7 @@ internal class RestrictedActivationHandoff(
         val ticket: RestrictedActivationTicket,
         val app: AppChoice,
         val configuration: RestrictedTestConfiguration,
+        val approvedNetworkHandle: Long,
     )
 
     private data class Pending(val handle: String, val session: Session, val issuedAt: Long)
@@ -28,9 +29,13 @@ internal class RestrictedActivationHandoff(
 
     @Synchronized
     fun stage(ticket: RestrictedActivationTicket, app: AppChoice,
-              configuration: RestrictedTestConfiguration): String {
+              configuration: RestrictedTestConfiguration,
+              approvedNetworkHandle: Long): String {
         // A failed replacement must not leave an older consent session claimable.
         pending = null
+        require(approvedNetworkHandle > 0L) {
+            "A selected non-VPN underlying Network handle is required"
+        }
         check(nextSequence != Long.MAX_VALUE) { "Activation handle sequence exhausted" }
         nextSequence++
         // Consent lifetime starts before entropy acquisition: a slow random
@@ -48,7 +53,9 @@ internal class RestrictedActivationHandoff(
             bytes[i] = (nextSequence ushr (56 - i * 8)).toByte()
         }
         val handle = bytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
-        pending = Pending(handle, Session(ticket, app, configuration), issuedAt)
+        pending = Pending(
+            handle, Session(ticket, app, configuration, approvedNetworkHandle), issuedAt
+        )
         return handle
     }
 

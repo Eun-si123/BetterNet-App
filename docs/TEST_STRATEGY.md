@@ -62,6 +62,17 @@ direct Internet. Repeat on dual-stack and loss/delay, record Android version,
 SHA, exact expected/observed behavior and failure logs **without tokens**.
 If the test cannot run, report A1 as `NOT RUN (DEVICE)`, not `PASS`.
 
+## A1 debug activation network-switch regression
+
+Reproduce approval on Wi-Fi then switch the Android default Network to mobile
+data or disconnected state before the service receives the one-use handle.
+Refuse the test before foreground promotion, TUN establishment or bearer use.
+Reject invalid and unknown handles and session replay. The pre-start Network
+identity gate differs from the active-session gate because Android can make
+the established VPN itself the default Network. JVM tests cover the pure
+network-handle check, but actual switching, OS lifecycle and data billing
+effects remain NOT RUN on a physical device.
+
 ## A2 performance design
 
 - Record baseline network/path, geography, device/OS, selected app, server trust, Wi-Fi/mobile and cost constraints. Compare BetterNet OFF/direct vs ON using **same task** and network impairment; randomize AB/BA order and repeat enough to show variability.

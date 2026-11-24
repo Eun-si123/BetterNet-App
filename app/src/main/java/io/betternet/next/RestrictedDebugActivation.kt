@@ -70,3 +70,16 @@ internal class VerifiedGatewayTestLease(
 internal fun canOfferRestrictedDebugStart(
     isDebugBuild: Boolean, prepared: Boolean, verifiedGateway: Boolean,
 ): Boolean = isDebugBuild && prepared && verifiedGateway
+
+/** Fail closed if the explicit test is delivered after the default Network
+ * switches. A live Android Network's opaque handle is positive; an unknown
+ * network must not silently become a metered cellular fallback. Only the
+ * service checks the live Android Network immediately before activation.
+ */
+internal fun requireApprovedRestrictedNetworkHandle(
+    approved: Long, actual: Long,
+) {
+    require(approved > 0L && actual > 0L && approved == actual) {
+        "Underlying Network changed since user authorization"
+    }
+}

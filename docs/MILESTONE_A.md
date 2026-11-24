@@ -49,6 +49,20 @@ the OS grant is **not** proof of A1 Internet forwarding or unrelated-app
 exclusion. Test only an authorized gateway and independent HTTPS endpoint; the
 repository's reference gateway still binds loopback only and is not deployed.
 
+## A1 debug handoff is pinned to the tested underlying network
+
+The Activity places the opaque Android Network handle (not a credential or
+raw Network object) in its one-use process-local activation session.
+The Service compares the current default Network handle before starting,
+then checks that same Network is still default in the last pre-establishment
+validation. Switching Wi-Fi to mobile data while a request is queued must
+abort instead of silently using an unapproved metered route. Missing/zero,
+mismatched, expired, and replayed handoffs fail closed. Once the VPN begins,
+the OS may set the VPN itself as default, so ongoing checks keep using the
+approved underlying Network without requiring it to remain the default.
+
+These are JVM/race-gate checks, not Android hardware or metered cost proof.
+
 ## DNS name correlation interoperability
 
 A dormant A1 DNS-over-TLS response may echo the original QNAME with different
