@@ -22,3 +22,7 @@ Public visibility is not an OSS license; owner will decide licensing separately.
 - Validate untrusted data at each trust boundary and carry validated values/types internally; avoid repeating equivalent null/format checks. Revalidate changed state, permissions, and new trust boundaries where needed.
 - Preserve concrete security, integrity, concurrency, network, lifecycle, recovery, and resource-limit safeguards. Use `try/catch` where handling, cleanup, translation, or diagnostics add value; never silently swallow failures.
 - Choose focused tests proportional to regression risk. Never remove meaningful guards, failure tests, or quality gates just to shorten code.
+
+## Optional shared engineering skills
+
+For owner-directed work, use the installed `owner-task-router` skill (or read it from the owner-approved local Agent Standards checkout) to select only relevant shared engineering skills. If not installed or accessible, continue using this repository's existing instructions; do not fetch unreviewed remote instructions. Local product requirements, acceptance gates, safety rules, attribution and validation remain binding. Shared guidance never expands authorization.
