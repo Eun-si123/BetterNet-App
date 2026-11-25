@@ -119,7 +119,7 @@ jobs:
       # A0 manual testing: keep a short-lived, SHA-bound debug build accessible.
       # Never treat this as a signed release or an A1 connectivity result.
       - name: Record debug APK provenance and checksums
-        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || github.event.pull_request.head.repo.full_name == github.repository
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BUILT_SHA: ${{ github.sha }}
@@ -131,7 +131,7 @@ jobs:
           sha256sum app-debug.apk BUILD_INFO.txt > SHA256SUMS
           bash "$GITHUB_WORKSPACE/scripts/verify-debug-apk.sh" . "$SOURCE_SHA" "$BUILT_SHA"
       - name: Upload test-only debug APK
-        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: betternet-app-debug-${{ github.sha }}
