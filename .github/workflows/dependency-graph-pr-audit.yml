@@ -46,6 +46,7 @@ jobs:
       - name: Generate and upload dependency graph without GitHub submission
         uses: gradle/actions/dependency-submission@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:
+          cache-provider: basic
           dependency-graph: generate-and-upload
           dependency-graph-continue-on-failure: false
           artifact-retention-days: 1

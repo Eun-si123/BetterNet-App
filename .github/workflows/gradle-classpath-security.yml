@@ -32,6 +32,7 @@ jobs:
       - uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:
+          cache-provider: basic
           cache-read-only: true
       - name: Verify parser detects unpatched and missing classpath dependencies
         run: python3 -m unittest scripts.test_check_gradle_classpath -v
