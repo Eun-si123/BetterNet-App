@@ -101,6 +101,10 @@ jobs:
             : > "$build_log"
           done
           exit 1
+      - name: Validate Gradle dependency SHA-256 policy
+        run: |
+          python3 -m unittest scripts.test_check_gradle_dependency_verification -v
+          python3 scripts/check_gradle_dependency_verification.py
       - name: Verify actual app debug and release runtime dependencies
         shell: bash
         run: |
