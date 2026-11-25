@@ -2,6 +2,8 @@
 
 Status: **A0 foundation in progress; A1–A3 not proven**. Research phases stay as references rather than blocking all product work.
 
+For the wider P0–P6 execution sequence and M0–M9 dependency gates, see [the detailed development plan](DEVELOPMENT_MILESTONES_PHASES.md). A0–A3 remain the authoritative immediate acceptance gates; a planning document never changes their evidence status.
+
 ## User outcome
 
 One explicitly selected, consenting Android app completes a genuine HTTPS request through an actual BetterNet network path, receives an authentic reply and doesn't cause any unrelated app's traffic to be captured.
