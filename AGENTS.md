@@ -14,7 +14,7 @@ PRs must state one acceptance gate, minimal implementation, exact build/test res
 
 Owner-directed Agent commits: public username Eun-si123, official GitHub no-reply email, and a Co-authored-by trailer for the named contributing Agent (name must end in Agent). Preserve independent contributors' own identities. No force pushes, unapproved releases, or unverified optimization claims.
 
-Public visibility is not an OSS license; owner will decide licensing separately.
+The client app is licensed Apache-2.0 (see `LICENSE`, `NOTICE`, `TRADEMARK.md`, DEC-014). The volunteer gateway/operator-server license remains undecided (OPEN-001); do not apply or imply one.
 
 ## Lean implementation and boundary validation
 

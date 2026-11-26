@@ -16,4 +16,4 @@ The new package is `io.betternet.next`, separate from existing BetterNet Develop
 
 Start from the [documentation hub](docs/README.md). The [product roadmap](docs/PRODUCT_ROADMAP.md) covers the vision and phases; [Milestone A](docs/MILESTONE_A.md) defines the nearest technical gate; [status/evidence](docs/STATUS.md) separates the very limited `main` implementation from unmerged Draft work. The roadmap confirms that optional sharing is intended **inside BetterNet**, without a mandatory DataNetShare installation, but the feature is not implemented. The previous private BetterNet research repository stays private; this is an independent implementation, not a public mirror.
 
-No license has been selected yet. Public visibility does not grant reuse rights automatically.
+The app is licensed under [Apache-2.0](LICENSE) (see [NOTICE](NOTICE)). The BetterNet name and logos are not licensed; see [TRADEMARK.md](TRADEMARK.md). The license of the volunteer gateway/operator-server software is still undecided.

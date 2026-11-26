@@ -1,6 +1,6 @@
 # Product and engineering decision register
 
-**Updated:** 2026-11-08. `CONFIRMED` means the user selected a direction, **not** that code or a deployment exists. `PROPOSED` is a recommendation only. Keep this short: detailed requirement belongs in [the specification](PRODUCT_SPEC.md), evidence in [status](STATUS.md), and test criteria in [verification](TEST_STRATEGY.md).
+**Updated:** 2026-11-26. `CONFIRMED` means the user selected a direction, **not** that code or a deployment exists. `PROPOSED` is a recommendation only. Keep this short: detailed requirement belongs in [the specification](PRODUCT_SPEC.md), evidence in [status](STATUS.md), and test criteria in [verification](TEST_STRATEGY.md).
 
 ## Confirmed by the project owner
 
@@ -19,6 +19,7 @@
 | DEC-011 | **Built-in optional sharing/transfer inside BetterNet** | No separate DataNetShare app/server dependency; maintain independent public implementation and modular boundaries |
 | DEC-012 | BetterNet-private = separate research/experiments; BetterNet-App = public product | Similar broad purpose; no automatic copying private code, settings, identities, logs, protocols or test evidence |
 | DEC-013 | **User-controlled feature enable/disable and storage footprint** | Do not force everyone to install or run every optional capability. Separate runtime OFF from physical component removal; only promise space savings when delivery can actually omit/remove installed bytes |
+| DEC-014 | **Client app licensed Apache-2.0; project name and logos reserved by a trademark policy** | Owner-approved 2026-11-26. Goals: wide adoption, modification welcome, revenue from operated services (hosting, verified directory, trust) rather than license restriction. Alternatives considered: MPL-2.0, AGPL-3.0, source-available. Applies to this client repository only; paid features not yet published are not covered |
 
 ## Recommended engineering defaults (not owner approvals to deploy)
 
@@ -32,7 +33,7 @@
 
 | ID | Question / decision maker | Work that must wait |
 | --- | --- | --- |
-| OPEN-001 | Client and operator-server licenses; owner | OSS claims, licensing and relicensing obligations |
+| OPEN-001 | Volunteer gateway / operator-server license (client app decided in DEC-014); owner | Server OSS claims, licensing and relicensing obligations |
 | OPEN-002 | User-visible terms, payment processor, fees/refunds and regions; owner + operator policy | Billing and paid node transaction code |
 | OPEN-003 | Exact community verifier roles, appeals, directory keys/hosting, moderation retention; owner + community governance | Trust badges and production public node directory |
 | OPEN-004 | Diagnostics schema, maximum on-device/remote retention and exact optional recipient/collector; owner + privacy review | Any telemetry receiving endpoint or automatic upload |
